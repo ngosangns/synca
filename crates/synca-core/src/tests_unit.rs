@@ -1,6 +1,6 @@
 //! Unit tests (included from lib via cfg(test)).
 
-use crate::discover::{skill_display_name, skill_frontmatter_name};
+use crate::discover::{skill_description, skill_display_name, skill_frontmatter_description, skill_frontmatter_name};
 use crate::models::{
     normalize_key, AgentKind, ConflictDecisions, ConflictPolicy, McpNormalized, Scope,
 };
@@ -58,12 +58,18 @@ fn skill_frontmatter_and_display_name() {
         skill_frontmatter_name(&skill.join("SKILL.md")).as_deref(),
         Some("Fancy Name")
     );
+    assert_eq!(
+        skill_frontmatter_description(&skill.join("SKILL.md")).as_deref(),
+        Some("x")
+    );
     assert_eq!(skill_display_name(&skill), "Fancy Name");
+    assert_eq!(skill_description(&skill).as_deref(), Some("x"));
 
     let skill2 = tmp.path().join("folder-only");
     std::fs::create_dir_all(&skill2).unwrap();
     std::fs::write(skill2.join("SKILL.md"), "# no frontmatter\n").unwrap();
     assert_eq!(skill_display_name(&skill2), "folder-only");
+    assert_eq!(skill_description(&skill2), None);
 }
 
 #[test]

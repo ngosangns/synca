@@ -90,6 +90,8 @@ pub struct SkillPresence {
 pub struct SkillEntry {
     pub key: String,
     pub display_name: String,
+    /// Frontmatter `description` from SKILL.md (first non-empty among presence).
+    pub description: Option<String>,
     pub scope: Scope,
     pub presence: Vec<SkillPresence>,
     /// True if more than one distinct content hash among presence.

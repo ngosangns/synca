@@ -1,6 +1,6 @@
 use serde::Serialize;
 use crate::agents::{mcp_config_paths, skill_roots};
-use crate::discover::skill_display_name;
+use crate::discover::{skill_description, skill_display_name};
 use crate::models::*;
 use crate::paths::{hash_bytes, hash_skill_dir, project_root};
 use serde_json::Value as JsonValue;
@@ -80,6 +80,7 @@ pub fn scan_skills(scope: Scope, cwd: &Path) -> Vec<SkillEntry> {
             }
             let content_hash = hash_skill_dir(&resolve_for_hash).unwrap_or_else(|_| "missing".into());
             let display = skill_display_name(&resolve_for_hash);
+            let description = skill_description(&resolve_for_hash);
             let key = normalize_key(&display);
 
             let presence = SkillPresence {
@@ -93,11 +94,17 @@ pub fn scan_skills(scope: Scope, cwd: &Path) -> Vec<SkillEntry> {
             by_key
                 .entry(key.clone())
                 .and_modify(|e| {
+                    if e.description.is_none() {
+                        if let Some(ref d) = description {
+                            e.description = Some(d.clone());
+                        }
+                    }
                     e.presence.push(presence.clone());
                 })
                 .or_insert_with(|| SkillEntry {
                     key: key.clone(),
                     display_name: display,
+                    description,
                     scope,
                     presence: vec![presence],
                     mismatch: false,

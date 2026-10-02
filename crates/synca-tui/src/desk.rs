@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
+use synca_core::models::AgentKind;
 
 pub fn draw(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
@@ -25,7 +26,12 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     }
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, state: &AppState) {
+fn draw_header(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    state.layout.header = area;
+    // " synca " (7) + " User " (6) + " " (1) + " Project " (9)
+    state.layout.user_tab = Rect::new(area.x.saturating_add(7), area.y, 6, area.height.max(1));
+    state.layout.project_tab = Rect::new(area.x.saturating_add(14), area.y, 9, area.height.max(1));
+
     let user_style = if state.page == Page::User {
         Style::default()
             .fg(Color::Black)
@@ -68,6 +74,10 @@ fn draw_body(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(cols[0]);
+
+    state.layout.skills = lists[0];
+    state.layout.mcps = lists[1];
+    state.layout.detail = cols[1];
 
     draw_skills_list(frame, lists[0], state);
     draw_mcps_list(frame, lists[1], state);
@@ -165,6 +175,15 @@ fn draw_mcps_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
     frame.render_stateful_widget(list, area, &mut state.mcp_list_state);
 }
 
+fn preferred_mcp_presence(
+    presence: &[synca_core::models::McpPresence],
+) -> Option<&synca_core::models::McpPresence> {
+    presence
+        .iter()
+        .find(|p| p.agent == AgentKind::Agents)
+        .or_else(|| presence.first())
+}
+
 fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut lines: Vec<Line> = Vec::new();
     match state.section {
@@ -176,6 +195,24 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )));
+                lines.push(Line::from(Span::styled(
+                    "Description:",
+                    Style::default().add_modifier(Modifier::BOLD),
+                )));
+                match s.description.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+                    Some(desc) => {
+                        lines.push(Line::from(Span::styled(
+                            desc.to_string(),
+                            Style::default().fg(Color::White),
+                        )));
+                    }
+                    None => {
+                        lines.push(Line::from(Span::styled(
+                            "(no description in SKILL.md frontmatter)",
+                            Style::default().fg(Color::DarkGray),
+                        )));
+                    }
+                }
                 lines.push(Line::from(format!("key: {}", s.key)));
                 lines.push(Line::from(format!(
                     "mismatch: {}",
@@ -226,6 +263,29 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 )));
+                if let Some(p) = preferred_mcp_presence(&m.presence) {
+                    lines.push(Line::from(Span::styled(
+                        "Summary:",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )));
+                    lines.push(Line::from(format!(
+                        "  transport: {}",
+                        p.normalized.transport
+                    )));
+                    if let Some(ref cmd) = p.normalized.command {
+                        let mut parts = cmd.clone();
+                        if let Some(ref args) = p.normalized.args {
+                            parts.extend(args.iter().cloned());
+                        }
+                        lines.push(Line::from(format!("  command: {}", parts.join(" "))));
+                    }
+                    if let Some(ref url) = p.normalized.url {
+                        lines.push(Line::from(format!("  url: {url}")));
+                    }
+                    if let Some(en) = p.normalized.enabled {
+                        lines.push(Line::from(format!("  enabled: {en}")));
+                    }
+                }
                 lines.push(Line::from(format!(
                     "mismatch: {}",
                     if m.mismatch { "YES" } else { "no" }
@@ -303,24 +363,25 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn draw_help(frame: &mut Frame, area: Rect) {
-    let w = area.width.min(70);
-    let h = area.height.min(18);
+    let w = area.width.min(72);
+    let h = area.height.min(20);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect::new(x, y, w, h);
     frame.render_widget(Clear, rect);
     let text = vec![
-        Line::from("Keys"),
-        Line::from("  Tab          switch User / Project"),
-        Line::from("  [ / ]        Skills / MCPs section"),
-        Line::from("  j / k        move selection (list auto-scrolls)"),
-        Line::from("  PgUp/PgDn    scroll detail pane"),
-        Line::from("  s            dry-run sync focused → y/n"),
-        Line::from("  S            dry-run sync missing → y/n"),
-        Line::from("  u            check/install update from GitHub"),
-        Line::from("  r            reload inventory"),
-        Line::from("  ?            toggle help"),
-        Line::from("  q            quit"),
+        Line::from("Keys / Mouse"),
+        Line::from("  Tab / click tabs   User ↔ Project"),
+        Line::from("  [ / ] / click list Skills / MCPs section"),
+        Line::from("  j / k / click row  move selection"),
+        Line::from("  wheel on list      move selection"),
+        Line::from("  wheel / PgUp/PgDn  scroll detail pane"),
+        Line::from("  s                  dry-run sync focused → y/n"),
+        Line::from("  S                  dry-run sync missing → y/n"),
+        Line::from("  u                  check/install update from GitHub"),
+        Line::from("  r                  reload inventory"),
+        Line::from("  ?                  toggle help"),
+        Line::from("  q                  quit"),
         Line::from(""),
         Line::from("Conflicts: a=keep-source b=keep-target s=skip"),
         Line::from("Never silent overwrite."),
@@ -334,4 +395,31 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ),
         rect,
     );
+}
+
+/// Whether (col,row) lies inside `r`.
+pub fn contains(r: Rect, col: u16, row: u16) -> bool {
+    col >= r.x
+        && row >= r.y
+        && col < r.x.saturating_add(r.width)
+        && row < r.y.saturating_add(r.height)
+}
+
+/// Map a mouse row inside a bordered list pane to a list index, using ListState offset.
+pub fn list_row_at(area: Rect, mouse_row: u16, offset: usize, len: usize) -> Option<usize> {
+    if len == 0 || area.height < 3 {
+        return None;
+    }
+    let inner_top = area.y.saturating_add(1);
+    let inner_h = area.height.saturating_sub(2);
+    if mouse_row < inner_top || mouse_row >= inner_top.saturating_add(inner_h) {
+        return None;
+    }
+    let rel = (mouse_row - inner_top) as usize;
+    let idx = offset.saturating_add(rel);
+    if idx < len {
+        Some(idx)
+    } else {
+        None
+    }
 }

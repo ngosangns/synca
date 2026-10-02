@@ -1,6 +1,7 @@
 use synca_core::models::{ConflictPolicy, McpEntry, Scope, SkillEntry};
 use synca_core::scan::Inventory;
 use synca_core::sync::SyncPlan;
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use std::collections::BTreeMap;
 
@@ -79,8 +80,19 @@ pub enum Pending {
     UpdateInstall,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UiLayout {
+    pub header: Rect,
+    pub skills: Rect,
+    pub mcps: Rect,
+    pub detail: Rect,
+    pub user_tab: Rect,
+    pub project_tab: Rect,
+}
+
 #[derive(Debug)]
 pub struct AppState {
+
     pub cwd: std::path::PathBuf,
     pub page: Page,
     pub section: Section,
@@ -102,6 +114,8 @@ pub struct AppState {
     pub mcp_decisions: BTreeMap<String, ConflictPolicy>,
     pub project_ok: bool,
     pub update_msg: String,
+    /// Last-drawn pane rects for mouse hit-testing.
+    pub layout: UiLayout,
 }
 
 impl AppState {
@@ -120,7 +134,7 @@ impl AppState {
             skill_list_state: ListState::default(),
             mcp_list_state: ListState::default(),
             detail_scroll: 0,
-            status: "Tab pages · [/] sections · j/k move · s sync · S sync-missing · u update · q quit"
+            status: "Tab/click pages · [/] sections · j/k/click/wheel · s sync · S sync-missing · u update · q quit"
                 .into(),
             help: false,
             pending: None,
@@ -129,6 +143,7 @@ impl AppState {
             mcp_decisions: BTreeMap::new(),
             project_ok,
             update_msg: String::new(),
+            layout: UiLayout::default(),
         };
         s.sync_list_states();
         s
@@ -216,6 +231,25 @@ impl AppState {
                 self.mcp_idx = cur.rem_euclid(n as i32) as usize;
             }
         }
+        self.detail_scroll = 0;
+        self.sync_list_states();
+    }
+    pub fn select_skill(&mut self, idx: usize) {
+        if self.skills().is_empty() {
+            return;
+        }
+        self.section = Section::Skills;
+        self.skill_idx = idx.min(self.skills().len() - 1);
+        self.detail_scroll = 0;
+        self.sync_list_states();
+    }
+
+    pub fn select_mcp(&mut self, idx: usize) {
+        if self.mcps().is_empty() {
+            return;
+        }
+        self.section = Section::Mcps;
+        self.mcp_idx = idx.min(self.mcps().len() - 1);
         self.detail_scroll = 0;
         self.sync_list_states();
     }

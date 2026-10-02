@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 — 2026-10-02
+
+- **Mouse:** enable crossterm mouse capture in the TUI; click Skills/MCPs rows to select, click User/Project tabs, scroll wheel on lists (moves selection) and detail pane (scrolls). Mouse disabled on exit (hearth-style).
+- **Detail:** skill pane shows frontmatter `description` (and name) prominently; shows a clear note when missing. MCP pane adds a Summary (transport / command / url) above per-agent rows.
+
 ## 0.1.2 — 2026-10-02
 
 - Fix TUI list panes not auto-scrolling on j/k: Skills and MCPs now use ratatui `ListState` + `render_stateful_widget` so the focused row stays in the viewport.
