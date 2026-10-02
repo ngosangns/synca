@@ -11,7 +11,7 @@ Inspired by [hearth](https://github.com/ngosangns/hearth)’s TUI stack (Ratatui
 Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
 
 ```bash
-TAG=v0.1.5
+TAG=v0.1.7
 ASSET=synca-${TAG}-darwin-arm64
 curl -fsSL -o /tmp/$ASSET \
   "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"

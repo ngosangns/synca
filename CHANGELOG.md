@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.7 — 2026-10-02
+
+- **Names:** Skill and MCP names are bold + colored in lists and detail (skills cyan, MCPs magenta); mismatch `!` is red.
+- **Diff UI:** When content differs, detail pane shows source (a) vs target (b) with paths, short hashes/fingerprints, variants-by-hash, SKILL.md unified diff, and MCP field-level diff.
+- **Conflict overlay:** Resolving conflicts (`a`/`b`/`s`) opens a modal with the same rich diff context.
+
 ## 0.1.6 — 2026-10-02
 
 - **Scope lock:** Confirm/status text always names the active scope (`[user]` / `[project]`). Apply uses the plan's recorded scope (not the live tab). Help + footer clarify sync is **this page only**.

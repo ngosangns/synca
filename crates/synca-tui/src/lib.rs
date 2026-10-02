@@ -1,4 +1,5 @@
 mod actions;
+mod diffview;
 mod desk;
 mod run;
 mod state;

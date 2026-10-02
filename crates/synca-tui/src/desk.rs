@@ -22,6 +22,13 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
     draw_body(frame, chunks[1], state);
     draw_footer(frame, chunks[2], state);
 
+    if matches!(
+        state.pending,
+        Some(crate::state::Pending::ResolveConflict { .. })
+    ) {
+        draw_conflict_overlay(frame, area, state);
+    }
+
     if state.help {
         draw_help(frame, area);
     }
@@ -94,13 +101,25 @@ fn draw_skills_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .iter()
         .map(|s| {
             let agents: Vec<_> = s.presence.iter().map(|p| p.agent.as_str()).collect();
-            let mark = if s.mismatch { "!" } else { " " };
-            ListItem::new(format!(
-                "{mark} {}  ({}) [{}]",
-                s.display_name,
-                s.presence.len(),
-                agents.join(",")
-            ))
+            let mark = if s.mismatch {
+                Span::styled("!", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            } else {
+                Span::raw(" ")
+            };
+            ListItem::new(Line::from(vec![
+                mark,
+                Span::raw(" "),
+                Span::styled(
+                    s.display_name.clone(),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  ({}) [{}]", s.presence.len(), agents.join(",")),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
         })
         .collect();
     // Keep ListState selection synced before stateful render so ratatui scrolls
@@ -141,13 +160,25 @@ fn draw_mcps_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
         .iter()
         .map(|m| {
             let agents: Vec<_> = m.presence.iter().map(|p| p.agent.as_str()).collect();
-            let mark = if m.mismatch { "!" } else { " " };
-            ListItem::new(format!(
-                "{mark} {}  ({}) [{}]",
-                m.key,
-                m.presence.len(),
-                agents.join(",")
-            ))
+            let mark = if m.mismatch {
+                Span::styled("!", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+            } else {
+                Span::raw(" ")
+            };
+            ListItem::new(Line::from(vec![
+                mark,
+                Span::raw(" "),
+                Span::styled(
+                    m.key.clone(),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  ({}) [{}]", m.presence.len(), agents.join(",")),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
         })
         .collect();
     if state.mcps().is_empty() {
@@ -190,12 +221,15 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
     match state.section {
         Section::Skills => {
             if let Some(s) = state.skills().get(state.skill_idx) {
-                lines.push(Line::from(Span::styled(
-                    format!("Skill: {}", s.display_name),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )));
+                lines.push(Line::from(vec![
+                    Span::styled("Skill: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        s.display_name.clone(),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
                 lines.push(Line::from(Span::styled(
                     "Description:",
                     Style::default().add_modifier(Modifier::BOLD),
@@ -215,10 +249,15 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
                     }
                 }
                 lines.push(Line::from(format!("key: {}", s.key)));
-                lines.push(Line::from(format!(
-                    "mismatch: {}",
-                    if s.mismatch { "YES" } else { "no" }
-                )));
+                lines.push(Line::from(vec![
+                    Span::raw("mismatch: "),
+                    if s.mismatch {
+                        Span::styled("YES", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                    } else {
+                        Span::styled("no", Style::default().fg(Color::Green))
+                    },
+                ]));
+                crate::diffview::push_skill_mismatch(&mut lines, s);
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "Agents:",
@@ -236,15 +275,17 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
                     } else {
                         String::new()
                     };
-                    lines.push(Line::from(format!(
-                        "  · {}  {}{}",
-                        p.agent.as_str(),
-                        p.path.display(),
-                        link
-                    )));
+                    lines.push(Line::from(vec![
+                        Span::raw("  · "),
+                        Span::styled(
+                            p.agent.as_str().to_string(),
+                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(format!("  {}{}", p.path.display(), link)),
+                    ]));
                     lines.push(Line::from(format!(
                         "      hash: {}",
-                        &p.content_hash[..p.content_hash.len().min(12)]
+                        crate::diffview::short_hash(&p.content_hash)
                     )));
                 }
             } else {
@@ -258,12 +299,15 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
         }
         Section::Mcps => {
             if let Some(m) = state.mcps().get(state.mcp_idx) {
-                lines.push(Line::from(Span::styled(
-                    format!("MCP: {}", m.key),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )));
+                lines.push(Line::from(vec![
+                    Span::styled("MCP: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        m.key.clone(),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
                 if let Some(p) = preferred_mcp_presence(&m.presence) {
                     lines.push(Line::from(Span::styled(
                         "Summary:",
@@ -287,25 +331,33 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
                         lines.push(Line::from(format!("  enabled: {en}")));
                     }
                 }
-                lines.push(Line::from(format!(
-                    "mismatch: {}",
-                    if m.mismatch { "YES" } else { "no" }
-                )));
+                lines.push(Line::from(vec![
+                    Span::raw("mismatch: "),
+                    if m.mismatch {
+                        Span::styled("YES", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+                    } else {
+                        Span::styled("no", Style::default().fg(Color::Green))
+                    },
+                ]));
+                crate::diffview::push_mcp_mismatch(&mut lines, m);
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
                     "Agents:",
                     Style::default().add_modifier(Modifier::BOLD),
                 )));
                 for p in &m.presence {
-                    lines.push(Line::from(format!(
-                        "  · {}  {}",
-                        p.agent.as_str(),
-                        p.path.display()
-                    )));
+                    lines.push(Line::from(vec![
+                        Span::raw("  · "),
+                        Span::styled(
+                            p.agent.as_str().to_string(),
+                            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(format!("  {}", p.path.display())),
+                    ]));
                     lines.push(Line::from(format!(
                         "      transport={}  fp={}",
                         p.normalized.transport,
-                        &p.fingerprint[..p.fingerprint.len().min(12)]
+                        crate::diffview::short_hash(&p.fingerprint)
                     )));
                     if let Some(ref cmd) = p.normalized.command {
                         lines.push(Line::from(format!("      command: {}", cmd.join(" "))));
@@ -446,6 +498,135 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(
         Paragraph::new(Line::from(sync_hotkey_spans(state))).style(bar),
         rows[2],
+    );
+}
+
+fn draw_conflict_overlay(frame: &mut Frame, area: Rect, state: &AppState) {
+    let Some(crate::state::Pending::ResolveConflict { remaining }) = &state.pending else {
+        return;
+    };
+    let Some(item) = remaining.first() else {
+        return;
+    };
+
+    let w = area.width.min(90).max(40);
+    let h = area.height.min(28).max(12);
+    let x = area.x + (area.width.saturating_sub(w)) / 2;
+    let y = area.y + (area.height.saturating_sub(h)) / 2;
+    let rect = Rect::new(x, y, w, h);
+    frame.render_widget(Clear, rect);
+
+    let mut lines: Vec<Line> = Vec::new();
+    let kind = match item.kind {
+        crate::state::ConflictKind::Skill => "skill",
+        crate::state::ConflictKind::Mcp => "mcp",
+    };
+    lines.push(Line::from(Span::styled(
+        format!("Conflict · {kind}"),
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(vec![
+        Span::raw("Name: "),
+        Span::styled(
+            item.key.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "[a] keep-source   [b] keep-target   [s] skip   [n] cancel",
+        Style::default().fg(Color::Yellow),
+    )));
+    lines.push(Line::from(""));
+
+    match item.kind {
+        crate::state::ConflictKind::Skill => {
+            if let Some(s) = state
+                .skills()
+                .iter()
+                .find(|e| e.key == item.key)
+                .or_else(|| {
+                    state
+                        .user_inv
+                        .skills
+                        .iter()
+                        .chain(state.project_inv.skills.iter())
+                        .find(|e| e.key == item.key)
+                })
+            {
+                lines.push(Line::from(vec![
+                    Span::styled("Skill: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        s.display_name.clone(),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+                crate::diffview::push_skill_mismatch(&mut lines, s);
+            } else {
+                lines.push(Line::from(format!(
+                    "(skill '{}' not in current inventory)",
+                    item.key
+                )));
+            }
+        }
+        crate::state::ConflictKind::Mcp => {
+            if let Some(m) = state
+                .mcps()
+                .iter()
+                .find(|e| e.key == item.key)
+                .or_else(|| {
+                    state
+                        .user_inv
+                        .mcps
+                        .iter()
+                        .chain(state.project_inv.mcps.iter())
+                        .find(|e| e.key == item.key)
+                })
+            {
+                lines.push(Line::from(vec![
+                    Span::styled("MCP: ", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        m.key.clone(),
+                        Style::default()
+                            .fg(Color::Magenta)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+                crate::diffview::push_mcp_mismatch(&mut lines, m);
+            } else {
+                lines.push(Line::from(format!(
+                    "(mcp '{}' not in current inventory)",
+                    item.key
+                )));
+            }
+        }
+    }
+
+    let left = remaining.len().saturating_sub(1);
+    if left > 0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("… {left} more conflict(s) after this"),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Resolve conflict ")
+                    .border_style(Style::default().fg(Color::Yellow)),
+            ),
+        rect,
     );
 }
 
