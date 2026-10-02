@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5 — 2026-10-02
+
+- **Bulk sync:** TUI hotkeys `S` = sync ALL skills, `M` = sync ALL MCPs, `A` = sync ALL skills+MCPs (scope = current User|Project page). Still two-key confirm (`y`/`n`) and conflict `a`/`b`/`s`. Focused sync remains `s`.
+- **Footer:** 3-line bar — status, nav hotkeys, sync hotkeys (`s`/`S`/`M`/`A`) always visible.
+- **CLI:** `synca sync all` (same `--scope` / `--agents` / `--dry-run` / `--on-conflict` flags as skills|mcp).
+
 ## 0.1.4 — 2026-10-02
 
 - **TUI footer:** always show a persistent hotkey bar (Tab, [/]/Space, j/k, click/wheel, s/S, u, r, ?, q). Status / confirm / update messages render on the line above and never wipe the hotkeys. Pending modes append y/n or a/b/s to the hotkey bar.

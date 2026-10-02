@@ -11,7 +11,7 @@ Inspired by [hearth](https://github.com/ngosangns/hearth)’s TUI stack (Ratatui
 Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
 
 ```bash
-TAG=v0.1.1
+TAG=v0.1.5
 ASSET=synca-${TAG}-darwin-arm64
 curl -fsSL -o /tmp/$ASSET \
   "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"
@@ -59,9 +59,11 @@ synca mcp list --scope user
 
 synca sync skills --scope user --dry-run
 synca sync mcp --scope user --dry-run
+synca sync all --scope user --dry-run
 synca sync skills --scope user --on-conflict skip
 synca sync skills --scope user --on-conflict keep-source
 synca sync mcp --scope user --on-conflict keep-target
+synca sync all --scope user --on-conflict keep-source
 ```
 
 ### Conflict flags
@@ -81,8 +83,10 @@ Never silent overwrite.
 | `Tab` | User ↔ Project |
 | `[` / `]` / `Space` | Skills / MCPs section |
 | `j` / `k` | Move |
-| `s` | Dry-run sync focused → `y`/`n`; conflicts → `a`/`b`/`s` |
-| `S` | Dry-run sync missing → same confirm / conflict flow |
+| `s` | Sync focused item → `y`/`n`; conflicts → `a`/`b`/`s` |
+| `S` | Sync **ALL skills** (current User\|Project page) |
+| `M` | Sync **ALL MCPs** (current page) |
+| `A` | Sync **ALL skills + MCPs** (current page) |
 | `u` | Check GitHub Releases; `y` installs to `~/.local/share/synca/bin` + symlink `~/.local/bin/synca` |
 | `r` | Reload |
 | `?` | Help |

@@ -881,6 +881,12 @@ fn write_grok_toml(path: &Path, server: &str, norm: &McpNormalized) -> anyhow::R
     Ok(())
 }
 
+pub fn merge_plans(mut a: SyncPlan, b: SyncPlan) -> SyncPlan {
+    a.actions.extend(b.actions);
+    a.dry_run = a.dry_run && b.dry_run;
+    a
+}
+
 /// Filter plan to only "missing" actions (symlinks/writes that aren't skips/conflicts).
 pub fn filter_missing(plan: &SyncPlan) -> SyncPlan {
     let actions: Vec<_> = plan

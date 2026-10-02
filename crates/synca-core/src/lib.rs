@@ -12,7 +12,8 @@ pub mod update_meta;
 pub use models::*;
 pub use scan::{scan_mcp, scan_skills, scan_all, Inventory};
 pub use sync::{
-    apply_plan, filter_missing, plan_sync_mcp, plan_sync_skills, SyncAction, SyncPlan,
+    apply_plan, filter_missing, merge_plans, plan_sync_mcp, plan_sync_skills, SyncAction,
+    SyncPlan,
 };
 pub use update::{check_update, install_update, UpdateInfo};
 pub use update_meta::expected_asset_name;

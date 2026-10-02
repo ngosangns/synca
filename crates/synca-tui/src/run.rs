@@ -142,7 +142,9 @@ fn handle_key(state: &mut AppState, code: KeyCode) -> bool {
         KeyCode::Char('j') | KeyCode::Down => state.move_sel(1),
         KeyCode::Char('k') | KeyCode::Up => state.move_sel(-1),
         KeyCode::Char('s') => actions::dry_run_focused(state),
-        KeyCode::Char('S') => actions::dry_run_missing(state),
+        KeyCode::Char('S') => actions::dry_run_all_skills(state),
+        KeyCode::Char('M') => actions::dry_run_all_mcp(state),
+        KeyCode::Char('A') => actions::dry_run_all(state),
         KeyCode::Char('u') => actions::check_update_action(state),
         KeyCode::Char('r') => {
             state.reload();

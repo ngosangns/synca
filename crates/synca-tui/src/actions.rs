@@ -1,7 +1,7 @@
 use crate::state::{AppState, ConflictItem, ConflictKind, Pending, Section};
 use synca_core::models::{ConflictDecisions, ConflictPolicy};
 use synca_core::sync::{
-    apply_plan, filter_missing, plan_sync_mcp, plan_sync_skills, SyncAction,
+    apply_plan, merge_plans, plan_sync_mcp, plan_sync_skills, SyncAction,
 };
 use synca_core::update::{check_update, install_update};
 
@@ -71,32 +71,36 @@ pub fn dry_run_focused(state: &mut AppState) {
     }
 }
 
-pub fn dry_run_missing(state: &mut AppState) {
+pub fn dry_run_all_skills(state: &mut AppState) {
+    let scope = state.page.scope();
+    match plan_sync_skills(scope, &state.cwd, None, None) {
+        Ok(plan) => begin_confirm(state, plan, "sync all skills"),
+        Err(e) => state.status = format!("plan error: {e}"),
+    }
+}
+
+pub fn dry_run_all_mcp(state: &mut AppState) {
+    let scope = state.page.scope();
+    match plan_sync_mcp(scope, &state.cwd, None, None) {
+        Ok(plan) => begin_confirm(state, plan, "sync all mcps"),
+        Err(e) => state.status = format!("plan error: {e}"),
+    }
+}
+
+pub fn dry_run_all(state: &mut AppState) {
     let scope = state.page.scope();
     match (
         plan_sync_skills(scope, &state.cwd, None, None),
         plan_sync_mcp(scope, &state.cwd, None, None),
     ) {
         (Ok(skills_plan), Ok(mcps_plan)) => {
-            let mut plan = filter_missing(&skills_plan);
-            plan.actions.extend(filter_missing(&mcps_plan).actions);
-            for a in skills_plan
-                .actions
-                .iter()
-                .chain(mcps_plan.actions.iter())
-            {
-                if matches!(
-                    a,
-                    SyncAction::ConflictSkill { .. } | SyncAction::ConflictMcp { .. }
-                ) {
-                    plan.actions.push(a.clone());
-                }
-            }
-            begin_confirm(state, plan, "sync-missing");
+            let plan = merge_plans(skills_plan, mcps_plan);
+            begin_confirm(state, plan, "sync all skills+mcps");
         }
         (Err(e), _) | (_, Err(e)) => state.status = format!("plan error: {e}"),
     }
 }
+
 
 pub fn on_sync_confirm_yes(state: &mut AppState) {
     let Some(plan) = state.last_plan.as_ref() else {

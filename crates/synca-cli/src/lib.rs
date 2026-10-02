@@ -3,7 +3,7 @@ mod update;
 use anyhow::Context;
 use synca_core::models::{AgentKind, ConflictDecisions, ConflictPolicy, Scope};
 use synca_core::scan::scan_all;
-use synca_core::sync::{apply_plan, plan_sync_mcp, plan_sync_skills, SyncAction, SyncPlan};
+use synca_core::sync::{apply_plan, merge_plans, plan_sync_mcp, plan_sync_skills, SyncAction, SyncPlan};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -94,6 +94,19 @@ pub enum SyncCmd {
         dry_run: bool,
         #[arg(long)]
         key: Option<String>,
+        #[arg(long, default_value = "skip")]
+        on_conflict: String,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
+    /// Sync all skills and all MCPs for the scope
+    All {
+        #[arg(long, value_enum, default_value_t = ScopeArg::User)]
+        scope: ScopeArg,
+        #[arg(long)]
+        agents: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
         #[arg(long, default_value = "skip")]
         on_conflict: String,
         #[arg(long, default_value = ".")]
@@ -201,6 +214,32 @@ pub fn run() -> anyhow::Result<()> {
                 let filter_ref = filter.as_deref();
                 let mut plan = plan_sync_mcp(scope, &cwd, filter_ref, key.as_deref())?;
                 plan.dry_run = dry_run;
+                print_plan(&plan);
+                let decisions = resolve_cli_conflicts(&plan, &on_conflict, dry_run)?;
+                if dry_run {
+                    println!("(dry-run; no changes) on-conflict={}", decisions.default.as_str());
+                } else {
+                    let log = apply_plan(&plan, &cwd, scope, &decisions)?;
+                    for line in log {
+                        println!("  {line}");
+                    }
+                }
+            }
+            SyncCmd::All {
+                scope,
+                agents,
+                dry_run,
+                on_conflict,
+                cwd,
+            } => {
+                let scope: Scope = scope.into();
+                let filter = agents.as_ref().map(|s| AgentKind::parse_list(s));
+                let filter_ref = filter.as_deref();
+                let mut skills = plan_sync_skills(scope, &cwd, filter_ref, None)?;
+                let mut mcps = plan_sync_mcp(scope, &cwd, filter_ref, None)?;
+                skills.dry_run = dry_run;
+                mcps.dry_run = dry_run;
+                let plan = merge_plans(skills, mcps);
                 print_plan(&plan);
                 let decisions = resolve_cli_conflicts(&plan, &on_conflict, dry_run)?;
                 if dry_run {

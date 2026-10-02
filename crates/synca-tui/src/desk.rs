@@ -13,8 +13,8 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         .constraints([
             Constraint::Length(1),
             Constraint::Min(5),
-            // Status line + persistent hotkey bar (never replaced by messages).
-            Constraint::Length(2),
+            // Status + nav hotkeys + sync hotkeys (never wiped by status).
+            Constraint::Length(3),
         ])
         .split(area);
 
@@ -354,57 +354,61 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(para, area);
 }
 
-fn hotkey_spans(state: &AppState) -> Vec<Span<'static>> {
-    let mut spans = vec![
-        Span::styled(" Tab ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+fn key_chip(label: &'static str) -> Span<'static> {
+    Span::styled(label, Style::default().fg(Color::Black).bg(Color::DarkGray))
+}
+
+fn pending_chip(label: &'static str) -> Span<'static> {
+    Span::styled(label, Style::default().fg(Color::Black).bg(Color::Yellow))
+}
+
+fn nav_hotkey_spans() -> Vec<Span<'static>> {
+    vec![
+        key_chip(" Tab "),
         Span::raw("pages "),
-        Span::styled(" [/]/Space ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        key_chip(" [/]/Space "),
         Span::raw("sections "),
-        Span::styled(" j/k ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        key_chip(" j/k "),
         Span::raw("nav "),
-        Span::styled(" click/wheel ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        key_chip(" click/wheel "),
         Span::raw("mouse "),
-        Span::styled(" s/S ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
-        Span::raw("sync "),
-        Span::styled(" u ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        key_chip(" u "),
         Span::raw("update "),
-        Span::styled(" r ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        key_chip(" r "),
         Span::raw("reload "),
-        Span::styled(" ? ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        key_chip(" ? "),
         Span::raw("help "),
-        Span::styled(" q ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        key_chip(" q "),
         Span::raw("quit"),
+    ]
+}
+
+fn sync_hotkey_spans(state: &AppState) -> Vec<Span<'static>> {
+    let mut spans = vec![
+        key_chip(" s "),
+        Span::raw("focused "),
+        key_chip(" S "),
+        Span::raw("skills-all "),
+        key_chip(" M "),
+        Span::raw("mcp-all "),
+        key_chip(" A "),
+        Span::raw("all "),
     ];
     match &state.pending {
         Some(crate::state::Pending::SyncConfirm) | Some(crate::state::Pending::UpdateInstall) => {
-            spans.push(Span::raw("  ·  "));
-            spans.push(Span::styled(
-                " y ",
-                Style::default().fg(Color::Black).bg(Color::Yellow),
-            ));
+            spans.push(Span::raw(" · "));
+            spans.push(pending_chip(" y "));
             spans.push(Span::raw("confirm "));
-            spans.push(Span::styled(
-                " n ",
-                Style::default().fg(Color::Black).bg(Color::Yellow),
-            ));
+            spans.push(pending_chip(" n "));
             spans.push(Span::raw("cancel"));
         }
         Some(crate::state::Pending::ResolveConflict { .. }) => {
-            spans.push(Span::raw("  ·  "));
-            spans.push(Span::styled(
-                " a ",
-                Style::default().fg(Color::Black).bg(Color::Yellow),
-            ));
+            spans.push(Span::raw(" · "));
+            spans.push(pending_chip(" a "));
             spans.push(Span::raw("keep-src "));
-            spans.push(Span::styled(
-                " b ",
-                Style::default().fg(Color::Black).bg(Color::Yellow),
-            ));
+            spans.push(pending_chip(" b "));
             spans.push(Span::raw("keep-tgt "));
-            spans.push(Span::styled(
-                " s ",
-                Style::default().fg(Color::Black).bg(Color::Yellow),
-            ));
+            spans.push(pending_chip(" s "));
             spans.push(Span::raw("skip"));
         }
         None => {}
@@ -415,7 +419,11 @@ fn hotkey_spans(state: &AppState) -> Vec<Span<'static>> {
 fn draw_footer(frame: &mut Frame, area: Rect, state: &AppState) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(area);
 
     // Line 1: transient status / confirm messages (may be empty).
@@ -431,17 +439,18 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     frame.render_widget(Paragraph::new(status_text).style(status_style), rows[0]);
 
-    // Line 2: persistent hotkey bar — never replaced by status.
+    // Lines 2–3: persistent hotkey bars — never replaced by status.
+    let bar = Style::default().fg(Color::White).bg(Color::Black);
+    frame.render_widget(Paragraph::new(Line::from(nav_hotkey_spans())).style(bar), rows[1]);
     frame.render_widget(
-        Paragraph::new(Line::from(hotkey_spans(state)))
-            .style(Style::default().fg(Color::White).bg(Color::Black)),
-        rows[1],
+        Paragraph::new(Line::from(sync_hotkey_spans(state))).style(bar),
+        rows[2],
     );
 }
 
 fn draw_help(frame: &mut Frame, area: Rect) {
     let w = area.width.min(72);
-    let h = area.height.min(20);
+    let h = area.height.min(22);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect::new(x, y, w, h);
@@ -453,8 +462,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  j / k / click row  move selection"),
         Line::from("  wheel on list      move selection"),
         Line::from("  wheel / PgUp/PgDn  scroll detail pane"),
-        Line::from("  s                  dry-run sync focused → y/n"),
-        Line::from("  S                  dry-run sync missing → y/n"),
+        Line::from("  s                  sync focused item → y/n"),
+        Line::from("  S                  sync ALL skills (current page) → y/n"),
+        Line::from("  M                  sync ALL MCPs (current page) → y/n"),
+        Line::from("  A                  sync ALL skills + MCPs → y/n"),
         Line::from("  u                  check/install update from GitHub"),
         Line::from("  r                  reload inventory"),
         Line::from("  ?                  toggle help"),
