@@ -541,7 +541,7 @@ fn resolve_mcp_conflict(
     Ok(log)
 }
 
-fn remove_path(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn remove_path(path: &Path) -> anyhow::Result<()> {
     let meta = std::fs::symlink_metadata(path)?;
     if meta.file_type().is_symlink() || meta.file_type().is_file() {
         std::fs::remove_file(path)?;
@@ -551,7 +551,7 @@ fn remove_path(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn force_symlink(
+pub(crate) fn force_symlink(
     link: &Path,
     target: &Path,
     agent: &str,
@@ -632,7 +632,7 @@ fn pathdiff(from_dir: &Path, to: &Path) -> Option<PathBuf> {
     Some(rel)
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in walkdir::WalkDir::new(src).into_iter().filter_map(|e| e.ok()) {
         let rel = entry.path().strip_prefix(src).unwrap_or(entry.path());
@@ -684,7 +684,7 @@ pub fn upsert_mcp_json_hub(hub: &Path, server: &str, norm: &McpNormalized) -> an
     Ok(())
 }
 
-fn write_mcp_to_agent(
+pub(crate) fn write_mcp_to_agent(
     path: &Path,
     agent: AgentKind,
     server: &str,

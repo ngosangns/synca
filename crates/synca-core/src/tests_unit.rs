@@ -8,6 +8,9 @@ use crate::scan::{json_to_normalized, mcp_fingerprint, scan_skills, toml_to_norm
 use crate::sync::{
     apply_plan, merge_plans, plan_sync_mcp, plan_sync_skills, upsert_mcp_json_hub, SyncAction,
 };
+use crate::manage::{
+    add_mcp, install_skill, mcp_from_cli, remove_mcp, remove_skill,
+};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -372,4 +375,68 @@ fn plan_sync_mcp_records_single_scope() {
             }
         }
     });
+}
+
+
+#[test]
+fn skill_install_and_unlink() {
+    with_temp_home(|home| {
+        let src = home.join("src-skill");
+        write_skill(&src, "fresh-skill", "# fresh");
+        // install from the skill dir itself
+        let skill_dir = src.join("fresh-skill");
+        let (plan, log) =
+            install_skill(Scope::User, home, skill_dir.to_str().unwrap(), None, false).unwrap();
+        assert!(!plan.actions.is_empty());
+        assert!(!log.is_empty());
+        let canon = home.join(".agents/skills/fresh-skill/SKILL.md");
+        assert!(canon.is_file(), "canonical missing");
+        let grok = home.join(".grok/skills/fresh-skill");
+        assert!(
+            std::fs::symlink_metadata(&grok).unwrap().file_type().is_symlink(),
+            "expected grok symlink"
+        );
+
+        // unlink only
+        let (_p, log2) =
+            remove_skill(Scope::User, home, "fresh-skill", None, false, false).unwrap();
+        assert!(log2.iter().any(|l| l.contains("unlinked")));
+        assert!(
+            !grok.exists() && std::fs::symlink_metadata(&grok).is_err(),
+            "grok link should be gone"
+        );
+        assert!(canon.is_file(), "canonical must remain after unlink");
+
+        // purge
+        let (_p, log3) =
+            remove_skill(Scope::User, home, "fresh-skill", None, true, false).unwrap();
+        assert!(log3.iter().any(|l| l.contains("purged")));
+        assert!(!canon.exists());
+    });
+}
+
+#[test]
+fn mcp_add_and_remove() {
+    with_temp_home(|home| {
+        let norm = mcp_from_cli("stdio", Some("npx -y demo-mcp"), None, Some(true)).unwrap();
+        let (_p, log) = add_mcp(Scope::User, home, "demo-mcp", norm, None, false).unwrap();
+        assert!(!log.is_empty());
+        let hub = home.join(".agents/mcp.json");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&hub).unwrap()).unwrap();
+        assert!(v["mcpServers"].get("demo-mcp").is_some());
+
+        let (_p2, log2) = remove_mcp(Scope::User, home, "demo-mcp", None, false).unwrap();
+        assert!(log2.iter().any(|l| l.contains("hub remove")));
+        let v2: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&hub).unwrap()).unwrap();
+        assert!(v2["mcpServers"].get("demo-mcp").is_none());
+    });
+}
+
+#[test]
+fn mcp_from_cli_url() {
+    let n = mcp_from_cli("sse", None, Some("https://example.com/mcp"), None).unwrap();
+    assert_eq!(n.transport, "sse");
+    assert_eq!(n.url.as_deref(), Some("https://example.com/mcp"));
 }

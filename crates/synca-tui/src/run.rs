@@ -107,6 +107,195 @@ fn handle_key(state: &mut AppState, code: KeyCode) -> bool {
                     state.status = "install update? y / n".into();
                 }
             },
+            Pending::InstallSkillInput { mut buffer } => match code {
+                KeyCode::Esc => actions::cancel_pending(state),
+                KeyCode::Enter => {
+                    if buffer.trim().is_empty() {
+                        state.status = "enter a path or git URL".into();
+                        state.pending = Some(Pending::InstallSkillInput { buffer });
+                    } else {
+                        actions::install_skill_preview(state, buffer.trim());
+                    }
+                }
+                KeyCode::Backspace => {
+                    buffer.pop();
+                    state.status = format!("Install skill path/URL: {buffer}_");
+                    state.pending = Some(Pending::InstallSkillInput { buffer });
+                }
+                KeyCode::Char(c) => {
+                    buffer.push(c);
+                    state.status = format!("Install skill path/URL: {buffer}_");
+                    state.pending = Some(Pending::InstallSkillInput { buffer });
+                }
+                _ => {}
+            },
+            Pending::InstallSkillConfirm { source, key: _ } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    actions::confirm_install_skill(state, &source)
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    actions::cancel_pending(state)
+                }
+                _ => {
+                    state.status = "install skill? y / n".into();
+                }
+            },
+            Pending::InstallMcpName { mut buffer } => match code {
+                KeyCode::Esc => actions::cancel_pending(state),
+                KeyCode::Enter => {
+                    let name = buffer.trim().to_string();
+                    if name.is_empty() {
+                        state.status = "enter MCP name".into();
+                        state.pending = Some(Pending::InstallMcpName { buffer });
+                    } else {
+                        state.pending = Some(Pending::InstallMcpTransport {
+                            name: name.clone(),
+                            buffer: "stdio".into(),
+                        });
+                        state.status =
+                            format!("MCP '{name}' transport [stdio/sse/http] (default stdio): stdio_");
+                    }
+                }
+                KeyCode::Backspace => {
+                    buffer.pop();
+                    state.status = format!("MCP name: {buffer}_");
+                    state.pending = Some(Pending::InstallMcpName { buffer });
+                }
+                KeyCode::Char(c) => {
+                    buffer.push(c);
+                    state.status = format!("MCP name: {buffer}_");
+                    state.pending = Some(Pending::InstallMcpName { buffer });
+                }
+                _ => {}
+            },
+            Pending::InstallMcpTransport { name, mut buffer } => match code {
+                KeyCode::Esc => actions::cancel_pending(state),
+                KeyCode::Enter => {
+                    let transport = if buffer.trim().is_empty() {
+                        "stdio".to_string()
+                    } else {
+                        buffer.trim().to_ascii_lowercase()
+                    };
+                    let hint = if matches!(transport.as_str(), "stdio" | "local") {
+                        "command"
+                    } else {
+                        "url"
+                    };
+                    state.pending = Some(Pending::InstallMcpEndpoint {
+                        name: name.clone(),
+                        transport: transport.clone(),
+                        buffer: String::new(),
+                    });
+                    state.status = format!("MCP '{name}' ({transport}) {hint}: _");
+                }
+                KeyCode::Backspace => {
+                    buffer.pop();
+                    state.status = format!("MCP '{name}' transport: {buffer}_");
+                    state.pending = Some(Pending::InstallMcpTransport { name, buffer });
+                }
+                KeyCode::Char(c) => {
+                    buffer.push(c);
+                    state.status = format!("MCP '{name}' transport: {buffer}_");
+                    state.pending = Some(Pending::InstallMcpTransport { name, buffer });
+                }
+                _ => {}
+            },
+            Pending::InstallMcpEndpoint {
+                name,
+                transport,
+                mut buffer,
+            } => match code {
+                KeyCode::Esc => actions::cancel_pending(state),
+                KeyCode::Enter => {
+                    if buffer.trim().is_empty() {
+                        state.status = "endpoint required".into();
+                        state.pending = Some(Pending::InstallMcpEndpoint {
+                            name,
+                            transport,
+                            buffer,
+                        });
+                    } else {
+                        let endpoint = buffer.trim().to_string();
+                        state.status = format!(
+                            "Add MCP '{name}' ({transport}: {endpoint}) [{}]? y/n",
+                            state.page.scope().as_str()
+                        );
+                        state.pending = Some(Pending::InstallMcpConfirm {
+                            name,
+                            transport,
+                            endpoint,
+                        });
+                    }
+                }
+                KeyCode::Backspace => {
+                    buffer.pop();
+                    state.status = format!("MCP '{name}' endpoint: {buffer}_");
+                    state.pending = Some(Pending::InstallMcpEndpoint {
+                        name,
+                        transport,
+                        buffer,
+                    });
+                }
+                KeyCode::Char(c) => {
+                    buffer.push(c);
+                    state.status = format!("MCP '{name}' endpoint: {buffer}_");
+                    state.pending = Some(Pending::InstallMcpEndpoint {
+                        name,
+                        transport,
+                        buffer,
+                    });
+                }
+                _ => {}
+            },
+            Pending::InstallMcpConfirm {
+                name,
+                transport,
+                endpoint,
+            } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    actions::confirm_install_mcp(state, &name, &transport, &endpoint)
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    actions::cancel_pending(state)
+                }
+                _ => state.status = "add mcp? y / n".into(),
+            },
+            Pending::DeleteSkillConfirm { key } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    actions::confirm_unlink_skill(state, &key)
+                }
+                KeyCode::Char('p') | KeyCode::Char('P') => {
+                    state.status = format!(
+                        "PURGE '{key}' deletes canonical + all links. Type y again to confirm, n cancel"
+                    );
+                    state.pending = Some(Pending::DeleteSkillPurgeConfirm { key });
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    actions::cancel_pending(state)
+                }
+                _ => {
+                    state.status =
+                        "delete skill: [y] unlink  [p] purge  [n] cancel".into();
+                }
+            },
+            Pending::DeleteSkillPurgeConfirm { key } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    actions::confirm_purge_skill(state, &key)
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    actions::cancel_pending(state)
+                }
+                _ => state.status = "confirm PURGE? y / n".into(),
+            },
+            Pending::DeleteMcpConfirm { key } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    actions::confirm_remove_mcp(state, &key)
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    actions::cancel_pending(state)
+                }
+                _ => state.status = "remove mcp? y / n".into(),
+            },
         }
         return false;
     }
@@ -142,6 +331,8 @@ fn handle_key(state: &mut AppState, code: KeyCode) -> bool {
         KeyCode::Char('S') => actions::dry_run_all_skills(state),
         KeyCode::Char('M') => actions::dry_run_all_mcp(state),
         KeyCode::Char('A') => actions::dry_run_all(state),
+        KeyCode::Char('i') => actions::begin_install(state),
+        KeyCode::Char('d') => actions::begin_delete(state),
         KeyCode::Char('u') => actions::check_update_action(state),
         KeyCode::Char('r') => {
             state.reload();

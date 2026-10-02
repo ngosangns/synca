@@ -4,6 +4,19 @@ Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, 
 
 Inspired by [hearth](https://github.com/ngosangns/hearth)’s TUI stack (Ratatui + crossterm), focused on skills/MCP sync — not Hearth’s daemon/services.
 
+## Manage skills / MCP
+
+```bash
+synca skills install ./my-skill --scope user
+synca skills install https://github.com/org/skill-repo.git --dry-run
+synca skills remove my-skill            # unlink agents (canonical kept)
+synca skills remove my-skill --purge --yes
+synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
+synca mcp remove my-server --scope user
+```
+
+TUI: `i` install/add, `d` delete (skill: `y` unlink / `p` then `y` purge).
+
 ## Install
 
 ### From GitHub Release (recommended)
@@ -11,7 +24,7 @@ Inspired by [hearth](https://github.com/ngosangns/hearth)’s TUI stack (Ratatui
 Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
 
 ```bash
-TAG=v0.1.7
+TAG=v0.1.9
 ASSET=synca-${TAG}-darwin-arm64
 curl -fsSL -o /tmp/$ASSET \
   "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"

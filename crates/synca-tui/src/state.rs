@@ -78,6 +78,28 @@ pub enum Pending {
     ResolveConflict { remaining: Vec<ConflictItem> },
     /// Update available: await y/n to install
     UpdateInstall,
+    /// Install skill: type path or git URL
+    InstallSkillInput { buffer: String },
+    /// Confirm skill install preview
+    InstallSkillConfirm { source: String, key: String },
+    /// Install MCP: step name
+    InstallMcpName { buffer: String },
+    /// Install MCP: transport
+    InstallMcpTransport { name: String, buffer: String },
+    /// Install MCP: command or url
+    InstallMcpEndpoint { name: String, transport: String, buffer: String },
+    /// Confirm MCP add
+    InstallMcpConfirm {
+        name: String,
+        transport: String,
+        endpoint: String,
+    },
+    /// Delete skill: y=unlink, p=purge, n=cancel
+    DeleteSkillConfirm { key: String },
+    /// Second confirm for purge
+    DeleteSkillPurgeConfirm { key: String },
+    /// Delete MCP: y/n
+    DeleteMcpConfirm { key: String },
 }
 
 #[derive(Debug, Clone, Copy, Default)]

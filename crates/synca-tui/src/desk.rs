@@ -485,13 +485,31 @@ fn sync_hotkey_spans(state: &AppState) -> Vec<Span<'static>> {
         Span::raw("mcp-all "),
         key_chip(" A "),
         Span::raw("all "),
-        Span::raw("(this page only) "),
+        key_chip(" i "),
+        Span::raw("install "),
+        key_chip(" d "),
+        Span::raw("delete "),
+        Span::raw("(this page) "),
     ];
     match &state.pending {
-        Some(crate::state::Pending::SyncConfirm) | Some(crate::state::Pending::UpdateInstall) => {
+        Some(crate::state::Pending::SyncConfirm)
+        | Some(crate::state::Pending::UpdateInstall)
+        | Some(crate::state::Pending::InstallSkillConfirm { .. })
+        | Some(crate::state::Pending::InstallMcpConfirm { .. })
+        | Some(crate::state::Pending::DeleteMcpConfirm { .. })
+        | Some(crate::state::Pending::DeleteSkillPurgeConfirm { .. }) => {
             spans.push(Span::raw(" · "));
             spans.push(pending_chip(" y "));
             spans.push(Span::raw("confirm "));
+            spans.push(pending_chip(" n "));
+            spans.push(Span::raw("cancel"));
+        }
+        Some(crate::state::Pending::DeleteSkillConfirm { .. }) => {
+            spans.push(Span::raw(" · "));
+            spans.push(pending_chip(" y "));
+            spans.push(Span::raw("unlink "));
+            spans.push(pending_chip(" p "));
+            spans.push(Span::raw("purge "));
             spans.push(pending_chip(" n "));
             spans.push(Span::raw("cancel"));
         }
@@ -503,6 +521,16 @@ fn sync_hotkey_spans(state: &AppState) -> Vec<Span<'static>> {
             spans.push(Span::raw("keep-tgt "));
             spans.push(pending_chip(" s "));
             spans.push(Span::raw("skip"));
+        }
+        Some(crate::state::Pending::InstallSkillInput { .. })
+        | Some(crate::state::Pending::InstallMcpName { .. })
+        | Some(crate::state::Pending::InstallMcpTransport { .. })
+        | Some(crate::state::Pending::InstallMcpEndpoint { .. }) => {
+            spans.push(Span::raw(" · "));
+            spans.push(pending_chip(" Enter "));
+            spans.push(Span::raw("next "));
+            spans.push(pending_chip(" Esc "));
+            spans.push(Span::raw("cancel"));
         }
         None => {}
     }
@@ -672,7 +700,7 @@ fn draw_conflict_overlay(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn draw_help(frame: &mut Frame, area: Rect) {
     let w = area.width.min(72);
-    let h = area.height.min(22);
+    let h = area.height.min(24);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect::new(x, y, w, h);
@@ -688,13 +716,15 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  S                  sync ALL skills (current page) → y/n"),
         Line::from("  M                  sync ALL MCPs (current page) → y/n"),
         Line::from("  A                  sync ALL skills + MCPs (current page) → y/n"),
+        Line::from("  i                  install skill (path/git) or add MCP"),
+        Line::from("  d                  delete: skill unlink (y) / purge (p×2); MCP remove"),
         Line::from("  u                  check/install update from GitHub"),
         Line::from("  r                  reload inventory"),
         Line::from("  ?                  toggle help"),
         Line::from("  q                  quit"),
         Line::from(""),
         Line::from("Conflicts: a=keep-source b=keep-target s=skip"),
-        Line::from("Never silent overwrite."),
+        Line::from("Install/delete are scope-locked to the current User|Project page."),
     ];
     frame.render_widget(
         Paragraph::new(text).block(

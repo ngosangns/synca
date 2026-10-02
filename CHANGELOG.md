@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.9 — 2026-10-02
+
+- **Install / remove:** `i` install skill (path or git URL) or add MCP; `d` delete (skill: unlink default, purge needs double-confirm; MCP: remove from hub + agents). Scope = current User|Project page only.
+- **CLI:** `synca skills install|remove`, `synca mcp add|remove` with `--dry-run` / `--purge` / `--yes`.
+- **Tests:** install→unlink→purge skill; MCP add/remove round-trip.
+
 ## 0.1.8 — 2026-10-02
 
 - **Bounded lists:** Skills/MCPs panes no longer behave like an endless/wrapping list. j/k and mouse wheel **stop at the first and last row** (no rem_euclid wrap).

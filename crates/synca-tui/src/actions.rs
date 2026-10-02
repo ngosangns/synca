@@ -3,6 +3,10 @@ use synca_core::models::{ConflictDecisions, ConflictPolicy};
 use synca_core::sync::{
     apply_plan, merge_plans, plan_sync_mcp, plan_sync_skills, SyncAction,
 };
+use synca_core::manage::{
+    add_mcp, install_skill, mcp_from_cli, plan_install_skill, remove_mcp, remove_skill,
+    resolve_skill_source,
+};
 use synca_core::update::{check_update, install_update};
 
 fn conflicts_from_plan(plan: &synca_core::SyncPlan) -> Vec<ConflictItem> {
@@ -229,6 +233,159 @@ pub fn confirm_update_install(state: &mut AppState) {
             state.update_msg = state.status.clone();
         }
         Err(e) => state.status = format!("update install failed: {e}"),
+    }
+    state.pending = None;
+}
+
+pub fn begin_install(state: &mut AppState) {
+    match state.section {
+        Section::Skills => {
+            state.pending = Some(Pending::InstallSkillInput {
+                buffer: String::new(),
+            });
+            state.status =
+                "Install skill: type local path or git URL, Enter to preview, Esc cancel".into();
+        }
+        Section::Mcps => {
+            state.pending = Some(Pending::InstallMcpName {
+                buffer: String::new(),
+            });
+            state.status = "Add MCP: type server name, Enter next, Esc cancel".into();
+        }
+    }
+}
+
+pub fn begin_delete(state: &mut AppState) {
+    match state.section {
+        Section::Skills => {
+            let Some(s) = state.skills().get(state.skill_idx) else {
+                state.status = "no skill selected".into();
+                return;
+            };
+            let key = s.key.clone();
+            state.status = format!(
+                "Delete skill '{key}' [{scope}]: [y] unlink agents  [p] PURGE canonical  [n] cancel",
+                scope = state.page.scope().as_str()
+            );
+            state.pending = Some(Pending::DeleteSkillConfirm { key });
+        }
+        Section::Mcps => {
+            let Some(m) = state.mcps().get(state.mcp_idx) else {
+                state.status = "no mcp selected".into();
+                return;
+            };
+            let key = m.key.clone();
+            state.status = format!(
+                "Remove MCP '{key}' from hub+agents [{scope}]? y/n",
+                scope = state.page.scope().as_str()
+            );
+            state.pending = Some(Pending::DeleteMcpConfirm { key });
+        }
+    }
+}
+
+pub fn install_skill_preview(state: &mut AppState, source: &str) {
+    let scope = state.page.scope();
+    match resolve_skill_source(source) {
+        Ok((dir, _tmp)) => match plan_install_skill(scope, &state.cwd, &dir, None) {
+            Ok(plan) => {
+                let key = plan
+                    .actions
+                    .iter()
+                    .find_map(|a| match a {
+                        synca_core::ManageAction::CopySkill { skill_key, .. } => {
+                            Some(skill_key.clone())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "skill".into());
+                state.status = format!(
+                    "Install '{key}' → canonical + {} link(s) [{scope}]. y=apply n=cancel",
+                    plan.actions.len().saturating_sub(1),
+                    scope = scope.as_str()
+                );
+                state.pending = Some(Pending::InstallSkillConfirm {
+                    source: source.to_string(),
+                    key,
+                });
+            }
+            Err(e) => {
+                state.status = format!("plan error: {e}");
+                state.pending = Some(Pending::InstallSkillInput {
+                    buffer: source.to_string(),
+                });
+            }
+        },
+        Err(e) => {
+            state.status = format!("resolve error: {e}");
+            state.pending = Some(Pending::InstallSkillInput {
+                buffer: source.to_string(),
+            });
+        }
+    }
+}
+
+pub fn confirm_install_skill(state: &mut AppState, source: &str) {
+    let scope = state.page.scope();
+    match install_skill(scope, &state.cwd, source, None, false) {
+        Ok((_plan, log)) => {
+            state.status = format!("installed ({} steps) [{}]", log.len(), scope.as_str());
+            state.reload();
+        }
+        Err(e) => state.status = format!("install error: {e}"),
+    }
+    state.pending = None;
+}
+
+pub fn confirm_install_mcp(state: &mut AppState, name: &str, transport: &str, endpoint: &str) {
+    let scope = state.page.scope();
+    let norm = if matches!(transport, "stdio" | "local") {
+        mcp_from_cli(transport, Some(endpoint), None, Some(true))
+    } else {
+        mcp_from_cli(transport, None, Some(endpoint), Some(true))
+    };
+    match norm.and_then(|n| add_mcp(scope, &state.cwd, name, n, None, false)) {
+        Ok((_plan, log)) => {
+            state.status = format!("mcp '{name}' added ({} steps) [{}]", log.len(), scope.as_str());
+            state.reload();
+        }
+        Err(e) => state.status = format!("mcp add error: {e}"),
+    }
+    state.pending = None;
+}
+
+pub fn confirm_unlink_skill(state: &mut AppState, key: &str) {
+    let scope = state.page.scope();
+    match remove_skill(scope, &state.cwd, key, None, false, false) {
+        Ok((_plan, log)) => {
+            state.status = format!("unlinked '{key}' ({} steps) [{}]", log.len(), scope.as_str());
+            state.reload();
+        }
+        Err(e) => state.status = format!("unlink error: {e}"),
+    }
+    state.pending = None;
+}
+
+pub fn confirm_purge_skill(state: &mut AppState, key: &str) {
+    let scope = state.page.scope();
+    match remove_skill(scope, &state.cwd, key, None, true, false) {
+        Ok((_plan, log)) => {
+            state.status = format!("PURGED '{key}' ({} steps) [{}]", log.len(), scope.as_str());
+            state.reload();
+        }
+        Err(e) => state.status = format!("purge error: {e}"),
+    }
+    state.pending = None;
+}
+
+pub fn confirm_remove_mcp(state: &mut AppState, key: &str) {
+    let scope = state.page.scope();
+    match remove_mcp(scope, &state.cwd, key, None, false) {
+        Ok((_plan, log)) => {
+            state.status = format!("removed mcp '{key}' ({} steps) [{}]", log.len(), scope.as_str());
+            state.reload();
+        }
+        Err(e) => state.status = format!("mcp remove error: {e}"),
     }
     state.pending = None;
 }

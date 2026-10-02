@@ -2,6 +2,7 @@ mod update;
 
 use anyhow::Context;
 use synca_core::models::{AgentKind, ConflictDecisions, ConflictPolicy, Scope};
+use synca_core::manage::{add_mcp, install_skill, mcp_from_cli, remove_mcp, remove_skill};
 use synca_core::scan::scan_all;
 use synca_core::sync::{apply_plan, merge_plans, plan_sync_mcp, plan_sync_skills, SyncAction, SyncPlan};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -54,6 +55,37 @@ pub enum SkillsCmd {
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
+    /// Install a skill from a local path or git URL into canonical + agent links
+    Install {
+        /// Local path or git URL containing SKILL.md
+        source: String,
+        #[arg(long, value_enum, default_value_t = ScopeArg::User)]
+        scope: ScopeArg,
+        #[arg(long)]
+        agents: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
+    /// Remove a skill (default: unlink agents only; --purge deletes canonical too)
+    Remove {
+        name: String,
+        #[arg(long, value_enum, default_value_t = ScopeArg::User)]
+        scope: ScopeArg,
+        #[arg(long)]
+        agents: Option<String>,
+        /// Also delete canonical tree (requires --yes or interactive double-confirm)
+        #[arg(long)]
+        purge: bool,
+        /// Skip interactive purge confirmation
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -63,6 +95,40 @@ pub enum McpCmd {
         scope: ScopeArg,
         #[arg(long)]
         json: bool,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
+    /// Add an MCP server to the hub and propagate to agents
+    Add {
+        name: String,
+        #[arg(long, default_value = "stdio")]
+        transport: String,
+        /// Command line for stdio (e.g. "npx -y @pkg/server")
+        #[arg(long)]
+        command: Option<String>,
+        /// URL for sse/http/remote
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long)]
+        enabled: Option<bool>,
+        #[arg(long, value_enum, default_value_t = ScopeArg::User)]
+        scope: ScopeArg,
+        #[arg(long)]
+        agents: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, default_value = ".")]
+        cwd: PathBuf,
+    },
+    /// Remove an MCP server from hub + agent configs in scope
+    Remove {
+        name: String,
+        #[arg(long, value_enum, default_value_t = ScopeArg::User)]
+        scope: ScopeArg,
+        #[arg(long)]
+        agents: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
@@ -138,44 +204,133 @@ pub fn run() -> anyhow::Result<()> {
         Commands::Tui { cwd } => {
             synca_tui::run(&cwd)?;
         }
-        Commands::Skills {
-            cmd: SkillsCmd::List { scope, json, cwd },
-        } => {
-            let inv = scan_all(scope.into(), &cwd);
-            if json {
-                println!("{}", serde_json::to_string_pretty(&inv.skills)?);
-            } else {
-                println!("Skills ({})", scope_label(scope));
-                for s in &inv.skills {
-                    let agents: Vec<_> = s.presence.iter().map(|p| p.agent.as_str()).collect();
-                    let flag = if s.mismatch { " MISMATCH" } else { "" };
-                    println!(
-                        "  {}  [{}]{}{}",
-                        s.display_name,
-                        agents.join(","),
-                        flag,
-                        if s.mismatch { "" } else { "" }
-                    );
+        Commands::Skills { cmd } => match cmd {
+            SkillsCmd::List { scope, json, cwd } => {
+                let inv = scan_all(scope.into(), &cwd);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&inv.skills)?);
+                } else {
+                    println!("Skills ({})", scope_label(scope));
+                    for s in &inv.skills {
+                        let agents: Vec<_> = s.presence.iter().map(|p| p.agent.as_str()).collect();
+                        let flag = if s.mismatch { " MISMATCH" } else { "" };
+                        println!("  {}  [{}]{}", s.display_name, agents.join(","), flag);
+                    }
+                    println!("{} skill(s)", inv.skills.len());
                 }
-                println!("{} skill(s)", inv.skills.len());
             }
-        }
-        Commands::Mcp {
-            cmd: McpCmd::List { scope, json, cwd },
-        } => {
-            let inv = scan_all(scope.into(), &cwd);
-            if json {
-                println!("{}", serde_json::to_string_pretty(&inv.mcps)?);
-            } else {
-                println!("MCPs ({})", scope_label(scope));
-                for m in &inv.mcps {
-                    let agents: Vec<_> = m.presence.iter().map(|p| p.agent.as_str()).collect();
-                    let flag = if m.mismatch { " MISMATCH" } else { "" };
-                    println!("  {}  [{}]{}", m.key, agents.join(","), flag);
+            SkillsCmd::Install {
+                source,
+                scope,
+                agents,
+                dry_run,
+                cwd,
+            } => {
+                let scope: Scope = scope.into();
+                let filter = agents.as_ref().map(|s| AgentKind::parse_list(s));
+                let (plan, log) = install_skill(scope, &cwd, &source, filter.as_deref(), dry_run)?;
+                print_manage_plan(&plan);
+                if dry_run {
+                    println!("(dry-run; no changes)");
+                } else {
+                    for line in log {
+                        println!("  {line}");
+                    }
                 }
-                println!("{} mcp server(s)", inv.mcps.len());
             }
-        }
+            SkillsCmd::Remove {
+                name,
+                scope,
+                agents,
+                purge,
+                yes,
+                dry_run,
+                cwd,
+            } => {
+                let scope: Scope = scope.into();
+                if purge && !yes && !dry_run {
+                    if !confirm_purge(&name)? {
+                        println!("purge cancelled");
+                        return Ok(());
+                    }
+                }
+                let filter = agents.as_ref().map(|s| AgentKind::parse_list(s));
+                let (plan, log) =
+                    remove_skill(scope, &cwd, &name, filter.as_deref(), purge, dry_run)?;
+                print_manage_plan(&plan);
+                if dry_run {
+                    println!("(dry-run; no changes)");
+                } else {
+                    for line in log {
+                        println!("  {line}");
+                    }
+                }
+            }
+        },
+        Commands::Mcp { cmd } => match cmd {
+            McpCmd::List { scope, json, cwd } => {
+                let inv = scan_all(scope.into(), &cwd);
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&inv.mcps)?);
+                } else {
+                    println!("MCPs ({})", scope_label(scope));
+                    for m in &inv.mcps {
+                        let agents: Vec<_> = m.presence.iter().map(|p| p.agent.as_str()).collect();
+                        let flag = if m.mismatch { " MISMATCH" } else { "" };
+                        println!("  {}  [{}]{}", m.key, agents.join(","), flag);
+                    }
+                    println!("{} mcp server(s)", inv.mcps.len());
+                }
+            }
+            McpCmd::Add {
+                name,
+                transport,
+                command,
+                url,
+                enabled,
+                scope,
+                agents,
+                dry_run,
+                cwd,
+            } => {
+                let scope: Scope = scope.into();
+                let norm = mcp_from_cli(
+                    &transport,
+                    command.as_deref(),
+                    url.as_deref(),
+                    enabled,
+                )?;
+                let filter = agents.as_ref().map(|s| AgentKind::parse_list(s));
+                let (plan, log) = add_mcp(scope, &cwd, &name, norm, filter.as_deref(), dry_run)?;
+                print_manage_plan(&plan);
+                if dry_run {
+                    println!("(dry-run; no changes)");
+                } else {
+                    for line in log {
+                        println!("  {line}");
+                    }
+                }
+            }
+            McpCmd::Remove {
+                name,
+                scope,
+                agents,
+                dry_run,
+                cwd,
+            } => {
+                let scope: Scope = scope.into();
+                let filter = agents.as_ref().map(|s| AgentKind::parse_list(s));
+                let (plan, log) = remove_mcp(scope, &cwd, &name, filter.as_deref(), dry_run)?;
+                print_manage_plan(&plan);
+                if dry_run {
+                    println!("(dry-run; no changes)");
+                } else {
+                    for line in log {
+                        println!("  {line}");
+                    }
+                }
+            }
+        },
         Commands::Sync { cmd } => match cmd {
             SyncCmd::Skills {
                 scope,
@@ -326,6 +481,31 @@ fn atty_stdin() -> bool {
     }
 }
 
+
+
+fn print_manage_plan(plan: &synca_core::ManagePlan) {
+    println!(
+        "Manage plan (scope={}, dry_run={}, actions={}):",
+        plan.scope,
+        plan.dry_run,
+        plan.actions.len()
+    );
+    for n in &plan.notes {
+        println!("  note: {n}");
+    }
+    for (i, a) in plan.actions.iter().enumerate() {
+        println!("  {}. {}", i + 1, serde_json::to_string(a).unwrap_or_default());
+    }
+}
+
+fn confirm_purge(name: &str) -> anyhow::Result<bool> {
+    eprintln!("PURGE skill '{name}' will DELETE the canonical tree and unlink all agents.");
+    eprintln!("Type the skill name again to confirm, or press Enter to cancel:");
+    eprint!("> ");
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(line.trim() == name || line.trim() == synca_core::models::normalize_key(name))
+}
 
 pub fn main_entry() -> anyhow::Result<()> {
     run().context("synca failed")
