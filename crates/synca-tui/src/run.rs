@@ -98,20 +98,29 @@ fn event_loop(
             KeyCode::Char('q') | KeyCode::Esc => break,
             KeyCode::Tab => {
                 state.page = state.page.toggle();
-                state.clamp_idx();
+                state.on_context_change();
                 state.status = format!("page: {}", state.page.label());
             }
             KeyCode::Char('[') => {
                 state.section = crate::state::Section::Skills;
+                state.on_context_change();
                 state.status = format!("section: {}", state.section.label());
             }
             KeyCode::Char(']') => {
                 state.section = crate::state::Section::Mcps;
+                state.on_context_change();
                 state.status = format!("section: {}", state.section.label());
             }
             KeyCode::Char(' ') => {
                 state.section = state.section.toggle();
+                state.on_context_change();
                 state.status = format!("section: {}", state.section.label());
+            }
+            KeyCode::PageDown => {
+                state.detail_scroll = state.detail_scroll.saturating_add(3);
+            }
+            KeyCode::PageUp => {
+                state.detail_scroll = state.detail_scroll.saturating_sub(3);
             }
             KeyCode::Char('j') | KeyCode::Down => state.move_sel(1),
             KeyCode::Char('k') | KeyCode::Up => state.move_sel(-1),

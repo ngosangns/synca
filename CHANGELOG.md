@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 — 2026-10-02
+
+- Fix TUI list panes not auto-scrolling on j/k: Skills and MCPs now use ratatui `ListState` + `render_stateful_widget` so the focused row stays in the viewport.
+- Reset list selection / detail scroll on Tab (User↔Project) and section switch (`[`/`]`/Space) so scroll offsets are not stale across contexts.
+- Detail pane supports PageUp/PageDown scroll; scroll resets when the focused skill/MCP changes.
+
+
 ## 0.1.1 — 2026-10-02
 
 Rename project to **synca** (repo, crates, binary, install paths, release assets).

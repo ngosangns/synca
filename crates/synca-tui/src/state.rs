@@ -1,6 +1,7 @@
 use synca_core::models::{ConflictPolicy, McpEntry, Scope, SkillEntry};
 use synca_core::scan::Inventory;
 use synca_core::sync::SyncPlan;
+use ratatui::widgets::ListState;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -87,6 +88,12 @@ pub struct AppState {
     pub project_inv: Inventory,
     pub skill_idx: usize,
     pub mcp_idx: usize,
+    /// Keeps Skills list scrolled so `skill_idx` stays visible.
+    pub skill_list_state: ListState,
+    /// Keeps MCPs list scrolled so `mcp_idx` stays visible.
+    pub mcp_list_state: ListState,
+    /// Detail pane vertical scroll; reset when selection / page / section changes.
+    pub detail_scroll: u16,
     pub status: String,
     pub help: bool,
     pub pending: Option<Pending>,
@@ -102,7 +109,7 @@ impl AppState {
         let user_inv = synca_core::scan::scan_all(Scope::User, cwd);
         let project_inv = synca_core::scan::scan_all(Scope::Project, cwd);
         let project_ok = project_inv.project_root.is_some();
-        Self {
+        let mut s = Self {
             cwd: cwd.to_path_buf(),
             page: Page::User,
             section: Section::Skills,
@@ -110,6 +117,9 @@ impl AppState {
             project_inv,
             skill_idx: 0,
             mcp_idx: 0,
+            skill_list_state: ListState::default(),
+            mcp_list_state: ListState::default(),
+            detail_scroll: 0,
             status: "Tab pages · [/] sections · j/k move · s sync · S sync-missing · u update · q quit"
                 .into(),
             help: false,
@@ -119,7 +129,9 @@ impl AppState {
             mcp_decisions: BTreeMap::new(),
             project_ok,
             update_msg: String::new(),
-        }
+        };
+        s.sync_list_states();
+        s
     }
 
     pub fn reload(&mut self) {
@@ -127,6 +139,8 @@ impl AppState {
         self.project_inv = synca_core::scan::scan_all(Scope::Project, &self.cwd);
         self.project_ok = self.project_inv.project_root.is_some();
         self.clamp_idx();
+        self.detail_scroll = 0;
+        self.sync_list_states();
     }
 
     pub fn inv(&self) -> &Inventory {
@@ -159,6 +173,30 @@ impl AppState {
         }
     }
 
+    /// Keep `ListState` selection in sync with indices so ratatui auto-scrolls
+    /// the focused row into the visible viewport. Also clears stale offsets when
+    /// the list becomes empty or the selected index wraps / is clamped.
+    pub fn sync_list_states(&mut self) {
+        if self.skills().is_empty() {
+            self.skill_list_state.select(None);
+        } else {
+            self.skill_list_state.select(Some(self.skill_idx));
+        }
+        if self.mcps().is_empty() {
+            self.mcp_list_state.select(None);
+        } else {
+            self.mcp_list_state.select(Some(self.mcp_idx));
+        }
+    }
+
+    /// After Tab / section change: clamp indices, reset detail scroll, re-sync list states
+    /// so a long scroll on one page/section cannot hide the selection on another.
+    pub fn on_context_change(&mut self) {
+        self.clamp_idx();
+        self.detail_scroll = 0;
+        self.sync_list_states();
+    }
+
     pub fn move_sel(&mut self, delta: i32) {
         match self.section {
             Section::Skills => {
@@ -178,5 +216,54 @@ impl AppState {
                 self.mcp_idx = cur.rem_euclid(n as i32) as usize;
             }
         }
+        self.detail_scroll = 0;
+        self.sync_list_states();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Pure helper documenting the viewport contract (ratatui ListState does this on render).
+    fn ensure_visible(selected: usize, offset: usize, visible: usize, len: usize) -> usize {
+        if len == 0 || visible == 0 {
+            return 0;
+        }
+        let selected = selected.min(len - 1);
+        let max_offset = len.saturating_sub(visible);
+        let mut offset = offset.min(max_offset);
+        if selected < offset {
+            offset = selected;
+        } else if selected >= offset.saturating_add(visible) {
+            offset = selected + 1 - visible;
+        }
+        offset.min(max_offset)
+    }
+
+    #[test]
+    fn ensure_visible_scrolls_down_when_past_bottom() {
+        // viewport height 5, select index 7 with offset 0 → offset becomes 3
+        assert_eq!(ensure_visible(7, 0, 5, 20), 3);
+    }
+
+    #[test]
+    fn ensure_visible_scrolls_up_when_above_top() {
+        assert_eq!(ensure_visible(2, 5, 5, 20), 2);
+    }
+
+    #[test]
+    fn ensure_visible_unchanged_when_already_in_view() {
+        assert_eq!(ensure_visible(6, 4, 5, 20), 4);
+    }
+
+    #[test]
+    fn ensure_visible_wrap_to_start() {
+        // after rem_euclid wrap to 0 from end, offset must return to 0
+        assert_eq!(ensure_visible(0, 15, 5, 20), 0);
+    }
+
+    #[test]
+    fn ensure_visible_empty_or_zero_height() {
+        assert_eq!(ensure_visible(0, 0, 0, 10), 0);
+        assert_eq!(ensure_visible(0, 3, 5, 0), 0);
     }
 }

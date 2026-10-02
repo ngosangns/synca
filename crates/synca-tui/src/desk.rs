@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
-pub fn draw(frame: &mut Frame, state: &AppState) {
+pub fn draw(frame: &mut Frame, state: &mut AppState) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -58,7 +58,7 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn draw_body(frame: &mut Frame, area: Rect, state: &AppState) {
+fn draw_body(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
@@ -74,80 +74,95 @@ fn draw_body(frame: &mut Frame, area: Rect, state: &AppState) {
     draw_detail(frame, cols[1], state);
 }
 
-fn draw_skills_list(frame: &mut Frame, area: Rect, state: &AppState) {
+fn draw_skills_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let focused = state.section == Section::Skills;
     let title = if focused { " Skills * " } else { " Skills " };
     let border = if focused { Color::Cyan } else { Color::DarkGray };
     let items: Vec<ListItem> = state
         .skills()
         .iter()
-        .enumerate()
-        .map(|(i, s)| {
+        .map(|s| {
             let agents: Vec<_> = s.presence.iter().map(|p| p.agent.as_str()).collect();
             let mark = if s.mismatch { "!" } else { " " };
-            let sel = focused && i == state.skill_idx;
-            let style = if sel {
-                Style::default()
-                    .bg(Color::Blue)
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
             ListItem::new(format!(
                 "{mark} {}  ({}) [{}]",
                 s.display_name,
                 s.presence.len(),
                 agents.join(",")
             ))
-            .style(style)
         })
         .collect();
-    let list = List::new(items).block(
+    // Keep ListState selection synced before stateful render so ratatui scrolls
+    // the selected row into the viewport (j/k past the visible height).
+    if state.skills().is_empty() {
+        state.skill_list_state.select(None);
+    } else {
+        state.skill_list_state.select(Some(state.skill_idx));
+    }
+    let mut list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border))
             .title(title),
     );
-    frame.render_widget(list, area);
+    if focused {
+        list = list
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("› ");
+    } else if !state.skills().is_empty() {
+        // Dim marker on the other list so scroll position / selection stay obvious.
+        list = list.highlight_style(Style::default().fg(Color::DarkGray));
+    }
+    frame.render_stateful_widget(list, area, &mut state.skill_list_state);
 }
 
-fn draw_mcps_list(frame: &mut Frame, area: Rect, state: &AppState) {
+fn draw_mcps_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let focused = state.section == Section::Mcps;
     let title = if focused { " MCPs * " } else { " MCPs " };
     let border = if focused { Color::Cyan } else { Color::DarkGray };
     let items: Vec<ListItem> = state
         .mcps()
         .iter()
-        .enumerate()
-        .map(|(i, m)| {
+        .map(|m| {
             let agents: Vec<_> = m.presence.iter().map(|p| p.agent.as_str()).collect();
             let mark = if m.mismatch { "!" } else { " " };
-            let sel = focused && i == state.mcp_idx;
-            let style = if sel {
-                Style::default()
-                    .bg(Color::Blue)
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
             ListItem::new(format!(
                 "{mark} {}  ({}) [{}]",
                 m.key,
                 m.presence.len(),
                 agents.join(",")
             ))
-            .style(style)
         })
         .collect();
-    let list = List::new(items).block(
+    if state.mcps().is_empty() {
+        state.mcp_list_state.select(None);
+    } else {
+        state.mcp_list_state.select(Some(state.mcp_idx));
+    }
+    let mut list = List::new(items).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border))
             .title(title),
     );
-    frame.render_widget(list, area);
+    if focused {
+        list = list
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("› ");
+    } else if !state.mcps().is_empty() {
+        list = list.highlight_style(Style::default().fg(Color::DarkGray));
+    }
+    frame.render_stateful_widget(list, area, &mut state.mcp_list_state);
 }
 
 fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
@@ -268,6 +283,7 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
 
     let para = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
+        .scroll((state.detail_scroll, 0))
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -297,7 +313,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("Keys"),
         Line::from("  Tab          switch User / Project"),
         Line::from("  [ / ]        Skills / MCPs section"),
-        Line::from("  j / k        move selection"),
+        Line::from("  j / k        move selection (list auto-scrolls)"),
+        Line::from("  PgUp/PgDn    scroll detail pane"),
         Line::from("  s            dry-run sync focused → y/n"),
         Line::from("  S            dry-run sync missing → y/n"),
         Line::from("  u            check/install update from GitHub"),
