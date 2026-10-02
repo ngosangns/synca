@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build/upload (e.g. v0.1.7); defaults to the ref name"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -13,6 +19,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -23,50 +31,66 @@ jobs:
       - name: Package asset
         id: pkg
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
           VER="${TAG#v}"
           ASSET="synca-v${VER}-darwin-arm64"
           BIN="target/release/synca"
+          test -x "$BIN"
           cp "$BIN" "$ASSET"
           chmod +x "$ASSET"
           shasum -a 256 "$ASSET" | awk '{print $1}' > "${ASSET}.sha256"
-          echo "asset=${ASSET}" >> "$GITHUB_OUTPUT"
-          echo "sha_file=${ASSET}.sha256" >> "$GITHUB_OUTPUT"
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          cat "${ASSET}.sha256"
+          {
+            echo "tag=${TAG}"
+            echo "asset=${ASSET}"
+            echo "sha_file=${ASSET}.sha256"
+            echo "version=${VER}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Packed ${ASSET} (sha256=$(cat "${ASSET}.sha256"))"
 
       - name: Create / upload GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          set -euo pipefail
+          TAG="${{ steps.pkg.outputs.tag }}"
           ASSET="${{ steps.pkg.outputs.asset }}"
           SHA="${{ steps.pkg.outputs.sha_file }}"
+          VER="${{ steps.pkg.outputs.version }}"
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<NOTES
+          Release ${TAG}
+
+          ## Install
+
+          After first install:
+
+              synca update
+
+          Manual:
+
+              curl -fsSL -o synca "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"
+              chmod +x synca
+              mkdir -p ~/.local/share/synca/bin ~/.local/bin
+              cp synca ~/.local/share/synca/bin/synca-${VER}
+              ln -sf ~/.local/share/synca/bin/synca-${VER} ~/.local/bin/synca
+
+          ## Assets
+
+          - Binary: synca-vX.Y.Z-darwin-arm64
+          - Checksum: synca-vX.Y.Z-darwin-arm64.sha256
+          NOTES
+          # Strip the leading indentation introduced by the workflow indent.
+          sed -i.bak 's/^          //' "$NOTES_FILE" && rm -f "${NOTES_FILE}.bak"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET" "$SHA" --clobber
+            gh release edit "$TAG" --notes-file "$NOTES_FILE" || true
           else
             gh release create "$TAG" "$ASSET" "$SHA" \
               --title "synca ${TAG}" \
-              --notes "Release ${TAG}
-
-## Install
-
-\`\`\`bash
-# via self-update (after first install)
-synca update
-
-# or manual
-curl -L -o synca \\
-  https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}
-chmod +x synca
-mkdir -p ~/.local/share/synca/bin ~/.local/bin
-cp synca ~/.local/share/synca/bin/synca-${{ steps.pkg.outputs.version }}
-ln -sf ~/.local/share/synca/bin/synca-${{ steps.pkg.outputs.version }} ~/.local/bin/synca
-\`\`\`
-
-## Asset naming
-
-- Binary: \`synca-vX.Y.Z-darwin-arm64\`
-- Checksum: \`synca-vX.Y.Z-darwin-arm64.sha256\` (hex sha256 of the binary)
-"
+              --notes-file "$NOTES_FILE"
           fi
