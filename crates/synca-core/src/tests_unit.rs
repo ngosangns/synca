@@ -6,7 +6,7 @@ use crate::models::{
 };
 use crate::scan::{json_to_normalized, mcp_fingerprint, scan_skills, toml_to_normalized};
 use crate::sync::{
-    apply_plan, plan_sync_skills, upsert_mcp_json_hub, SyncAction,
+    apply_plan, merge_plans, plan_sync_mcp, plan_sync_skills, upsert_mcp_json_hub, SyncAction,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -263,4 +263,113 @@ fn conflict_policy_parse() {
     assert_eq!(ConflictPolicy::parse("keep-target"), Some(ConflictPolicy::KeepTarget));
     assert_eq!(ConflictPolicy::parse("skip"), Some(ConflictPolicy::Skip));
     assert_eq!(ConflictPolicy::parse("nope"), None);
+}
+
+#[test]
+fn sync_plan_never_crosses_user_and_project_scopes() {
+    with_temp_home(|home| {
+        // User-level skill
+        let agents = home.join(".agents/skills");
+        std::fs::create_dir_all(&agents).unwrap();
+        write_skill(&agents, "user-only", "# user");
+
+        // Project repo with its own skill
+        let proj_raw = home.join("proj");
+        std::fs::create_dir_all(proj_raw.join(".agents/skills")).unwrap();
+        std::fs::create_dir_all(proj_raw.join(".git")).unwrap();
+        write_skill(&proj_raw.join(".agents/skills"), "proj-only", "# project");
+        // macOS temp dirs often resolve via /private — canonicalize for prefix checks.
+        let proj = proj_raw.canonicalize().unwrap();
+
+        let user_plan = plan_sync_skills(Scope::User, &proj, None, None).unwrap();
+        assert_eq!(user_plan.scope, "user");
+        for a in &user_plan.actions {
+            let paths: Vec<&std::path::Path> = match a {
+                SyncAction::EnsureCanonicalCopy { from, to, .. } => vec![from, to],
+                SyncAction::SymlinkSkill { link, target, .. } => vec![link, target],
+                SyncAction::SkipSame { path, .. } => vec![path],
+                SyncAction::ConflictSkill { paths, .. } => paths.iter().map(|p| p.as_path()).collect(),
+                _ => vec![],
+            };
+            for path in paths {
+                assert!(
+                    !path.starts_with(&proj.join(".agents"))
+                        && !path.starts_with(&proj.join(".grok"))
+                        && !path.starts_with(&proj.join(".kiro")),
+                    "user-scope action leaked into project path: {path:?} action={a:?}"
+                );
+            }
+        }
+        // User plan must not be planning the project-only skill
+        assert!(
+            !user_plan.actions.iter().any(|a| match a {
+                SyncAction::EnsureCanonicalCopy { skill_key, .. }
+                | SyncAction::SymlinkSkill { skill_key, .. }
+                | SyncAction::SkipSame { skill_key, .. }
+                | SyncAction::ConflictSkill { skill_key, .. } => skill_key == "proj-only",
+                _ => false,
+            }),
+            "user plan must not include proj-only skill: {:?}",
+            user_plan.actions
+        );
+
+        let proj_plan = plan_sync_skills(Scope::Project, &proj, None, None).unwrap();
+        assert_eq!(proj_plan.scope, "project");
+        for a in &proj_plan.actions {
+            let paths: Vec<&std::path::Path> = match a {
+                SyncAction::EnsureCanonicalCopy { from, to, .. } => vec![from, to],
+                SyncAction::SymlinkSkill { link, target, .. } => vec![link, target],
+                SyncAction::SkipSame { path, .. } => vec![path],
+                SyncAction::ConflictSkill { paths, .. } => paths.iter().map(|p| p.as_path()).collect(),
+                _ => vec![],
+            };
+            for path in paths {
+                assert!(
+                    path.starts_with(&proj),
+                    "project-scope action escaped project root: {path:?} action={a:?}"
+                );
+            }
+        }
+        assert!(
+            !proj_plan.actions.iter().any(|a| match a {
+                SyncAction::EnsureCanonicalCopy { skill_key, .. }
+                | SyncAction::SymlinkSkill { skill_key, .. }
+                | SyncAction::SkipSame { skill_key, .. }
+                | SyncAction::ConflictSkill { skill_key, .. } => skill_key == "user-only",
+                _ => false,
+            }),
+            "project plan must not include user-only skill: {:?}",
+            proj_plan.actions
+        );
+
+        // merge_plans must refuse to combine different scopes
+        let mixed = merge_plans(user_plan.clone(), proj_plan.clone());
+        assert_eq!(mixed.scope, "user");
+        assert_eq!(mixed.actions.len(), user_plan.actions.len());
+    });
+}
+
+#[test]
+fn plan_sync_mcp_records_single_scope() {
+    with_temp_home(|home| {
+        let hub = home.join(".agents/mcp.json");
+        std::fs::create_dir_all(hub.parent().unwrap()).unwrap();
+        std::fs::write(
+            &hub,
+            r#"{"mcpServers":{"demo":{"type":"stdio","command":"echo"}}}"#,
+        )
+        .unwrap();
+        let plan = plan_sync_mcp(Scope::User, home, None, Some("demo")).unwrap();
+        assert_eq!(plan.scope, "user");
+        for a in &plan.actions {
+            if let SyncAction::EnsureMcpHub { hub, .. } = a {
+                assert!(hub.ends_with(".agents/mcp.json"));
+                assert!(!hub.ends_with(".mcp.json") || hub.to_string_lossy().contains(".agents"));
+            }
+            if let SyncAction::WriteMcpServer { path, .. } = a {
+                let s = path.to_string_lossy();
+                assert!(!s.contains("/proj/"), "user mcp write leaked: {s}");
+            }
+        }
+    });
 }

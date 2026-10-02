@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6 — 2026-10-02
+
+- **Scope lock:** Confirm/status text always names the active scope (`[user]` / `[project]`). Apply uses the plan's recorded scope (not the live tab). Help + footer clarify sync is **this page only**.
+- **Safety:** `merge_plans` refuses to combine User + Project plans. Regression tests ensure skill/MCP plans never cross scopes.
+
+
 ## 0.1.5 — 2026-10-02
 
 - **Bulk sync:** TUI hotkeys `S` = sync ALL skills, `M` = sync ALL MCPs, `A` = sync ALL skills+MCPs (scope = current User|Project page). Still two-key confirm (`y`/`n`) and conflict `a`/`b`/`s`. Focused sync remains `s`.

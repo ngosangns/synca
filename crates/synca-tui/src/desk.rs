@@ -393,6 +393,7 @@ fn sync_hotkey_spans(state: &AppState) -> Vec<Span<'static>> {
         Span::raw("mcp-all "),
         key_chip(" A "),
         Span::raw("all "),
+        Span::raw("(this page only) "),
     ];
     match &state.pending {
         Some(crate::state::Pending::SyncConfirm) | Some(crate::state::Pending::UpdateInstall) => {
@@ -462,10 +463,10 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  j / k / click row  move selection"),
         Line::from("  wheel on list      move selection"),
         Line::from("  wheel / PgUp/PgDn  scroll detail pane"),
-        Line::from("  s                  sync focused item → y/n"),
+        Line::from("  s                  sync focused item (current page) → y/n"),
         Line::from("  S                  sync ALL skills (current page) → y/n"),
         Line::from("  M                  sync ALL MCPs (current page) → y/n"),
-        Line::from("  A                  sync ALL skills + MCPs → y/n"),
+        Line::from("  A                  sync ALL skills + MCPs (current page) → y/n"),
         Line::from("  u                  check/install update from GitHub"),
         Line::from("  r                  reload inventory"),
         Line::from("  ?                  toggle help"),

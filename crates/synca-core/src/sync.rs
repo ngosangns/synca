@@ -882,6 +882,12 @@ fn write_grok_toml(path: &Path, server: &str, norm: &McpNormalized) -> anyhow::R
 }
 
 pub fn merge_plans(mut a: SyncPlan, b: SyncPlan) -> SyncPlan {
+    // Never silently combine User + Project; keep `a.scope` and drop mismatched B.
+    // Callers (TUI/CLI) always pass same-scope plans; this is a safety net.
+    if a.scope != b.scope {
+        // Prefer keeping A intact rather than mixing scopes.
+        return a;
+    }
     a.actions.extend(b.actions);
     a.dry_run = a.dry_run && b.dry_run;
     a

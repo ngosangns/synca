@@ -26,15 +26,19 @@ fn conflicts_from_plan(plan: &synca_core::SyncPlan) -> Vec<ConflictItem> {
 fn begin_confirm(state: &mut AppState, plan: synca_core::SyncPlan, label: &str) {
     let n = plan.actions.len();
     let conflicts = conflicts_from_plan(&plan);
+    // Always name the scope so confirm never looks like a cross-page sync.
+    let scope = plan.scope.clone();
     state.skill_decisions.clear();
     state.mcp_decisions.clear();
     state.last_plan = Some(plan);
     if conflicts.is_empty() {
-        state.status = format!("{label}: {n} action(s). Press y to apply, n to cancel.");
+        state.status = format!(
+            "{label} [{scope}]: {n} action(s). Press y to apply, n to cancel."
+        );
         state.pending = Some(Pending::SyncConfirm);
     } else {
         state.status = format!(
-            "{label}: {n} action(s), {} conflict(s). Press y to resolve, n to cancel.",
+            "{label} [{scope}]: {n} action(s), {} conflict(s). Press y to resolve, n to cancel.",
             conflicts.len()
         );
         state.pending = Some(Pending::SyncConfirm);
@@ -66,7 +70,7 @@ pub fn dry_run_focused(state: &mut AppState) {
         }
     };
     match plan {
-        Ok(p) => begin_confirm(state, p, "dry-run"),
+        Ok(p) => begin_confirm(state, p, "sync focused"),
         Err(e) => state.status = format!("plan error: {e}"),
     }
 }
@@ -165,13 +169,18 @@ fn apply_with_decisions(state: &mut AppState) {
         state.status = "nothing to apply".into();
         return;
     };
-    let scope = state.page.scope();
+    // Prefer the plan's recorded scope (set at dry-run) so apply cannot
+    // cross User↔Project even if the page somehow changed mid-confirm.
+    let scope = match plan.scope.as_str() {
+        "project" => synca_core::models::Scope::Project,
+        _ => synca_core::models::Scope::User,
+    };
     let mut decisions = ConflictDecisions::with_default(ConflictPolicy::Skip);
     decisions.skills = state.skill_decisions.clone();
     decisions.mcps = state.mcp_decisions.clone();
     match apply_plan(&plan, &state.cwd, scope, &decisions) {
         Ok(log) => {
-            state.status = format!("applied {} step(s)", log.len());
+            state.status = format!("applied {} step(s) [{}]", log.len(), scope.as_str());
             state.reload();
         }
         Err(e) => state.status = format!("apply error: {e}"),
