@@ -1,12 +1,12 @@
 [package]
-name = "ast-cli"
+name = "synca-cli"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-ast-core = { path = "../ast-core" }
-ast-tui = { path = "../ast-tui" }
+synca-core = { path = "../synca-core" }
+synca-tui = { path = "../synca-tui" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

@@ -37,7 +37,7 @@ struct Asset {
 
 fn client() -> anyhow::Result<reqwest::blocking::Client> {
     Ok(reqwest::blocking::Client::builder()
-        .user_agent(format!("agent-skills-tui/{VERSION}"))
+        .user_agent(format!("synca/{VERSION}"))
         .build()?)
 }
 
@@ -160,7 +160,7 @@ pub fn install_update(force: bool) -> anyhow::Result<UpdateInfo> {
 
     let bin_dir = install_bin_dir();
     std::fs::create_dir_all(&bin_dir)?;
-    let versioned = bin_dir.join(format!("agent-skills-tui-{latest}"));
+    let versioned = bin_dir.join(format!("synca-{latest}"));
     {
         let mut f = std::fs::File::create(&versioned)?;
         f.write_all(&bytes)?;

@@ -3,14 +3,6 @@
 version = 4
 
 [[package]]
-name = "agent-skills-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ast-cli",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -88,49 +80,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cab112f0a86d568ea0e627cc1d6be74a1e9cd55214684db5561995f6dad897c6"
 dependencies = [
  "num-traits",
-]
-
-[[package]]
-name = "ast-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ast-core",
- "ast-tui",
- "clap",
- "dirs",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "ast-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs",
- "hex",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.21",
- "toml",
- "walkdir",
-]
-
-[[package]]
-name = "ast-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ast-core",
- "crossterm",
- "ratatui",
- "serde_json",
- "unicode-width",
 ]
 
 [[package]]
@@ -2118,6 +2067,57 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bf256ce5efdfa370213c1dabab5935a12e49f2c58d15e9eac2870d3b4f27263"
 dependencies = [
  "futures-core",
+]
+
+[[package]]
+name = "synca"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "synca-cli",
+]
+
+[[package]]
+name = "synca-cli"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "dirs",
+ "serde",
+ "serde_json",
+ "synca-core",
+ "synca-tui",
+]
+
+[[package]]
+name = "synca-core"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "hex",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml",
+ "walkdir",
+]
+
+[[package]]
+name = "synca-tui"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "crossterm",
+ "ratatui",
+ "serde_json",
+ "synca-core",
+ "unicode-width",
 ]
 
 [[package]]

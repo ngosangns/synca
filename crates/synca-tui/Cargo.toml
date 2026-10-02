@@ -1,11 +1,11 @@
 [package]
-name = "ast-tui"
+name = "synca-tui"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [dependencies]
-ast-core = { path = "../ast-core" }
+synca-core = { path = "../synca-core" }
 anyhow = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }

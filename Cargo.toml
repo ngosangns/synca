@@ -1,14 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/ast-core",
-  "crates/ast-cli",
-  "crates/ast-tui",
-  "bin/agent-skills-tui",
+  "crates/synca-core",
+  "crates/synca-cli",
+  "crates/synca-tui",
+  "bin/synca",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 publish = false

@@ -1,4 +1,6 @@
-# agent-skills-tui — Requirements (locked 2026-10-02)
+# synca — Requirements (locked 2026-10-02)
+
+> Renamed from `agent-skills-tui` → `synca` (binary, repo, crates) on 2026-10-02.
 
 ## Goal
 CLI + TUI (macOS arm64 first) to **browse and sync skills + MCP configs** across coding agents.
@@ -7,8 +9,8 @@ UX/stack inspired by [ngosangns/hearth](https://github.com/ngosangns/hearth) (`h
 ## Stack
 - Rust edition 2021+
 - Ratatui 0.30 + crossterm 0.29
-- Binary name: `agent-skills-tui` (short alias optional later)
-- Layout suggestion: crates `ast-core` (scan/sync/models), `ast-cli` (clap + update), `ast-tui` (desk/shell/state/actions), bin `agent-skills-tui`
+- Binary name: `synca`
+- Layout suggestion: crates `synca-core` (scan/sync/models), `synca-cli` (clap + update), `synca-tui` (desk/shell/state/actions), bin `synca`
 
 ## Agents in scope (v1)
 Grok Build, Devin, OMP, Pi, Kiro CLI, OpenCode, Claude Code (compat paths), Cursor (compat paths).
@@ -54,16 +56,16 @@ Keys (Hearth-like): Tab pages; j/k navigate; Enter/detail; `s` sync focused; `S`
 
 ## CLI
 ```
-agent-skills-tui                 # open TUI (project scope = cwd)
-agent-skills-tui tui
-agent-skills-tui skills list [--scope user|project] [--json]
-agent-skills-tui mcp list [--scope user|project] [--json]
-agent-skills-tui sync skills|mcp [--scope user|project] [--agents a,b] [--dry-run]
-agent-skills-tui update [--check] [--json] [--force]
+synca                 # open TUI (project scope = cwd)
+synca tui
+synca skills list [--scope user|project] [--json]
+synca mcp list [--scope user|project] [--json]
+synca sync skills|mcp [--scope user|project] [--agents a,b] [--dry-run]
+synca update [--check] [--json] [--force]
 ```
 
 ## Update
-Like Hearth: GitHub Releases `ngosangns/agent-skills-tui`, install under `~/.local/share/agent-skills-tui/bin/` + symlink `~/.local/bin/agent-skills-tui`. Asset naming TBD (`agent-skills-tui-vX.Y.Z-darwin-arm64` + sha256).
+Like Hearth: GitHub Releases `ngosangns/synca`, install under `~/.local/share/synca/bin/` + symlink `~/.local/bin/synca`. Asset naming TBD (`synca-vX.Y.Z-darwin-arm64` + sha256).
 
 ## Non-goals v1
 In-TUI skill editor; running MCP servers; session tokens; background auto-sync; Windows/Linux (phase 2); crush/goose.

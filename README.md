@@ -1,4 +1,4 @@
-# agent-skills-tui
+# synca
 
 Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one Ratatui TUI / CLI.
 
@@ -8,34 +8,34 @@ Inspired by [hearth](https://github.com/ngosangns/hearth)’s TUI stack (Ratatui
 
 ### From GitHub Release (recommended)
 
-Asset name: `agent-skills-tui-vX.Y.Z-darwin-arm64` (+ `.sha256`).
+Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
 
 ```bash
-TAG=v0.1.0
-ASSET=agent-skills-tui-${TAG}-darwin-arm64
+TAG=v0.1.1
+ASSET=synca-${TAG}-darwin-arm64
 curl -fsSL -o /tmp/$ASSET \
-  "https://github.com/ngosangns/agent-skills-tui/releases/download/${TAG}/${ASSET}"
+  "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"
 chmod +x /tmp/$ASSET
-mkdir -p ~/.local/share/agent-skills-tui/bin ~/.local/bin
+mkdir -p ~/.local/share/synca/bin ~/.local/bin
 VER=${TAG#v}
-cp /tmp/$ASSET ~/.local/share/agent-skills-tui/bin/agent-skills-tui-$VER
-ln -sf ~/.local/share/agent-skills-tui/bin/agent-skills-tui-$VER ~/.local/bin/agent-skills-tui
+cp /tmp/$ASSET ~/.local/share/synca/bin/synca-$VER
+ln -sf ~/.local/share/synca/bin/synca-$VER ~/.local/bin/synca
 ```
 
 Then self-update later:
 
 ```bash
-agent-skills-tui update --check
-agent-skills-tui update
+synca update --check
+synca update
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/ngosangns/agent-skills-tui.git
-cd agent-skills-tui
+git clone https://github.com/ngosangns/synca.git
+cd synca
 cargo build --release
-cp target/release/agent-skills-tui ~/.local/bin/
+cp target/release/synca ~/.local/bin/
 ```
 
 Local release packaging:
@@ -50,18 +50,18 @@ CI builds the same asset on tag push (`v*`) via `.github/workflows/release.yml`.
 ## Usage
 
 ```bash
-agent-skills-tui                 # TUI (project scope = cwd → git root)
-agent-skills-tui tui
+synca                 # TUI (project scope = cwd → git root)
+synca tui
 
-agent-skills-tui skills list --scope user
-agent-skills-tui skills list --scope project --json
-agent-skills-tui mcp list --scope user
+synca skills list --scope user
+synca skills list --scope project --json
+synca mcp list --scope user
 
-agent-skills-tui sync skills --scope user --dry-run
-agent-skills-tui sync mcp --scope user --dry-run
-agent-skills-tui sync skills --scope user --on-conflict skip
-agent-skills-tui sync skills --scope user --on-conflict keep-source
-agent-skills-tui sync mcp --scope user --on-conflict keep-target
+synca sync skills --scope user --dry-run
+synca sync mcp --scope user --dry-run
+synca sync skills --scope user --on-conflict skip
+synca sync skills --scope user --on-conflict keep-source
+synca sync mcp --scope user --on-conflict keep-target
 ```
 
 ### Conflict flags
@@ -83,7 +83,7 @@ Never silent overwrite.
 | `j` / `k` | Move |
 | `s` | Dry-run sync focused → `y`/`n`; conflicts → `a`/`b`/`s` |
 | `S` | Dry-run sync missing → same confirm / conflict flow |
-| `u` | Check GitHub Releases; `y` installs to `~/.local/share/agent-skills-tui/bin` + symlink `~/.local/bin/agent-skills-tui` |
+| `u` | Check GitHub Releases; `y` installs to `~/.local/share/synca/bin` + symlink `~/.local/bin/synca` |
 | `r` | Reload |
 | `?` | Help |
 | `q` | Quit |

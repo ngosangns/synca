@@ -9,13 +9,13 @@ cd "$ROOT"
 
 VER="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
 TAG="v${VER}"
-ASSET="agent-skills-tui-v${VER}-darwin-arm64"
+ASSET="synca-v${VER}-darwin-arm64"
 OUTDIR="${ROOT}/dist"
 mkdir -p "$OUTDIR"
 
 echo "Building release binary (version ${VER})..."
-cargo build --release -p agent-skills-tui
-cp target/release/agent-skills-tui "${OUTDIR}/${ASSET}"
+cargo build --release -p synca
+cp target/release/synca "${OUTDIR}/${ASSET}"
 chmod +x "${OUTDIR}/${ASSET}"
 shasum -a 256 "${OUTDIR}/${ASSET}" | awk '{print $1}' > "${OUTDIR}/${ASSET}.sha256"
 echo "Wrote ${OUTDIR}/${ASSET}"
@@ -28,10 +28,10 @@ if [[ "${1:-}" == "--publish" ]]; then
   else
     echo "Creating release ${TAG}..."
     gh release create "$TAG" "${OUTDIR}/${ASSET}" "${OUTDIR}/${ASSET}.sha256" \
-      --title "agent-skills-tui ${TAG}" \
+      --title "synca ${TAG}" \
       --notes "Local publish of ${TAG} (darwin-arm64)."
   fi
-  echo "Published: https://github.com/ngosangns/agent-skills-tui/releases/tag/${TAG}"
+  echo "Published: https://github.com/ngosangns/synca/releases/tag/${TAG}"
 else
   echo "Dry build only. Pass --publish to create GitHub release ${TAG}."
 fi

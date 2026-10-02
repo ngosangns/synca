@@ -1,4 +1,4 @@
-use ast_core::update::{check_update, install_update};
+use synca_core::update::{check_update, install_update};
 use serde_json::json;
 
 pub fn run_update(check_only: bool, json: bool, force: bool) -> anyhow::Result<()> {
@@ -27,7 +27,7 @@ pub fn run_update(check_only: bool, json: bool, force: bool) -> anyhow::Result<(
             }
             println!("{}", info.message);
             if info.update_available {
-                println!("Run: agent-skills-tui update");
+                println!("Run: synca update");
             }
         }
         return Ok(());
@@ -48,7 +48,7 @@ pub fn run_update(check_only: bool, json: bool, force: bool) -> anyhow::Result<(
                 "latest": info.latest,
                 "update_available": info.update_available,
                 "message": info.message,
-                "path": ast_core::update_meta::symlink_path(),
+                "path": synca_core::update_meta::symlink_path(),
             })
         );
     } else {

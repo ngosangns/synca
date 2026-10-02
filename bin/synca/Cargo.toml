@@ -1,13 +1,13 @@
 [package]
-name = "agent-skills-tui"
+name = "synca"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "agent-skills-tui"
+name = "synca"
 path = "src/main.rs"
 
 [dependencies]
-ast-cli = { path = "../../crates/ast-cli" }
+synca-cli = { path = "../../crates/synca-cli" }
 anyhow = { workspace = true }

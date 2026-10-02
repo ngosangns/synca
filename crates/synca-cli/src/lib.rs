@@ -1,14 +1,14 @@
 mod update;
 
 use anyhow::Context;
-use ast_core::models::{AgentKind, ConflictDecisions, ConflictPolicy, Scope};
-use ast_core::scan::scan_all;
-use ast_core::sync::{apply_plan, plan_sync_mcp, plan_sync_skills, SyncAction, SyncPlan};
+use synca_core::models::{AgentKind, ConflictDecisions, ConflictPolicy, Scope};
+use synca_core::scan::scan_all;
+use synca_core::sync::{apply_plan, plan_sync_mcp, plan_sync_skills, SyncAction, SyncPlan};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "agent-skills-tui", version, about = "Browse and sync skills + MCP across coding agents")]
+#[command(name = "synca", version, about = "Browse and sync skills + MCP across coding agents")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -123,7 +123,7 @@ pub fn run() -> anyhow::Result<()> {
         cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     }) {
         Commands::Tui { cwd } => {
-            ast_tui::run(&cwd)?;
+            synca_tui::run(&cwd)?;
         }
         Commands::Skills {
             cmd: SkillsCmd::List { scope, json, cwd },
@@ -227,7 +227,7 @@ fn scope_label(s: ScopeArg) -> &'static str {
     }
 }
 
-fn print_plan(plan: &ast_core::SyncPlan) {
+fn print_plan(plan: &synca_core::SyncPlan) {
     println!("Sync plan (scope={}, actions={}):", plan.scope, plan.actions.len());
     for (i, a) in plan.actions.iter().enumerate() {
         println!("  {}. {}", i + 1, serde_json::to_string(a).unwrap_or_default());
@@ -289,5 +289,5 @@ fn atty_stdin() -> bool {
 
 
 pub fn main_entry() -> anyhow::Result<()> {
-    run().context("agent-skills-tui failed")
+    run().context("synca failed")
 }

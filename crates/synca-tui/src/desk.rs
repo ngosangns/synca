@@ -49,7 +49,7 @@ fn draw_header(frame: &mut Frame, area: Rect, state: &AppState) {
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "(not a git repo)".into());
     let line = Line::from(vec![
-        Span::styled(" agent-skills-tui ", Style::default().fg(Color::Yellow)),
+        Span::styled(" synca ", Style::default().fg(Color::Yellow)),
         Span::styled(" User ", user_style),
         Span::raw(" "),
         Span::styled(" Project ", proj_style),

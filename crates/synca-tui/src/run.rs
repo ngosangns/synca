@@ -2,7 +2,7 @@ use crate::actions;
 use crate::desk;
 use crate::state::{AppState, Pending};
 use anyhow::Context;
-use ast_core::models::ConflictPolicy;
+use synca_core::models::ConflictPolicy;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{

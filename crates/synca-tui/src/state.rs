@@ -1,6 +1,6 @@
-use ast_core::models::{ConflictPolicy, McpEntry, Scope, SkillEntry};
-use ast_core::scan::Inventory;
-use ast_core::sync::SyncPlan;
+use synca_core::models::{ConflictPolicy, McpEntry, Scope, SkillEntry};
+use synca_core::scan::Inventory;
+use synca_core::sync::SyncPlan;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -99,8 +99,8 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(cwd: &std::path::Path) -> Self {
-        let user_inv = ast_core::scan::scan_all(Scope::User, cwd);
-        let project_inv = ast_core::scan::scan_all(Scope::Project, cwd);
+        let user_inv = synca_core::scan::scan_all(Scope::User, cwd);
+        let project_inv = synca_core::scan::scan_all(Scope::Project, cwd);
         let project_ok = project_inv.project_root.is_some();
         Self {
             cwd: cwd.to_path_buf(),
@@ -123,8 +123,8 @@ impl AppState {
     }
 
     pub fn reload(&mut self) {
-        self.user_inv = ast_core::scan::scan_all(Scope::User, &self.cwd);
-        self.project_inv = ast_core::scan::scan_all(Scope::Project, &self.cwd);
+        self.user_inv = synca_core::scan::scan_all(Scope::User, &self.cwd);
+        self.project_inv = synca_core::scan::scan_all(Scope::Project, &self.cwd);
         self.project_ok = self.project_inv.project_root.is_some();
         self.clamp_idx();
     }

@@ -1,11 +1,11 @@
 use crate::state::{AppState, ConflictItem, ConflictKind, Pending, Section};
-use ast_core::models::{ConflictDecisions, ConflictPolicy};
-use ast_core::sync::{
+use synca_core::models::{ConflictDecisions, ConflictPolicy};
+use synca_core::sync::{
     apply_plan, filter_missing, plan_sync_mcp, plan_sync_skills, SyncAction,
 };
-use ast_core::update::{check_update, install_update};
+use synca_core::update::{check_update, install_update};
 
-fn conflicts_from_plan(plan: &ast_core::SyncPlan) -> Vec<ConflictItem> {
+fn conflicts_from_plan(plan: &synca_core::SyncPlan) -> Vec<ConflictItem> {
     let mut out = Vec::new();
     for a in &plan.actions {
         match a {
@@ -23,7 +23,7 @@ fn conflicts_from_plan(plan: &ast_core::SyncPlan) -> Vec<ConflictItem> {
     out
 }
 
-fn begin_confirm(state: &mut AppState, plan: ast_core::SyncPlan, label: &str) {
+fn begin_confirm(state: &mut AppState, plan: synca_core::SyncPlan, label: &str) {
     let n = plan.actions.len();
     let conflicts = conflicts_from_plan(&plan);
     state.skill_decisions.clear();
