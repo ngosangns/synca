@@ -1,6 +1,7 @@
-use ast_core::models::{McpEntry, Scope, SkillEntry};
+use ast_core::models::{ConflictPolicy, McpEntry, Scope, SkillEntry};
 use ast_core::scan::Inventory;
 use ast_core::sync::SyncPlan;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Page {
@@ -56,11 +57,25 @@ impl Section {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictKind {
+    Skill,
+    Mcp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictItem {
+    pub kind: ConflictKind,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pending {
-    /// Sync focused item (after dry-run shown): await y/n
-    SyncFocused { kind: Section },
-    /// Sync all missing: await y/n
-    SyncMissing,
+    /// Sync focused / missing after dry-run: await y/n
+    SyncConfirm,
+    /// Resolve next conflict: a=keep-source b=keep-target s=skip
+    ResolveConflict { remaining: Vec<ConflictItem> },
+    /// Update available: await y/n to install
+    UpdateInstall,
 }
 
 #[derive(Debug)]
@@ -76,7 +91,10 @@ pub struct AppState {
     pub help: bool,
     pub pending: Option<Pending>,
     pub last_plan: Option<SyncPlan>,
+    pub skill_decisions: BTreeMap<String, ConflictPolicy>,
+    pub mcp_decisions: BTreeMap<String, ConflictPolicy>,
     pub project_ok: bool,
+    pub update_msg: String,
 }
 
 impl AppState {
@@ -92,11 +110,15 @@ impl AppState {
             project_inv,
             skill_idx: 0,
             mcp_idx: 0,
-            status: "Tab pages · [/] sections · j/k move · s sync · S sync-missing · u update · q quit".into(),
+            status: "Tab pages · [/] sections · j/k move · s sync · S sync-missing · u update · q quit"
+                .into(),
             help: false,
             pending: None,
             last_plan: None,
+            skill_decisions: BTreeMap::new(),
+            mcp_decisions: BTreeMap::new(),
             project_ok,
+            update_msg: String::new(),
         }
     }
 

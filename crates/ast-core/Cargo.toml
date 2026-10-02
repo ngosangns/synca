@@ -15,6 +15,7 @@ hex = { workspace = true }
 dirs = { workspace = true }
 regex = { workspace = true }
 walkdir = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

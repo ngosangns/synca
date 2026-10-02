@@ -1,9 +1,9 @@
 mod update;
 
 use anyhow::Context;
-use ast_core::models::{AgentKind, Scope};
+use ast_core::models::{AgentKind, ConflictDecisions, ConflictPolicy, Scope};
 use ast_core::scan::scan_all;
-use ast_core::sync::{apply_plan, filter_missing, plan_sync_mcp, plan_sync_skills};
+use ast_core::sync::{apply_plan, plan_sync_mcp, plan_sync_skills, SyncAction, SyncPlan};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -79,6 +79,9 @@ pub enum SyncCmd {
         dry_run: bool,
         #[arg(long)]
         key: Option<String>,
+        /// Conflict policy: skip | keep-source | keep-target (default: skip; prompt on tty if omitted and conflicts exist)
+        #[arg(long, default_value = "skip")]
+        on_conflict: String,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
@@ -91,6 +94,8 @@ pub enum SyncCmd {
         dry_run: bool,
         #[arg(long)]
         key: Option<String>,
+        #[arg(long, default_value = "skip")]
+        on_conflict: String,
         #[arg(long, default_value = ".")]
         cwd: PathBuf,
     },
@@ -164,6 +169,7 @@ pub fn run() -> anyhow::Result<()> {
                 agents,
                 dry_run,
                 key,
+                on_conflict,
                 cwd,
             } => {
                 let scope: Scope = scope.into();
@@ -172,11 +178,11 @@ pub fn run() -> anyhow::Result<()> {
                 let mut plan = plan_sync_skills(scope, &cwd, filter_ref, key.as_deref())?;
                 plan.dry_run = dry_run;
                 print_plan(&plan);
+                let decisions = resolve_cli_conflicts(&plan, &on_conflict, dry_run)?;
                 if dry_run {
-                    println!("(dry-run; no changes)");
+                    println!("(dry-run; no changes) on-conflict={}", decisions.default.as_str());
                 } else {
-                    let missing = filter_missing(&plan);
-                    let log = apply_plan(&missing, &cwd, scope)?;
+                    let log = apply_plan(&plan, &cwd, scope, &decisions)?;
                     for line in log {
                         println!("  {line}");
                     }
@@ -187,6 +193,7 @@ pub fn run() -> anyhow::Result<()> {
                 agents,
                 dry_run,
                 key,
+                on_conflict,
                 cwd,
             } => {
                 let scope: Scope = scope.into();
@@ -195,11 +202,11 @@ pub fn run() -> anyhow::Result<()> {
                 let mut plan = plan_sync_mcp(scope, &cwd, filter_ref, key.as_deref())?;
                 plan.dry_run = dry_run;
                 print_plan(&plan);
+                let decisions = resolve_cli_conflicts(&plan, &on_conflict, dry_run)?;
                 if dry_run {
-                    println!("(dry-run; no changes)");
+                    println!("(dry-run; no changes) on-conflict={}", decisions.default.as_str());
                 } else {
-                    let missing = filter_missing(&plan);
-                    let log = apply_plan(&missing, &cwd, scope)?;
+                    let log = apply_plan(&plan, &cwd, scope, &decisions)?;
                     for line in log {
                         println!("  {line}");
                     }
@@ -226,6 +233,60 @@ fn print_plan(plan: &ast_core::SyncPlan) {
         println!("  {}. {}", i + 1, serde_json::to_string(a).unwrap_or_default());
     }
 }
+
+
+fn resolve_cli_conflicts(
+    plan: &SyncPlan,
+    on_conflict: &str,
+    dry_run: bool,
+) -> anyhow::Result<ConflictDecisions> {
+    let mut policy = ConflictPolicy::parse(on_conflict)
+        .with_context(|| format!("invalid --on-conflict '{on_conflict}' (use skip|keep-source|keep-target)"))?;
+
+    let has_conflict = plan.actions.iter().any(|a| {
+        matches!(
+            a,
+            SyncAction::ConflictSkill { .. } | SyncAction::ConflictMcp { .. }
+        )
+    });
+
+    // If conflicts and default skip, and stdin is a tty, prompt once (unless dry-run).
+    if has_conflict && !dry_run && on_conflict == "skip" && atty_stdin() {
+        eprintln!("Conflicts detected. Choose policy:");
+        eprintln!("  [s] skip (default)");
+        eprintln!("  [a] keep-source");
+        eprintln!("  [b] keep-target");
+        eprint!("> ");
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        let choice = line.trim();
+        if let Some(p) = ConflictPolicy::parse(choice) {
+            policy = p;
+        } else if choice.is_empty() {
+            policy = ConflictPolicy::Skip;
+        } else {
+            anyhow::bail!("unknown conflict choice '{choice}'");
+        }
+    }
+
+    Ok(ConflictDecisions::with_default(policy))
+}
+
+fn atty_stdin() -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        extern "C" {
+            fn isatty(fd: i32) -> i32;
+        }
+        unsafe { isatty(std::io::stdin().as_raw_fd()) == 1 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 
 pub fn main_entry() -> anyhow::Result<()> {
     run().context("agent-skills-tui failed")

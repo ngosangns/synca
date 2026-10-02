@@ -99,7 +99,6 @@ dependencies = [
  "ast-tui",
  "clap",
  "dirs",
- "reqwest",
  "serde",
  "serde_json",
 ]
@@ -112,6 +111,7 @@ dependencies = [
  "dirs",
  "hex",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",

@@ -1,0 +1,72 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  darwin-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release
+        run: cargo build --release -p agent-skills-tui
+
+      - name: Package asset
+        id: pkg
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          ASSET="agent-skills-tui-v${VER}-darwin-arm64"
+          BIN="target/release/agent-skills-tui"
+          cp "$BIN" "$ASSET"
+          chmod +x "$ASSET"
+          shasum -a 256 "$ASSET" | awk '{print $1}' > "${ASSET}.sha256"
+          echo "asset=${ASSET}" >> "$GITHUB_OUTPUT"
+          echo "sha_file=${ASSET}.sha256" >> "$GITHUB_OUTPUT"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          cat "${ASSET}.sha256"
+
+      - name: Create / upload GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          SHA="${{ steps.pkg.outputs.sha_file }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" "$SHA" --clobber
+          else
+            gh release create "$TAG" "$ASSET" "$SHA" \
+              --title "agent-skills-tui ${TAG}" \
+              --notes "Release ${TAG}
+
+## Install
+
+\`\`\`bash
+# via self-update (after first install)
+agent-skills-tui update
+
+# or manual
+curl -L -o agent-skills-tui \\
+  https://github.com/ngosangns/agent-skills-tui/releases/download/${TAG}/${ASSET}
+chmod +x agent-skills-tui
+mkdir -p ~/.local/share/agent-skills-tui/bin ~/.local/bin
+cp agent-skills-tui ~/.local/share/agent-skills-tui/bin/agent-skills-tui-${{ steps.pkg.outputs.version }}
+ln -sf ~/.local/share/agent-skills-tui/bin/agent-skills-tui-${{ steps.pkg.outputs.version }} ~/.local/bin/agent-skills-tui
+\`\`\`
+
+## Asset naming
+
+- Binary: \`agent-skills-tui-vX.Y.Z-darwin-arm64\`
+- Checksum: \`agent-skills-tui-vX.Y.Z-darwin-arm64.sha256\` (hex sha256 of the binary)
+"
+          fi

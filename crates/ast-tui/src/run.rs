@@ -2,6 +2,7 @@ use crate::actions;
 use crate::desk;
 use crate::state::{AppState, Pending};
 use anyhow::Context;
+use ast_core::models::ConflictPolicy;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -14,9 +15,7 @@ use std::path::Path;
 use std::time::Duration;
 
 pub fn run(cwd: &Path) -> anyhow::Result<()> {
-    let cwd = cwd
-        .canonicalize()
-        .unwrap_or_else(|_| cwd.to_path_buf());
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     let mut state = AppState::new(&cwd);
 
     enable_raw_mode().context("enable raw mode")?;
@@ -49,22 +48,48 @@ fn event_loop(
             continue;
         }
 
-        // Pending confirm takes priority
-        if let Some(ref pending) = state.pending.clone() {
-            match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    let _ = pending;
-                    actions::confirm_apply(state);
-                }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    actions::cancel_pending(state);
-                }
-                _ => {
-                    state.status = format!(
-                        "confirm {:?}: press y or n",
-                        state.pending.as_ref().unwrap_or(&Pending::SyncMissing)
-                    );
-                }
+        if let Some(pending) = state.pending.clone() {
+            match pending {
+                Pending::SyncConfirm => match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => actions::on_sync_confirm_yes(state),
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        actions::cancel_pending(state)
+                    }
+                    _ => {
+                        state.status =
+                            "confirm sync: press y to continue, n to cancel".into();
+                    }
+                },
+                Pending::ResolveConflict { .. } => match key.code {
+                    KeyCode::Char('a') | KeyCode::Char('A') => {
+                        actions::on_conflict_choice(state, ConflictPolicy::KeepSource)
+                    }
+                    KeyCode::Char('b') | KeyCode::Char('B') => {
+                        actions::on_conflict_choice(state, ConflictPolicy::KeepTarget)
+                    }
+                    KeyCode::Char('s') | KeyCode::Char('S') => {
+                        actions::on_conflict_choice(state, ConflictPolicy::Skip)
+                    }
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        actions::cancel_pending(state)
+                    }
+                    _ => {
+                        state.status =
+                            "conflict: [a] keep-source  [b] keep-target  [s] skip  [n] cancel"
+                                .into();
+                    }
+                },
+                Pending::UpdateInstall => match key.code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        actions::confirm_update_install(state)
+                    }
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                        actions::cancel_pending(state)
+                    }
+                    _ => {
+                        state.status = "install update? y / n".into();
+                    }
+                },
             }
             continue;
         }
@@ -78,15 +103,21 @@ fn event_loop(
             }
             KeyCode::Char('[') => {
                 state.section = crate::state::Section::Skills;
+                state.status = format!("section: {}", state.section.label());
             }
             KeyCode::Char(']') => {
                 state.section = crate::state::Section::Mcps;
+                state.status = format!("section: {}", state.section.label());
+            }
+            KeyCode::Char(' ') => {
+                state.section = state.section.toggle();
+                state.status = format!("section: {}", state.section.label());
             }
             KeyCode::Char('j') | KeyCode::Down => state.move_sel(1),
             KeyCode::Char('k') | KeyCode::Up => state.move_sel(-1),
             KeyCode::Char('s') => actions::dry_run_focused(state),
             KeyCode::Char('S') => actions::dry_run_missing(state),
-            KeyCode::Char('u') => actions::check_update(state),
+            KeyCode::Char('u') => actions::check_update_action(state),
             KeyCode::Char('r') => {
                 state.reload();
                 state.status = "reloaded".into();

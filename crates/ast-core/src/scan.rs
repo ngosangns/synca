@@ -161,7 +161,7 @@ pub fn scan_mcp(scope: Scope, cwd: &Path) -> Vec<McpEntry> {
     out
 }
 
-fn mcp_fingerprint(n: &McpNormalized) -> String {
+pub fn mcp_fingerprint(n: &McpNormalized) -> String {
     let mut parts = Vec::new();
     parts.push(n.transport.clone());
     if let Some(ref cmd) = n.command {
@@ -235,13 +235,13 @@ fn read_grok_toml(path: &Path) -> anyhow::Result<BTreeMap<String, McpNormalized>
     Ok(out)
 }
 
-fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
+pub fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
     let transport = cfg
         .get("type")
         .or_else(|| cfg.get("transport"))
         .and_then(|v| v.as_str())
         .unwrap_or_else(|| {
-            if cfg.get("url").is_some() {
+            if cfg.get("url").and_then(|v| v.as_str()).is_some() {
                 "sse"
             } else {
                 "stdio"
@@ -297,7 +297,7 @@ fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
     }
 }
 
-fn toml_to_normalized(cfg: &toml::Value) -> McpNormalized {
+pub fn toml_to_normalized(cfg: &toml::Value) -> McpNormalized {
     let transport = cfg
         .get("type")
         .or_else(|| cfg.get("transport"))

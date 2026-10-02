@@ -129,3 +129,60 @@ pub struct McpEntry {
 pub fn normalize_key(s: &str) -> String {
     s.trim().to_ascii_lowercase().replace('_', "-").replace(' ', "-")
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConflictPolicy {
+    /// Leave conflicting entries untouched.
+    #[default]
+    Skip,
+    /// Prefer canonical/Agents (or first) presence; overwrite others to match.
+    KeepSource,
+    /// Prefer non-canonical presence; overwrite canonical/others to match.
+    KeepTarget,
+}
+
+impl ConflictPolicy {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "skip" => Some(Self::Skip),
+            "keep-source" | "keep_source" | "source" | "a" => Some(Self::KeepSource),
+            "keep-target" | "keep_target" | "target" | "b" => Some(Self::KeepTarget),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Skip => "skip",
+            Self::KeepSource => "keep-source",
+            Self::KeepTarget => "keep-target",
+        }
+    }
+}
+
+/// Per-key overrides; keys missing fall back to `default`.
+#[derive(Debug, Clone, Default)]
+pub struct ConflictDecisions {
+    pub default: ConflictPolicy,
+    pub skills: BTreeMap<String, ConflictPolicy>,
+    pub mcps: BTreeMap<String, ConflictPolicy>,
+}
+
+impl ConflictDecisions {
+    pub fn with_default(policy: ConflictPolicy) -> Self {
+        Self {
+            default: policy,
+            skills: BTreeMap::new(),
+            mcps: BTreeMap::new(),
+        }
+    }
+
+    pub fn for_skill(&self, key: &str) -> ConflictPolicy {
+        self.skills.get(key).copied().unwrap_or(self.default)
+    }
+
+    pub fn for_mcp(&self, key: &str) -> ConflictPolicy {
+        self.mcps.get(key).copied().unwrap_or(self.default)
+    }
+}

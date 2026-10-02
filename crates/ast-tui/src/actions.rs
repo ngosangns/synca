@@ -1,5 +1,45 @@
-use crate::state::{AppState, Pending, Section};
-use ast_core::sync::{apply_plan, filter_missing, plan_sync_mcp, plan_sync_skills};
+use crate::state::{AppState, ConflictItem, ConflictKind, Pending, Section};
+use ast_core::models::{ConflictDecisions, ConflictPolicy};
+use ast_core::sync::{
+    apply_plan, filter_missing, plan_sync_mcp, plan_sync_skills, SyncAction,
+};
+use ast_core::update::{check_update, install_update};
+
+fn conflicts_from_plan(plan: &ast_core::SyncPlan) -> Vec<ConflictItem> {
+    let mut out = Vec::new();
+    for a in &plan.actions {
+        match a {
+            SyncAction::ConflictSkill { skill_key, .. } => out.push(ConflictItem {
+                kind: ConflictKind::Skill,
+                key: skill_key.clone(),
+            }),
+            SyncAction::ConflictMcp { server, .. } => out.push(ConflictItem {
+                kind: ConflictKind::Mcp,
+                key: server.clone(),
+            }),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn begin_confirm(state: &mut AppState, plan: ast_core::SyncPlan, label: &str) {
+    let n = plan.actions.len();
+    let conflicts = conflicts_from_plan(&plan);
+    state.skill_decisions.clear();
+    state.mcp_decisions.clear();
+    state.last_plan = Some(plan);
+    if conflicts.is_empty() {
+        state.status = format!("{label}: {n} action(s). Press y to apply, n to cancel.");
+        state.pending = Some(Pending::SyncConfirm);
+    } else {
+        state.status = format!(
+            "{label}: {n} action(s), {} conflict(s). Press y to resolve, n to cancel.",
+            conflicts.len()
+        );
+        state.pending = Some(Pending::SyncConfirm);
+    }
+}
 
 pub fn dry_run_focused(state: &mut AppState) {
     let scope = state.page.scope();
@@ -26,43 +66,106 @@ pub fn dry_run_focused(state: &mut AppState) {
         }
     };
     match plan {
-        Ok(p) => {
-            let n = p.actions.len();
-            state.status = format!("dry-run: {n} action(s). Press y to apply, n to cancel.");
-            state.last_plan = Some(p);
-            state.pending = Some(Pending::SyncFocused {
-                kind: state.section,
-            });
-        }
+        Ok(p) => begin_confirm(state, p, "dry-run"),
         Err(e) => state.status = format!("plan error: {e}"),
     }
 }
 
 pub fn dry_run_missing(state: &mut AppState) {
     let scope = state.page.scope();
-    let skills = plan_sync_skills(scope, &state.cwd, None, None);
-    let mcps = plan_sync_mcp(scope, &state.cwd, None, None);
-    match (skills, mcps) {
-        (Ok(mut s), Ok(m)) => {
-            s.actions.extend(m.actions);
-            let missing = filter_missing(&s);
-            let n = missing.actions.len();
-            state.status = format!("sync-missing dry-run: {n} action(s). y apply / n cancel.");
-            state.last_plan = Some(missing);
-            state.pending = Some(Pending::SyncMissing);
+    match (
+        plan_sync_skills(scope, &state.cwd, None, None),
+        plan_sync_mcp(scope, &state.cwd, None, None),
+    ) {
+        (Ok(skills_plan), Ok(mcps_plan)) => {
+            let mut plan = filter_missing(&skills_plan);
+            plan.actions.extend(filter_missing(&mcps_plan).actions);
+            for a in skills_plan
+                .actions
+                .iter()
+                .chain(mcps_plan.actions.iter())
+            {
+                if matches!(
+                    a,
+                    SyncAction::ConflictSkill { .. } | SyncAction::ConflictMcp { .. }
+                ) {
+                    plan.actions.push(a.clone());
+                }
+            }
+            begin_confirm(state, plan, "sync-missing");
         }
         (Err(e), _) | (_, Err(e)) => state.status = format!("plan error: {e}"),
     }
 }
 
-pub fn confirm_apply(state: &mut AppState) {
+pub fn on_sync_confirm_yes(state: &mut AppState) {
+    let Some(plan) = state.last_plan.as_ref() else {
+        state.pending = None;
+        state.status = "nothing to apply".into();
+        return;
+    };
+    let conflicts = conflicts_from_plan(plan);
+    if conflicts.is_empty() {
+        apply_with_decisions(state);
+    } else {
+        let first = conflicts[0].clone();
+        state.status = conflict_prompt(&first);
+        state.pending = Some(Pending::ResolveConflict {
+            remaining: conflicts,
+        });
+    }
+}
+
+fn conflict_prompt(item: &ConflictItem) -> String {
+    let kind = match item.kind {
+        ConflictKind::Skill => "skill",
+        ConflictKind::Mcp => "mcp",
+    };
+    format!(
+        "Conflict {kind} '{}': [a] keep-source  [b] keep-target  [s] skip  [n] cancel",
+        item.key
+    )
+}
+
+pub fn on_conflict_choice(state: &mut AppState, policy: ConflictPolicy) {
+    let Some(Pending::ResolveConflict { remaining }) = state.pending.clone() else {
+        return;
+    };
+    if remaining.is_empty() {
+        apply_with_decisions(state);
+        return;
+    }
+    let current = &remaining[0];
+    match current.kind {
+        ConflictKind::Skill => {
+            state
+                .skill_decisions
+                .insert(current.key.clone(), policy);
+        }
+        ConflictKind::Mcp => {
+            state.mcp_decisions.insert(current.key.clone(), policy);
+        }
+    }
+    let rest: Vec<_> = remaining.into_iter().skip(1).collect();
+    if rest.is_empty() {
+        apply_with_decisions(state);
+    } else {
+        state.status = conflict_prompt(&rest[0]);
+        state.pending = Some(Pending::ResolveConflict { remaining: rest });
+    }
+}
+
+fn apply_with_decisions(state: &mut AppState) {
     let Some(plan) = state.last_plan.take() else {
         state.pending = None;
         state.status = "nothing to apply".into();
         return;
     };
     let scope = state.page.scope();
-    match apply_plan(&plan, &state.cwd, scope) {
+    let mut decisions = ConflictDecisions::with_default(ConflictPolicy::Skip);
+    decisions.skills = state.skill_decisions.clone();
+    decisions.mcps = state.mcp_decisions.clone();
+    match apply_plan(&plan, &state.cwd, scope, &decisions) {
         Ok(log) => {
             state.status = format!("applied {} step(s)", log.len());
             state.reload();
@@ -70,19 +173,49 @@ pub fn confirm_apply(state: &mut AppState) {
         Err(e) => state.status = format!("apply error: {e}"),
     }
     state.pending = None;
+    state.skill_decisions.clear();
+    state.mcp_decisions.clear();
 }
 
 pub fn cancel_pending(state: &mut AppState) {
     state.pending = None;
     state.last_plan = None;
+    state.skill_decisions.clear();
+    state.mcp_decisions.clear();
     state.status = "cancelled".into();
 }
 
-pub fn check_update(state: &mut AppState) {
-    // Lightweight: just hit GitHub API via curl-less reqwest in-process would pull cli;
-    // keep TUI free of reqwest — shell out message.
-    state.status = format!(
-        "run: agent-skills-tui update --check  (current {})",
-        env!("CARGO_PKG_VERSION")
-    );
+pub fn check_update_action(state: &mut AppState) {
+    state.status = "checking for updates…".into();
+    match check_update() {
+        Ok(info) => {
+            state.update_msg = info.message.clone();
+            if info.update_available {
+                state.status = format!(
+                    "{}  Press y to install, n to cancel.",
+                    info.message
+                );
+                state.pending = Some(Pending::UpdateInstall);
+            } else {
+                state.status = info.message;
+                state.pending = None;
+            }
+        }
+        Err(e) => {
+            state.status = format!("update check failed: {e}");
+            state.pending = None;
+        }
+    }
+}
+
+pub fn confirm_update_install(state: &mut AppState) {
+    state.status = "installing update…".into();
+    match install_update(false) {
+        Ok(info) => {
+            state.status = info.message;
+            state.update_msg = state.status.clone();
+        }
+        Err(e) => state.status = format!("update install failed: {e}"),
+    }
+    state.pending = None;
 }

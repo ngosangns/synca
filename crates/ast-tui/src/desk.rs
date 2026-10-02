@@ -288,7 +288,7 @@ fn draw_footer(frame: &mut Frame, area: Rect, state: &AppState) {
 
 fn draw_help(frame: &mut Frame, area: Rect) {
     let w = area.width.min(70);
-    let h = area.height.min(16);
+    let h = area.height.min(18);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     let rect = Rect::new(x, y, w, h);
@@ -300,12 +300,13 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("  j / k        move selection"),
         Line::from("  s            dry-run sync focused → y/n"),
         Line::from("  S            dry-run sync missing → y/n"),
-        Line::from("  u            update check hint"),
+        Line::from("  u            check/install update from GitHub"),
         Line::from("  r            reload inventory"),
         Line::from("  ?            toggle help"),
         Line::from("  q            quit"),
         Line::from(""),
-        Line::from("Conflicts never auto-overwrite."),
+        Line::from("Conflicts: a=keep-source b=keep-target s=skip"),
+        Line::from("Never silent overwrite."),
     ];
     frame.render_widget(
         Paragraph::new(text).block(

@@ -272,11 +272,22 @@ pub fn plan_sync_mcp(
     Ok(plan)
 }
 
-/// Apply a plan. Conflicts are never applied. `force_overwrite` unused in MVP (always skip conflicts).
-pub fn apply_plan(plan: &SyncPlan, cwd: &Path, scope: Scope) -> anyhow::Result<Vec<String>> {
+/// Apply a plan. Conflicts are resolved per `decisions` (default skip = never overwrite).
+pub fn apply_plan(
+    plan: &SyncPlan,
+    cwd: &Path,
+    scope: Scope,
+    decisions: &ConflictDecisions,
+) -> anyhow::Result<Vec<String>> {
     let mut log = Vec::new();
-    // Build a map of skill key -> source path from inventory for copies
     let skills = scan_skills(scope, cwd);
+    let skill_by_key: BTreeMap<String, SkillEntry> =
+        skills.iter().map(|s| (s.key.clone(), s.clone())).collect();
+
+    let mcps = scan_mcp(scope, cwd);
+    let mcp_by_key: BTreeMap<String, McpEntry> =
+        mcps.iter().map(|m| (m.key.clone(), m.clone())).collect();
+
     let skill_source: BTreeMap<String, PathBuf> = skills
         .iter()
         .filter_map(|s| {
@@ -294,7 +305,6 @@ pub fn apply_plan(plan: &SyncPlan, cwd: &Path, scope: Scope) -> anyhow::Result<V
         })
         .collect();
 
-    let mcps = scan_mcp(scope, cwd);
     let mcp_source: BTreeMap<String, McpNormalized> = mcps
         .iter()
         .filter_map(|m| {
@@ -309,9 +319,37 @@ pub fn apply_plan(plan: &SyncPlan, cwd: &Path, scope: Scope) -> anyhow::Result<V
 
     for action in &plan.actions {
         match action {
-            SyncAction::ConflictSkill { skill_key, .. }
-            | SyncAction::ConflictMcp { server: skill_key, .. } => {
-                log.push(format!("conflict skipped: {skill_key}"));
+            SyncAction::ConflictSkill { skill_key, .. } => {
+                let policy = decisions.for_skill(skill_key);
+                match policy {
+                    ConflictPolicy::Skip => {
+                        log.push(format!("conflict skipped (skill): {skill_key}"));
+                    }
+                    ConflictPolicy::KeepSource | ConflictPolicy::KeepTarget => {
+                        let Some(entry) = skill_by_key.get(skill_key) else {
+                            log.push(format!("conflict skill missing from inventory: {skill_key}"));
+                            continue;
+                        };
+                        let lines = resolve_skill_conflict(scope, cwd, entry, policy)?;
+                        log.extend(lines);
+                    }
+                }
+            }
+            SyncAction::ConflictMcp { server, .. } => {
+                let policy = decisions.for_mcp(server);
+                match policy {
+                    ConflictPolicy::Skip => {
+                        log.push(format!("conflict skipped (mcp): {server}"));
+                    }
+                    ConflictPolicy::KeepSource | ConflictPolicy::KeepTarget => {
+                        let Some(entry) = mcp_by_key.get(server) else {
+                            log.push(format!("conflict mcp missing from inventory: {server}"));
+                            continue;
+                        };
+                        let lines = resolve_mcp_conflict(scope, cwd, entry, policy)?;
+                        log.extend(lines);
+                    }
+                }
             }
             SyncAction::SkipSame { path, reason, .. }
             | SyncAction::SkipMcpSame { path, reason, .. } => {
@@ -322,6 +360,9 @@ pub fn apply_plan(plan: &SyncPlan, cwd: &Path, scope: Scope) -> anyhow::Result<V
                 if let Some(parent) = to.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
+                if to.exists() {
+                    remove_path(to)?;
+                }
                 copy_dir_recursive(&src, to)?;
                 log.push(format!("copied {} -> {}", src.display(), to.display()));
             }
@@ -331,34 +372,7 @@ pub fn apply_plan(plan: &SyncPlan, cwd: &Path, scope: Scope) -> anyhow::Result<V
                 skill_key: _,
                 agent,
             } => {
-                if let Some(parent) = link.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                // Prefer relative symlink when possible
-                let link_target = pathdiff_relative(link, target).unwrap_or_else(|| target.clone());
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::symlink;
-                    if link.exists() || std::fs::symlink_metadata(link).is_ok() {
-                        log.push(format!(
-                            "skip symlink for {}: {} exists",
-                            agent.as_str(),
-                            link.display()
-                        ));
-                    } else {
-                        symlink(&link_target, link)?;
-                        log.push(format!(
-                            "symlink {} -> {} ({})",
-                            link.display(),
-                            link_target.display(),
-                            agent.as_str()
-                        ));
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    log.push("symlink unsupported on this platform".into());
-                }
+                force_symlink(link, target, agent.as_str(), &mut log)?;
             }
             SyncAction::EnsureMcpHub {
                 hub,
@@ -391,6 +405,204 @@ pub fn apply_plan(plan: &SyncPlan, cwd: &Path, scope: Scope) -> anyhow::Result<V
     }
     Ok(log)
 }
+
+fn pick_skill_winner<'a>(
+    entry: &'a SkillEntry,
+    policy: ConflictPolicy,
+) -> &'a crate::models::SkillPresence {
+    match policy {
+        ConflictPolicy::KeepSource => entry
+            .presence
+            .iter()
+            .find(|p| p.agent == AgentKind::Agents)
+            .or_else(|| entry.presence.first())
+            .expect("presence non-empty"),
+        ConflictPolicy::KeepTarget => entry
+            .presence
+            .iter()
+            .find(|p| p.agent != AgentKind::Agents)
+            .or_else(|| entry.presence.last())
+            .or_else(|| entry.presence.first())
+            .expect("presence non-empty"),
+        ConflictPolicy::Skip => unreachable!(),
+    }
+}
+
+fn pick_mcp_winner<'a>(
+    entry: &'a McpEntry,
+    policy: ConflictPolicy,
+) -> &'a crate::models::McpPresence {
+    match policy {
+        ConflictPolicy::KeepSource => entry
+            .presence
+            .iter()
+            .find(|p| p.agent == AgentKind::Agents)
+            .or_else(|| entry.presence.first())
+            .expect("presence non-empty"),
+        ConflictPolicy::KeepTarget => entry
+            .presence
+            .iter()
+            .find(|p| p.agent != AgentKind::Agents)
+            .or_else(|| entry.presence.last())
+            .or_else(|| entry.presence.first())
+            .expect("presence non-empty"),
+        ConflictPolicy::Skip => unreachable!(),
+    }
+}
+
+fn resolve_skill_conflict(
+    scope: Scope,
+    cwd: &Path,
+    entry: &SkillEntry,
+    policy: ConflictPolicy,
+) -> anyhow::Result<Vec<String>> {
+    let mut log = Vec::new();
+    let winner = pick_skill_winner(entry, policy);
+    let winner_real = if winner.is_symlink {
+        winner
+            .path
+            .canonicalize()
+            .unwrap_or_else(|_| winner.path.clone())
+    } else {
+        winner.path.clone()
+    };
+    let Some(canonical) = canonical_skills_dir(scope, cwd) else {
+        anyhow::bail!("no canonical skills dir");
+    };
+    let canon_skill = canonical.join(&entry.key);
+    if let Some(parent) = canon_skill.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    // If winner is already the canonical path, keep it; else replace canonical.
+    let winner_is_canon = winner_real.canonicalize().ok()
+        == canon_skill.canonicalize().ok()
+        || winner_real == canon_skill;
+    if !winner_is_canon {
+        if canon_skill.exists() || std::fs::symlink_metadata(&canon_skill).is_ok() {
+            remove_path(&canon_skill)?;
+        }
+        copy_dir_recursive(&winner_real, &canon_skill)?;
+        log.push(format!(
+            "conflict skill {}: keep {} → canonical {}",
+            entry.key,
+            winner.agent.as_str(),
+            canon_skill.display()
+        ));
+    } else {
+        log.push(format!(
+            "conflict skill {}: keep {} (already canonical)",
+            entry.key,
+            winner.agent.as_str()
+        ));
+    }
+
+    let targets: Vec<(AgentKind, PathBuf)> = skill_roots(scope, cwd)
+        .into_iter()
+        .filter(|(a, _)| *a != AgentKind::Agents)
+        .collect();
+    for (agent, root) in targets {
+        let link = root.join(&entry.key);
+        force_symlink(&link, &canon_skill, agent.as_str(), &mut log)?;
+    }
+    Ok(log)
+}
+
+fn resolve_mcp_conflict(
+    scope: Scope,
+    cwd: &Path,
+    entry: &McpEntry,
+    policy: ConflictPolicy,
+) -> anyhow::Result<Vec<String>> {
+    let mut log = Vec::new();
+    let winner = pick_mcp_winner(entry, policy);
+    let norm = &winner.normalized;
+    let Some(hub) = canonical_mcp_path(scope, cwd) else {
+        anyhow::bail!("no mcp hub");
+    };
+    upsert_mcp_json_hub(&hub, &entry.key, norm)?;
+    log.push(format!(
+        "conflict mcp {}: keep {} → hub {}",
+        entry.key,
+        winner.agent.as_str(),
+        hub.display()
+    ));
+    for (agent, path) in mcp_config_paths(scope, cwd)
+        .into_iter()
+        .filter(|(a, _)| *a != AgentKind::Agents)
+    {
+        write_mcp_to_agent(&path, agent, &entry.key, norm)?;
+        log.push(format!(
+            "conflict mcp {}: wrote {} ({})",
+            entry.key,
+            path.display(),
+            agent.as_str()
+        ));
+    }
+    Ok(log)
+}
+
+fn remove_path(path: &Path) -> anyhow::Result<()> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.file_type().is_symlink() || meta.file_type().is_file() {
+        std::fs::remove_file(path)?;
+    } else if meta.file_type().is_dir() {
+        std::fs::remove_dir_all(path)?;
+    }
+    Ok(())
+}
+
+fn force_symlink(
+    link: &Path,
+    target: &Path,
+    agent: &str,
+    log: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    if let Some(parent) = link.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let link_target = pathdiff_relative(link, target).unwrap_or_else(|| target.to_path_buf());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        if link.exists() || std::fs::symlink_metadata(link).is_ok() {
+            // Already correct?
+            if let Ok(meta) = std::fs::symlink_metadata(link) {
+                if meta.file_type().is_symlink() {
+                    if let Ok(tgt) = std::fs::read_link(link) {
+                        let resolved = if tgt.is_absolute() {
+                            tgt.clone()
+                        } else {
+                            link.parent().unwrap_or(Path::new(".")).join(&tgt)
+                        };
+                        if resolved.canonicalize().ok() == target.canonicalize().ok()
+                            || tgt == *target
+                        {
+                            log.push(format!(
+                                "skip symlink for {agent}: {} already linked",
+                                link.display()
+                            ));
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+            remove_path(link)?;
+        }
+        symlink(&link_target, link)?;
+        log.push(format!(
+            "symlink {} -> {} ({agent})",
+            link.display(),
+            link_target.display()
+        ));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (link_target, agent);
+        log.push("symlink unsupported on this platform".into());
+    }
+    Ok(())
+}
+
 
 fn pathdiff_relative(link: &Path, target: &Path) -> Option<PathBuf> {
     // Simple relative: if both under same parent chain use pathdiff-like logic manually
@@ -437,7 +649,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn upsert_mcp_json_hub(hub: &Path, server: &str, norm: &McpNormalized) -> anyhow::Result<()> {
+pub fn upsert_mcp_json_hub(hub: &Path, server: &str, norm: &McpNormalized) -> anyhow::Result<()> {
     if let Some(parent) = hub.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -488,7 +700,7 @@ fn write_mcp_to_agent(
     }
 }
 
-fn normalized_to_json(norm: &McpNormalized) -> JsonValue {
+pub fn normalized_to_json(norm: &McpNormalized) -> JsonValue {
     let mut obj = serde_json::Map::new();
     obj.insert("type".into(), json!(norm.transport));
     if let Some(ref cmd) = norm.command {
