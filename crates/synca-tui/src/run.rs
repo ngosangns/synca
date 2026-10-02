@@ -133,12 +133,9 @@ fn handle_key(state: &mut AppState, code: KeyCode) -> bool {
             state.on_context_change();
             state.status = format!("section: {}", state.section.label());
         }
-        KeyCode::PageDown => {
-            state.detail_scroll = state.detail_scroll.saturating_add(3);
-        }
-        KeyCode::PageUp => {
-            state.detail_scroll = state.detail_scroll.saturating_sub(3);
-        }
+        // Page the focused list by one viewport; hard-stop at ends (no wrap).
+        KeyCode::PageDown => state.page_sel(true),
+        KeyCode::PageUp => state.page_sel(false),
         KeyCode::Char('j') | KeyCode::Down => state.move_sel(1),
         KeyCode::Char('k') | KeyCode::Up => state.move_sel(-1),
         KeyCode::Char('s') => actions::dry_run_focused(state),
@@ -195,7 +192,8 @@ fn handle_mouse(state: &mut AppState, mouse: MouseEvent) {
             }
             if contains(layout.skills, col, row) {
                 state.section = Section::Skills;
-                let offset = state.skill_list_state.offset();
+                // Absolute index = bounded scroll offset + row within pane.
+                let offset = state.skill_scroll;
                 let len = state.skills().len();
                 if let Some(idx) = list_row_at(layout.skills, row, offset, len) {
                     state.select_skill(idx);
@@ -208,7 +206,7 @@ fn handle_mouse(state: &mut AppState, mouse: MouseEvent) {
             }
             if contains(layout.mcps, col, row) {
                 state.section = Section::Mcps;
-                let offset = state.mcp_list_state.offset();
+                let offset = state.mcp_scroll;
                 let len = state.mcps().len();
                 if let Some(idx) = list_row_at(layout.mcps, row, offset, len) {
                     state.select_mcp(idx);

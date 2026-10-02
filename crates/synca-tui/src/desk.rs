@@ -87,47 +87,69 @@ fn draw_body(frame: &mut Frame, area: Rect, state: &mut AppState) {
     state.layout.mcps = lists[1];
     state.layout.detail = cols[1];
 
+    // Inner height = pane minus top/bottom borders — fixed viewport, not endless.
+    let skill_h = lists[0].height.saturating_sub(2) as usize;
+    let mcp_h = lists[1].height.saturating_sub(2) as usize;
+    state.set_viewports(skill_h, mcp_h);
+
     draw_skills_list(frame, lists[0], state);
     draw_mcps_list(frame, lists[1], state);
     draw_detail(frame, cols[1], state);
 }
 
+fn skill_row(s: &synca_core::models::SkillEntry) -> ListItem<'static> {
+    let agents: Vec<_> = s.presence.iter().map(|p| p.agent.as_str()).collect();
+    let mark = if s.mismatch {
+        Span::styled("!", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+    } else {
+        Span::raw(" ")
+    };
+    ListItem::new(Line::from(vec![
+        mark,
+        Span::raw(" "),
+        Span::styled(
+            s.display_name.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  ({}) [{}]", s.presence.len(), agents.join(",")),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]))
+}
+
 fn draw_skills_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let focused = state.section == Section::Skills;
-    let title = if focused { " Skills * " } else { " Skills " };
     let border = if focused { Color::Cyan } else { Color::DarkGray };
-    let items: Vec<ListItem> = state
-        .skills()
-        .iter()
-        .map(|s| {
-            let agents: Vec<_> = s.presence.iter().map(|p| p.agent.as_str()).collect();
-            let mark = if s.mismatch {
-                Span::styled("!", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            } else {
-                Span::raw(" ")
-            };
-            ListItem::new(Line::from(vec![
-                mark,
-                Span::raw(" "),
-                Span::styled(
-                    s.display_name.clone(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("  ({}) [{}]", s.presence.len(), agents.join(",")),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]))
-        })
-        .collect();
-    // Keep ListState selection synced before stateful render so ratatui scrolls
-    // the selected row into the viewport (j/k past the visible height).
-    if state.skills().is_empty() {
+    let len = state.skills().len();
+    let viewport = state.skill_viewport.max(1);
+    let scroll = state.skill_scroll.min(len.saturating_sub(viewport.min(len)));
+    let end = (scroll + viewport).min(len);
+    // Bounded window only — never feed the full unbounded list to the widget.
+    let items: Vec<ListItem> = state.skills()[scroll..end].iter().map(skill_row).collect();
+
+    let pos = if len == 0 {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", state.skill_idx + 1, len)
+    };
+    let more_above = if scroll > 0 { "↑" } else { " " };
+    let more_below = if end < len { "↓" } else { " " };
+    let title = if focused {
+        format!(" Skills * · {pos} {more_above}{more_below} ")
+    } else {
+        format!(" Skills · {pos} {more_above}{more_below} ")
+    };
+
+    // Selection is relative to the visible window.
+    if items.is_empty() {
         state.skill_list_state.select(None);
     } else {
-        state.skill_list_state.select(Some(state.skill_idx));
+        state
+            .skill_list_state
+            .select(Some(state.skill_idx.saturating_sub(scroll)));
     }
     let mut list = List::new(items).block(
         Block::default()
@@ -145,46 +167,62 @@ fn draw_skills_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
             )
             .highlight_symbol("› ");
     } else if !state.skills().is_empty() {
-        // Dim marker on the other list so scroll position / selection stay obvious.
         list = list.highlight_style(Style::default().fg(Color::DarkGray));
     }
     frame.render_stateful_widget(list, area, &mut state.skill_list_state);
 }
 
+fn mcp_row(m: &synca_core::models::McpEntry) -> ListItem<'static> {
+    let agents: Vec<_> = m.presence.iter().map(|p| p.agent.as_str()).collect();
+    let mark = if m.mismatch {
+        Span::styled("!", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
+    } else {
+        Span::raw(" ")
+    };
+    ListItem::new(Line::from(vec![
+        mark,
+        Span::raw(" "),
+        Span::styled(
+            m.key.clone(),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  ({}) [{}]", m.presence.len(), agents.join(",")),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]))
+}
+
 fn draw_mcps_list(frame: &mut Frame, area: Rect, state: &mut AppState) {
     let focused = state.section == Section::Mcps;
-    let title = if focused { " MCPs * " } else { " MCPs " };
     let border = if focused { Color::Cyan } else { Color::DarkGray };
-    let items: Vec<ListItem> = state
-        .mcps()
-        .iter()
-        .map(|m| {
-            let agents: Vec<_> = m.presence.iter().map(|p| p.agent.as_str()).collect();
-            let mark = if m.mismatch {
-                Span::styled("!", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
-            } else {
-                Span::raw(" ")
-            };
-            ListItem::new(Line::from(vec![
-                mark,
-                Span::raw(" "),
-                Span::styled(
-                    m.key.clone(),
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("  ({}) [{}]", m.presence.len(), agents.join(",")),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]))
-        })
-        .collect();
-    if state.mcps().is_empty() {
+    let len = state.mcps().len();
+    let viewport = state.mcp_viewport.max(1);
+    let scroll = state.mcp_scroll.min(len.saturating_sub(viewport.min(len)));
+    let end = (scroll + viewport).min(len);
+    let items: Vec<ListItem> = state.mcps()[scroll..end].iter().map(mcp_row).collect();
+
+    let pos = if len == 0 {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", state.mcp_idx + 1, len)
+    };
+    let more_above = if scroll > 0 { "↑" } else { " " };
+    let more_below = if end < len { "↓" } else { " " };
+    let title = if focused {
+        format!(" MCPs * · {pos} {more_above}{more_below} ")
+    } else {
+        format!(" MCPs · {pos} {more_above}{more_below} ")
+    };
+
+    if items.is_empty() {
         state.mcp_list_state.select(None);
     } else {
-        state.mcp_list_state.select(Some(state.mcp_idx));
+        state
+            .mcp_list_state
+            .select(Some(state.mcp_idx.saturating_sub(scroll)));
     }
     let mut list = List::new(items).block(
         Block::default()
@@ -422,6 +460,8 @@ fn nav_hotkey_spans() -> Vec<Span<'static>> {
         Span::raw("sections "),
         key_chip(" j/k "),
         Span::raw("nav "),
+        key_chip(" PgUp/Dn "),
+        Span::raw("page "),
         key_chip(" click/wheel "),
         Span::raw("mouse "),
         key_chip(" u "),
@@ -641,9 +681,9 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         Line::from("Keys / Mouse"),
         Line::from("  Tab / click tabs   User ↔ Project"),
         Line::from("  [ / ] / click list Skills / MCPs section"),
-        Line::from("  j / k / click row  move selection"),
-        Line::from("  wheel on list      move selection"),
-        Line::from("  wheel / PgUp/PgDn  scroll detail pane"),
+        Line::from("  j / k / click row  move (stops at ends)"),
+        Line::from("  wheel on list      move (stops at ends)"),
+        Line::from("  PgUp/PgDn          page list / scroll detail"),
         Line::from("  s                  sync focused item (current page) → y/n"),
         Line::from("  S                  sync ALL skills (current page) → y/n"),
         Line::from("  M                  sync ALL MCPs (current page) → y/n"),

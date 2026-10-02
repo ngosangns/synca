@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.8 — 2026-10-02
+
+- **Bounded lists:** Skills/MCPs panes no longer behave like an endless/wrapping list. j/k and mouse wheel **stop at the first and last row** (no rem_euclid wrap).
+- **Fixed viewport:** Each pane only renders the visible window (`scroll..scroll+height`); title shows `n/N` plus `↑`/`↓` when more rows exist above/below.
+- **Paging:** `PgUp`/`PgDn` jump by one pane-height on the focused list.
+
+
 ## 0.1.7 — 2026-10-02
 
 - **Names:** Skill and MCP names are bold + colored in lists and detail (skills cyan, MCPs magenta); mismatch `!` is red.

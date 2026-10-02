@@ -100,9 +100,16 @@ pub struct AppState {
     pub project_inv: Inventory,
     pub skill_idx: usize,
     pub mcp_idx: usize,
-    /// Keeps Skills list scrolled so `skill_idx` stays visible.
+    /// First visible row in the Skills pane (bounded viewport, not wrap-around).
+    pub skill_scroll: usize,
+    /// First visible row in the MCPs pane.
+    pub mcp_scroll: usize,
+    /// Last known inner height of Skills pane (rows); set on draw.
+    pub skill_viewport: usize,
+    /// Last known inner height of MCPs pane (rows); set on draw.
+    pub mcp_viewport: usize,
+    /// Selection highlight within the visible window (always 0..viewport).
     pub skill_list_state: ListState,
-    /// Keeps MCPs list scrolled so `mcp_idx` stays visible.
     pub mcp_list_state: ListState,
     /// Detail pane vertical scroll; reset when selection / page / section changes.
     pub detail_scroll: u16,
@@ -131,6 +138,10 @@ impl AppState {
             project_inv,
             skill_idx: 0,
             mcp_idx: 0,
+            skill_scroll: 0,
+            mcp_scroll: 0,
+            skill_viewport: 0,
+            mcp_viewport: 0,
             skill_list_state: ListState::default(),
             mcp_list_state: ListState::default(),
             detail_scroll: 0,
@@ -187,19 +198,44 @@ impl AppState {
         }
     }
 
-    /// Keep `ListState` selection in sync with indices so ratatui auto-scrolls
-    /// the focused row into the visible viewport. Also clears stale offsets when
-    /// the list becomes empty or the selected index wraps / is clamped.
+    /// Clamp scroll offsets so the selected row stays inside a fixed-height
+    /// viewport. Selection in `ListState` is relative to the visible window
+    /// (index - scroll), never the full unbounded list.
     pub fn sync_list_states(&mut self) {
+        self.skill_scroll = ensure_visible(
+            self.skill_idx,
+            self.skill_scroll,
+            self.skill_viewport.max(1),
+            self.skills().len(),
+        );
+        self.mcp_scroll = ensure_visible(
+            self.mcp_idx,
+            self.mcp_scroll,
+            self.mcp_viewport.max(1),
+            self.mcps().len(),
+        );
         if self.skills().is_empty() {
             self.skill_list_state.select(None);
         } else {
-            self.skill_list_state.select(Some(self.skill_idx));
+            self.skill_list_state
+                .select(Some(self.skill_idx.saturating_sub(self.skill_scroll)));
         }
         if self.mcps().is_empty() {
             self.mcp_list_state.select(None);
         } else {
-            self.mcp_list_state.select(Some(self.mcp_idx));
+            self.mcp_list_state
+                .select(Some(self.mcp_idx.saturating_sub(self.mcp_scroll)));
+        }
+    }
+
+    /// Record pane inner heights from the latest draw so scroll stays bounded.
+    pub fn set_viewports(&mut self, skill_h: usize, mcp_h: usize) {
+        let skill_changed = skill_h != self.skill_viewport;
+        let mcp_changed = mcp_h != self.mcp_viewport;
+        self.skill_viewport = skill_h;
+        self.mcp_viewport = mcp_h;
+        if skill_changed || mcp_changed {
+            self.sync_list_states();
         }
     }
 
@@ -211,6 +247,8 @@ impl AppState {
         self.sync_list_states();
     }
 
+    /// Move selection by `delta` rows. Stops at list ends — no wrap-around
+    /// (no endless list).
     pub fn move_sel(&mut self, delta: i32) {
         match self.section {
             Section::Skills => {
@@ -219,7 +257,7 @@ impl AppState {
                     return;
                 }
                 let cur = self.skill_idx as i32 + delta;
-                self.skill_idx = cur.rem_euclid(n as i32) as usize;
+                self.skill_idx = cur.clamp(0, (n as i32) - 1) as usize;
             }
             Section::Mcps => {
                 let n = self.mcps().len();
@@ -227,11 +265,20 @@ impl AppState {
                     return;
                 }
                 let cur = self.mcp_idx as i32 + delta;
-                self.mcp_idx = cur.rem_euclid(n as i32) as usize;
+                self.mcp_idx = cur.clamp(0, (n as i32) - 1) as usize;
             }
         }
         self.detail_scroll = 0;
         self.sync_list_states();
+    }
+
+    /// Jump by one viewport page (PgUp/PgDn on the focused list).
+    pub fn page_sel(&mut self, forward: bool) {
+        let step = match self.section {
+            Section::Skills => self.skill_viewport.max(1) as i32,
+            Section::Mcps => self.mcp_viewport.max(1) as i32,
+        };
+        self.move_sel(if forward { step } else { -step });
     }
     pub fn select_skill(&mut self, idx: usize) {
         if self.skills().is_empty() {
@@ -254,27 +301,29 @@ impl AppState {
     }
 }
 
+/// Keep `selected` inside `[offset, offset+visible)`. Returns clamped offset.
+/// Does not wrap — ends are hard stops (bounded viewport).
+fn ensure_visible(selected: usize, offset: usize, visible: usize, len: usize) -> usize {
+    if len == 0 || visible == 0 {
+        return 0;
+    }
+    let selected = selected.min(len - 1);
+    let max_offset = len.saturating_sub(visible);
+    let mut offset = offset.min(max_offset);
+    if selected < offset {
+        offset = selected;
+    } else if selected >= offset.saturating_add(visible) {
+        offset = selected + 1 - visible;
+    }
+    offset.min(max_offset)
+}
+
 #[cfg(test)]
 mod tests {
-    /// Pure helper documenting the viewport contract (ratatui ListState does this on render).
-    fn ensure_visible(selected: usize, offset: usize, visible: usize, len: usize) -> usize {
-        if len == 0 || visible == 0 {
-            return 0;
-        }
-        let selected = selected.min(len - 1);
-        let max_offset = len.saturating_sub(visible);
-        let mut offset = offset.min(max_offset);
-        if selected < offset {
-            offset = selected;
-        } else if selected >= offset.saturating_add(visible) {
-            offset = selected + 1 - visible;
-        }
-        offset.min(max_offset)
-    }
+    use super::ensure_visible;
 
     #[test]
     fn ensure_visible_scrolls_down_when_past_bottom() {
-        // viewport height 5, select index 7 with offset 0 → offset becomes 3
         assert_eq!(ensure_visible(7, 0, 5, 20), 3);
     }
 
@@ -289,8 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_visible_wrap_to_start() {
-        // after rem_euclid wrap to 0 from end, offset must return to 0
+    fn ensure_visible_jump_to_start_clamps_offset() {
         assert_eq!(ensure_visible(0, 15, 5, 20), 0);
     }
 
@@ -298,5 +346,11 @@ mod tests {
     fn ensure_visible_empty_or_zero_height() {
         assert_eq!(ensure_visible(0, 0, 0, 10), 0);
         assert_eq!(ensure_visible(0, 3, 5, 0), 0);
+    }
+
+    #[test]
+    fn ensure_visible_never_exceeds_max_offset() {
+        // len=10, visible=4 → max offset 6; selecting last row → offset 6
+        assert_eq!(ensure_visible(9, 0, 4, 10), 6);
     }
 }
