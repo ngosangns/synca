@@ -13,7 +13,8 @@ pub fn draw(frame: &mut Frame, state: &mut AppState) {
         .constraints([
             Constraint::Length(1),
             Constraint::Min(5),
-            Constraint::Length(1),
+            // Status line + persistent hotkey bar (never replaced by messages).
+            Constraint::Length(2),
         ])
         .split(area);
 
@@ -353,13 +354,89 @@ fn draw_detail(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(para, area);
 }
 
+fn hotkey_spans(state: &AppState) -> Vec<Span<'static>> {
+    let mut spans = vec![
+        Span::styled(" Tab ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("pages "),
+        Span::styled(" [/]/Space ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("sections "),
+        Span::styled(" j/k ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("nav "),
+        Span::styled(" click/wheel ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("mouse "),
+        Span::styled(" s/S ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("sync "),
+        Span::styled(" u ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("update "),
+        Span::styled(" r ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("reload "),
+        Span::styled(" ? ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("help "),
+        Span::styled(" q ", Style::default().fg(Color::Black).bg(Color::DarkGray)),
+        Span::raw("quit"),
+    ];
+    match &state.pending {
+        Some(crate::state::Pending::SyncConfirm) | Some(crate::state::Pending::UpdateInstall) => {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::styled(
+                " y ",
+                Style::default().fg(Color::Black).bg(Color::Yellow),
+            ));
+            spans.push(Span::raw("confirm "));
+            spans.push(Span::styled(
+                " n ",
+                Style::default().fg(Color::Black).bg(Color::Yellow),
+            ));
+            spans.push(Span::raw("cancel"));
+        }
+        Some(crate::state::Pending::ResolveConflict { .. }) => {
+            spans.push(Span::raw("  ·  "));
+            spans.push(Span::styled(
+                " a ",
+                Style::default().fg(Color::Black).bg(Color::Yellow),
+            ));
+            spans.push(Span::raw("keep-src "));
+            spans.push(Span::styled(
+                " b ",
+                Style::default().fg(Color::Black).bg(Color::Yellow),
+            ));
+            spans.push(Span::raw("keep-tgt "));
+            spans.push(Span::styled(
+                " s ",
+                Style::default().fg(Color::Black).bg(Color::Yellow),
+            ));
+            spans.push(Span::raw("skip"));
+        }
+        None => {}
+    }
+    spans
+}
+
 fn draw_footer(frame: &mut Frame, area: Rect, state: &AppState) {
-    let style = if state.pending.is_some() {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .split(area);
+
+    // Line 1: transient status / confirm messages (may be empty).
+    let status_style = if state.pending.is_some() {
         Style::default().fg(Color::Black).bg(Color::Yellow)
     } else {
         Style::default().fg(Color::Gray)
     };
-    frame.render_widget(Paragraph::new(state.status.as_str()).style(style), area);
+    let status_text = if state.status.is_empty() {
+        " "
+    } else {
+        state.status.as_str()
+    };
+    frame.render_widget(Paragraph::new(status_text).style(status_style), rows[0]);
+
+    // Line 2: persistent hotkey bar — never replaced by status.
+    frame.render_widget(
+        Paragraph::new(Line::from(hotkey_spans(state)))
+            .style(Style::default().fg(Color::White).bg(Color::Black)),
+        rows[1],
+    );
 }
 
 fn draw_help(frame: &mut Frame, area: Rect) {

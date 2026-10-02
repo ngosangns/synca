@@ -134,8 +134,7 @@ impl AppState {
             skill_list_state: ListState::default(),
             mcp_list_state: ListState::default(),
             detail_scroll: 0,
-            status: "Tab/click pages · [/] sections · j/k/click/wheel · s sync · S sync-missing · u update · q quit"
-                .into(),
+            status: "Ready.".into(),
             help: false,
             pending: None,
             last_plan: None,

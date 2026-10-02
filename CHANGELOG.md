@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4 — 2026-10-02
+
+- **TUI footer:** always show a persistent hotkey bar (Tab, [/]/Space, j/k, click/wheel, s/S, u, r, ?, q). Status / confirm / update messages render on the line above and never wipe the hotkeys. Pending modes append y/n or a/b/s to the hotkey bar.
+
 ## 0.1.3 — 2026-10-02
 
 - **Mouse:** enable crossterm mouse capture in the TUI; click Skills/MCPs rows to select, click User/Project tabs, scroll wheel on lists (moves selection) and detail pane (scrolls). Mouse disabled on exit (hearth-style).
