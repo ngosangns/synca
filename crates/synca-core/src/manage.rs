@@ -5,6 +5,7 @@ use crate::agents::{
 };
 use crate::discover::{skill_display_name, skill_frontmatter_name};
 use crate::models::{normalize_key, AgentKind, McpNormalized, Scope};
+use crate::scan::canonical_transport;
 use crate::sync::{
     copy_dir_recursive, force_symlink, remove_path, upsert_mcp_json_hub, write_mcp_to_agent,
 };
@@ -575,9 +576,10 @@ pub fn mcp_from_cli(
     url: Option<&str>,
     enabled: Option<bool>,
 ) -> anyhow::Result<McpNormalized> {
-    let transport = transport.trim().to_ascii_lowercase();
+    let requested = transport.trim().to_ascii_lowercase();
+    let canonical = canonical_transport(Some(&requested), url, command.is_some());
     let mut norm = McpNormalized {
-        transport: transport.clone(),
+        transport: canonical.clone(),
         command: None,
         url: None,
         args: None,
@@ -585,8 +587,8 @@ pub fn mcp_from_cli(
         env_keys: vec![],
         env: BTreeMap::new(),
     };
-    match transport.as_str() {
-        "stdio" | "local" => {
+    match canonical.as_str() {
+        "stdio" => {
             let cmd = command.ok_or_else(|| anyhow::anyhow!("--command required for stdio"))?;
             let parts = parse_command_line(cmd);
             if parts.is_empty() {
@@ -599,14 +601,11 @@ pub fn mcp_from_cli(
                 norm.args = Some(parts[1..].to_vec());
             }
         }
-        "sse" | "http" | "remote" | "url" => {
-            let u = url.ok_or_else(|| anyhow::anyhow!("--url required for {transport}"))?;
+        "http" | "sse" => {
+            let u = url.ok_or_else(|| anyhow::anyhow!("--url required for {requested}"))?;
             norm.url = Some(u.to_string());
-            if transport == "url" {
-                norm.transport = "sse".into();
-            }
         }
-        other => anyhow::bail!("unknown transport '{other}' (use stdio|sse|http|remote)"),
+        _ => anyhow::bail!("unknown transport '{requested}' (use stdio|http|sse|remote|local)"),
     }
     Ok(norm)
 }

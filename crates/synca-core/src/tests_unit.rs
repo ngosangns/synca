@@ -93,15 +93,19 @@ fn mcp_normalize_json_command_string_and_array() {
         "command": ["python", "-m", "server"],
         "url": null
     }));
+    assert_eq!(a.command.as_ref().unwrap(), &vec!["python".to_string()]);
     assert_eq!(
-        a.command.as_ref().unwrap(),
-        &vec!["python".to_string(), "-m".to_string(), "server".to_string()]
+        a.args.as_ref().unwrap(),
+        &vec!["-m".to_string(), "server".to_string()]
     );
     assert_eq!(a.transport, "stdio");
 
     let u = json_to_normalized(&json!({"url": "https://example.com/sse"}));
     assert_eq!(u.transport, "sse");
     assert_eq!(u.url.as_deref(), Some("https://example.com/sse"));
+
+    let bare = json_to_normalized(&json!({"url": "https://example.com/mcp"}));
+    assert_eq!(bare.transport, "http");
 }
 
 #[test]
@@ -126,8 +130,73 @@ KEY = "val"
         "url": "https://mcp.example",
         "enabled": true
     }));
-    assert_eq!(oc.transport, "remote");
+    assert_eq!(oc.transport, "http");
     assert_eq!(oc.enabled, Some(true));
+}
+
+#[test]
+fn mcp_transport_aliases_collapse_to_stdio_or_http() {
+    use crate::scan::canonical_transport as ct;
+    assert_eq!(ct(Some("local"), None, true), "stdio");
+    assert_eq!(ct(Some("remote"), Some("https://x/mcp"), false), "http");
+    assert_eq!(ct(Some("streamable-http"), Some("https://x/mcp"), false), "http");
+    assert_eq!(ct(Some("sse"), Some("https://x/mcp"), false), "http", "legacy sse upgrades to http");
+    assert_eq!(ct(Some("sse"), Some("https://x/sse"), false), "sse", "real /sse endpoint is kept");
+    assert_eq!(ct(None, None, false), "stdio");
+}
+
+#[test]
+fn mcp_command_array_splits_into_command_and_args_for_stable_fingerprint() {
+    let oc = json_to_normalized(&json!({"type": "local", "command": ["uvx", "--from", "pkg", "serve"]}));
+    let std = json_to_normalized(&json!({"type": "stdio", "command": "uvx", "args": ["--from", "pkg", "serve"]}));
+    assert_eq!(oc.command.as_ref().unwrap(), &vec!["uvx".to_string()]);
+    assert_eq!(oc.args, std.args);
+    assert_eq!(mcp_fingerprint(&oc), mcp_fingerprint(&std));
+}
+
+#[test]
+fn mcp_from_cli_maps_remote_and_local_aliases() {
+    let r = mcp_from_cli("remote", None, Some("https://x/mcp"), None).unwrap();
+    assert_eq!(r.transport, "http");
+    let l = mcp_from_cli("local", Some("uvx tool serve"), None, None).unwrap();
+    assert_eq!(l.transport, "stdio");
+    assert_eq!(l.args.as_ref().unwrap(), &vec!["tool".to_string(), "serve".to_string()]);
+    assert!(mcp_from_cli("bogus", None, None, None).is_err());
+}
+
+#[test]
+fn mcp_opencode_writer_uses_local_remote_schema_and_keeps_env() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("opencode.json");
+    std::fs::write(&path, r#"{"mcp":{"svc":{"type":"local","command":["old"],"environment":{"SECRET":"keep"}}}}"#).unwrap();
+    let stdio = McpNormalized {
+        transport: "stdio".into(),
+        command: Some(vec!["uvx".into()]),
+        url: None,
+        args: Some(vec!["serve".into()]),
+        enabled: Some(true),
+        env_keys: vec![],
+        env: BTreeMap::new(),
+    };
+    crate::sync::write_mcp_to_agent(&path, AgentKind::OpenCode, "svc", &stdio).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["mcp"]["svc"]["type"], "local");
+    assert_eq!(v["mcp"]["svc"]["command"], json!(["uvx", "serve"]));
+    assert_eq!(v["mcp"]["svc"]["environment"]["SECRET"], "keep");
+
+    let http = McpNormalized {
+        transport: "http".into(),
+        command: None,
+        url: Some("https://x/mcp".into()),
+        args: None,
+        enabled: Some(true),
+        env_keys: vec![],
+        env: BTreeMap::new(),
+    };
+    crate::sync::write_mcp_to_agent(&path, AgentKind::OpenCode, "web", &http).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["mcp"]["web"]["type"], "remote");
+    assert_eq!(v["mcp"]["web"]["url"], "https://x/mcp");
 }
 
 #[test]
@@ -437,6 +506,6 @@ fn mcp_add_and_remove() {
 #[test]
 fn mcp_from_cli_url() {
     let n = mcp_from_cli("sse", None, Some("https://example.com/mcp"), None).unwrap();
-    assert_eq!(n.transport, "sse");
+    assert_eq!(n.transport, "http");
     assert_eq!(n.url.as_deref(), Some("https://example.com/mcp"));
 }

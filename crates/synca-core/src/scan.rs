@@ -242,21 +242,52 @@ fn read_grok_toml(path: &Path) -> anyhow::Result<BTreeMap<String, McpNormalized>
     Ok(out)
 }
 
-pub fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
-    let transport = cfg
-        .get("type")
-        .or_else(|| cfg.get("transport"))
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            if cfg.get("url").and_then(|v| v.as_str()).is_some() {
-                "sse"
-            } else {
-                "stdio"
-            }
-        })
-        .to_string();
+/// Collapse every spelling of a transport into `stdio` or `http`.
+///
+/// `local` is OpenCode's name for stdio. `remote`, `streamable-http` and the
+/// legacy `sse` all mean "connect to a URL". Legacy SSE is upgraded to `http`
+/// because most servers that document an SSE endpoint also serve streamable
+/// HTTP, and clients such as Pi reject `sse`. An explicit `sse` whose URL ends
+/// in `/sse` is kept, since that endpoint cannot speak streamable HTTP.
+pub fn canonical_transport(raw: Option<&str>, url: Option<&str>, has_command: bool) -> String {
+    let raw = raw.map(|r| r.trim().to_ascii_lowercase());
+    let sse_endpoint = url.is_some_and(|u| u.trim_end_matches('/').ends_with("/sse"));
+    match raw.as_deref() {
+        Some("stdio" | "local") => "stdio".into(),
+        Some("sse") if sse_endpoint => "sse".into(),
+        Some("http" | "remote" | "streamable-http" | "streamable_http" | "sse" | "url") => {
+            "http".into()
+        }
+        Some(other) if !other.is_empty() => other.to_string(),
+        _ if url.is_some() && !has_command => if sse_endpoint { "sse" } else { "http" }.into(),
+        _ => "stdio".into(),
+    }
+}
 
-    let command = match cfg.get("command") {
+/// Split `command: ["uvx", "a", "b"]` into `command: ["uvx"]` + `args: ["a", "b"]`
+/// so the same server fingerprints identically in every agent's format.
+fn split_command_array(command: &mut Option<Vec<String>>, args: &mut Option<Vec<String>>) {
+    let Some(cmd) = command.as_mut() else { return };
+    if cmd.len() <= 1 {
+        return;
+    }
+    let mut merged: Vec<String> = cmd.split_off(1);
+    if let Some(existing) = args.take() {
+        merged.extend(existing);
+    }
+    *args = Some(merged);
+}
+
+pub fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
+    let transport = canonical_transport(
+        cfg.get("type")
+            .or_else(|| cfg.get("transport"))
+            .and_then(|v| v.as_str()),
+        cfg.get("url").and_then(|v| v.as_str()),
+        cfg.get("command").is_some(),
+    );
+
+    let mut command = match cfg.get("command") {
         Some(JsonValue::String(s)) => Some(vec![s.clone()]),
         Some(JsonValue::Array(a)) => Some(
             a.iter()
@@ -265,13 +296,14 @@ pub fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
         ),
         _ => None,
     };
-    let args = cfg.get("args").and_then(|v| {
+    let mut args = cfg.get("args").and_then(|v| {
         v.as_array().map(|a| {
             a.iter()
                 .filter_map(|x| x.as_str().map(|s| s.to_string()))
                 .collect()
         })
     });
+    split_command_array(&mut command, &mut args);
     let url = cfg
         .get("url")
         .and_then(|v| v.as_str())
@@ -281,7 +313,11 @@ pub fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
 
     let mut env = BTreeMap::new();
     let mut env_keys = Vec::new();
-    if let Some(obj) = cfg.get("env").and_then(|v| v.as_object()) {
+    if let Some(obj) = cfg
+        .get("env")
+        .or_else(|| cfg.get("environment"))
+        .and_then(|v| v.as_object())
+    {
         for (k, v) in obj {
             env_keys.push(k.clone());
             if let Some(s) = v.as_str() {
@@ -305,20 +341,15 @@ pub fn json_to_normalized(cfg: &JsonValue) -> McpNormalized {
 }
 
 pub fn toml_to_normalized(cfg: &toml::Value) -> McpNormalized {
-    let transport = cfg
-        .get("type")
-        .or_else(|| cfg.get("transport"))
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| {
-            if cfg.get("url").is_some() {
-                "sse"
-            } else {
-                "stdio"
-            }
-        })
-        .to_string();
+    let transport = canonical_transport(
+        cfg.get("type")
+            .or_else(|| cfg.get("transport"))
+            .and_then(|v| v.as_str()),
+        cfg.get("url").and_then(|v| v.as_str()),
+        cfg.get("command").is_some(),
+    );
 
-    let command = match cfg.get("command") {
+    let mut command = match cfg.get("command") {
         Some(toml::Value::String(s)) => Some(vec![s.clone()]),
         Some(toml::Value::Array(a)) => Some(
             a.iter()
@@ -327,13 +358,14 @@ pub fn toml_to_normalized(cfg: &toml::Value) -> McpNormalized {
         ),
         _ => None,
     };
-    let args = cfg.get("args").and_then(|v| {
+    let mut args = cfg.get("args").and_then(|v| {
         v.as_array().map(|a| {
             a.iter()
                 .filter_map(|x| x.as_str().map(|s| s.to_string()))
                 .collect()
         })
     });
+    split_command_array(&mut command, &mut args);
     let url = cfg.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
     let enabled = cfg.get("enabled").and_then(|v| v.as_bool());
 

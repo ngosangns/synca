@@ -773,6 +773,30 @@ fn write_mcp_servers_json(
     Ok(())
 }
 
+/// OpenCode's schema differs from the `mcpServers` format: `type` is `local` or
+/// `remote`, `command` is a single array, and env lives under `environment`.
+fn opencode_entry(norm: &McpNormalized) -> JsonValue {
+    let mut obj = serde_json::Map::new();
+    if norm.transport == "stdio" {
+        obj.insert("type".into(), json!("local"));
+        let mut cmd = norm.command.clone().unwrap_or_default();
+        cmd.extend(norm.args.clone().unwrap_or_default());
+        obj.insert("command".into(), json!(cmd));
+    } else {
+        obj.insert("type".into(), json!("remote"));
+        if let Some(ref url) = norm.url {
+            obj.insert("url".into(), json!(url));
+        }
+    }
+    if let Some(en) = norm.enabled {
+        obj.insert("enabled".into(), json!(en));
+    }
+    if !norm.env.is_empty() {
+        obj.insert("environment".into(), json!(norm.env));
+    }
+    JsonValue::Object(obj)
+}
+
 fn write_opencode(path: &Path, server: &str, norm: &McpNormalized) -> anyhow::Result<()> {
     let mut root: JsonValue = if path.is_file() {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap_or_else(|_| "{}".into()))
@@ -783,13 +807,16 @@ fn write_opencode(path: &Path, server: &str, norm: &McpNormalized) -> anyhow::Re
     if root.get("mcp").is_none() {
         root["mcp"] = json!({});
     }
-    let existing_env = root["mcp"].get(server).and_then(|s| s.get("env")).cloned();
-    let mut obj = normalized_to_json(norm);
+    let existing_env = root["mcp"]
+        .get(server)
+        .and_then(|s| s.get("environment").or_else(|| s.get("env")))
+        .cloned();
+    let mut obj = opencode_entry(norm);
     if let Some(JsonValue::Object(old_env)) = existing_env {
         let env = obj
             .as_object_mut()
             .unwrap()
-            .entry("env")
+            .entry("environment")
             .or_insert_with(|| json!({}));
         if let Some(env_obj) = env.as_object_mut() {
             for (k, v) in old_env {

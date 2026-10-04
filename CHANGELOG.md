@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.10 — 2026-10-03
+
+- **Transport normalization:** `local` -> `stdio`; `remote`, `streamable-http`, legacy `sse` and bare URLs -> `http`. A URL ending in `/sse` stays `sse`. Clients such as Pi reject legacy SSE, and the aliases no longer show up as false conflicts across agents.
+- **Command arrays:** `command: ["uvx", "a"]` (OpenCode style) splits into `command` + `args`, so one server has one fingerprint in every agent format.
+- **OpenCode writer:** writes OpenCode's own schema (`local`/`remote`, array `command`, `environment`) and preserves existing env secrets. It previously wrote `mcpServers`-style entries.
+- **CLI:** `mcp add --transport` accepts `local` and `remote`.
+- **Tests:** transport aliases, command split, `mcp_from_cli` aliases, OpenCode writer.
+
 ## 0.1.9 — 2026-10-02
 
 - **Install / remove:** `i` install skill (path or git URL) or add MCP; `d` delete (skill: unlink default, purge needs double-confirm; MCP: remove from hub + agents). Scope = current User|Project page only.
