@@ -24,7 +24,7 @@ TUI: `i` install/add, `d` delete (skill: `y` unlink / `p` then `y` purge).
 Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
 
 ```bash
-TAG=v0.1.10
+TAG=v0.1.11
 ASSET=synca-${TAG}-darwin-arm64
 curl -fsSL -o /tmp/$ASSET \
   "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"

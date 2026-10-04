@@ -509,3 +509,26 @@ fn mcp_from_cli_url() {
     assert_eq!(n.transport, "http");
     assert_eq!(n.url.as_deref(), Some("https://example.com/mcp"));
 }
+
+#[test]
+fn mcp_writers_keep_args_when_command_is_single_token() {
+    let tmp = tempfile::tempdir().unwrap();
+    let norm = McpNormalized {
+        transport: "stdio".into(),
+        command: Some(vec!["uvx".into()]),
+        url: None,
+        args: Some(vec!["--from".into(), "pkg".into(), "serve".into()]),
+        enabled: Some(true),
+        env_keys: vec![],
+        env: BTreeMap::new(),
+    };
+    let json_path = tmp.path().join("mcp.json");
+    crate::sync::write_mcp_to_agent(&json_path, AgentKind::Pi, "svc", &norm).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json_path).unwrap()).unwrap();
+    assert_eq!(v["mcpServers"]["svc"]["args"], json!(["--from", "pkg", "serve"]));
+
+    let toml_path = tmp.path().join("config.toml");
+    crate::sync::write_mcp_to_agent(&toml_path, AgentKind::Grok, "svc", &norm).unwrap();
+    let t: toml::Value = toml::from_str(&std::fs::read_to_string(&toml_path).unwrap()).unwrap();
+    assert_eq!(t["mcp_servers"]["svc"]["args"].as_array().unwrap().len(), 3);
+}

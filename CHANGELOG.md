@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.11 — 2026-10-04
+
+- **Fix:** JSON and TOML MCP writers dropped `args` when `command` was a single token and `args` were stored separately, which wrote a bare `uvx` and broke the server. Both writers now keep `command` and `args` together.
+- **Tests:** writer regression for single-token command with separate args.
+
 ## 0.1.10 — 2026-10-03
 
 - **Transport normalization:** `local` -> `stdio`; `remote`, `streamable-http`, legacy `sse` and bare URLs -> `http`. A URL ending in `/sse` stays `sse`. Clients such as Pi reject legacy SSE, and the aliases no longer show up as false conflicts across agents.

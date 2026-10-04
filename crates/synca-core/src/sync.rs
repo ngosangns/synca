@@ -704,20 +704,12 @@ pub fn normalized_to_json(norm: &McpNormalized) -> JsonValue {
     let mut obj = serde_json::Map::new();
     obj.insert("type".into(), json!(norm.transport));
     if let Some(ref cmd) = norm.command {
-        if cmd.len() == 1 {
-            obj.insert("command".into(), json!(cmd[0]));
-        } else if !cmd.is_empty() {
-            obj.insert("command".into(), json!(cmd[0]));
-            if cmd.len() > 1 {
-                let mut args = cmd[1..].to_vec();
-                if let Some(ref a) = norm.args {
-                    args.extend(a.clone());
-                }
-                if !args.is_empty() {
-                    obj.insert("args".into(), json!(args));
-                }
-            } else if let Some(ref a) = norm.args {
-                obj.insert("args".into(), json!(a));
+        if let Some((head, rest)) = cmd.split_first() {
+            obj.insert("command".into(), json!(head));
+            let mut args = rest.to_vec();
+            args.extend(norm.args.clone().unwrap_or_default());
+            if !args.is_empty() {
+                obj.insert("args".into(), json!(args));
             }
         }
     } else if let Some(ref a) = norm.args {
@@ -868,21 +860,22 @@ fn write_grok_toml(path: &Path, server: &str, norm: &McpNormalized) -> anyhow::R
     let mut tbl = toml::map::Map::new();
     tbl.insert("type".into(), toml::Value::String(norm.transport.clone()));
     if let Some(ref cmd) = norm.command {
-        if cmd.len() == 1 {
-            tbl.insert("command".into(), toml::Value::String(cmd[0].clone()));
-        } else if !cmd.is_empty() {
-            tbl.insert("command".into(), toml::Value::String(cmd[0].clone()));
-            let mut args: Vec<toml::Value> = cmd[1..]
+        if let Some((head, rest)) = cmd.split_first() {
+            tbl.insert("command".into(), toml::Value::String(head.clone()));
+            let mut args: Vec<toml::Value> = rest
                 .iter()
+                .chain(norm.args.iter().flatten())
                 .map(|s| toml::Value::String(s.clone()))
                 .collect();
-            if let Some(ref a) = norm.args {
-                args.extend(a.iter().map(|s| toml::Value::String(s.clone())));
-            }
             if !args.is_empty() {
-                tbl.insert("args".into(), toml::Value::Array(args));
+                tbl.insert("args".into(), toml::Value::Array(std::mem::take(&mut args)));
             }
         }
+    } else if let Some(ref a) = norm.args {
+        tbl.insert(
+            "args".into(),
+            toml::Value::Array(a.iter().map(|s| toml::Value::String(s.clone())).collect()),
+        );
     }
     if let Some(ref url) = norm.url {
         tbl.insert("url".into(), toml::Value::String(url.clone()));
