@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.12 — 2026-10-04
+
+- **Pi skills:** sync repairs frontmatter Pi rejects. Invalid `name` values become the folder slug (`Make Bot UI` → `make-bot-ui`). Plain description values that contain `:` are quoted so Pi's YAML parser accepts them.
+- **Pi collisions:** two directories with the same skill name and the same file tree become one directory plus a symlink. Pi dedupes that by real path. An identical project copy of a user skill is relinked the same way when sync runs with that project as cwd. Different trees are left in place.
+
 ## 0.1.11 — 2026-10-04
 
 - **Fix:** JSON and TOML MCP writers dropped `args` when `command` was a single token and `args` were stored separately, which wrote a bare `uvx` and broke the server. Both writers now keep `command` and `args` together.

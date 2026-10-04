@@ -361,6 +361,8 @@ fn sync_plan_never_crosses_user_and_project_scopes() {
                 SyncAction::SymlinkSkill { link, target, .. } => vec![link, target],
                 SyncAction::SkipSame { path, .. } => vec![path],
                 SyncAction::ConflictSkill { paths, .. } => paths.iter().map(|p| p.as_path()).collect(),
+                SyncAction::RepairSkillFrontmatter { path, .. } => vec![path],
+                SyncAction::CollapseSkillAlias { from, to, .. } => vec![from, to],
                 _ => vec![],
             };
             for path in paths {
@@ -393,6 +395,8 @@ fn sync_plan_never_crosses_user_and_project_scopes() {
                 SyncAction::SymlinkSkill { link, target, .. } => vec![link, target],
                 SyncAction::SkipSame { path, .. } => vec![path],
                 SyncAction::ConflictSkill { paths, .. } => paths.iter().map(|p| p.as_path()).collect(),
+                SyncAction::RepairSkillFrontmatter { path, .. } => vec![path],
+                SyncAction::CollapseSkillAlias { from, to, .. } => vec![from, to],
                 _ => vec![],
             };
             for path in paths {
@@ -531,4 +535,119 @@ fn mcp_writers_keep_args_when_command_is_single_token() {
     crate::sync::write_mcp_to_agent(&toml_path, AgentKind::Grok, "svc", &norm).unwrap();
     let t: toml::Value = toml::from_str(&std::fs::read_to_string(&toml_path).unwrap()).unwrap();
     assert_eq!(t["mcp_servers"]["svc"]["args"].as_array().unwrap().len(), 3);
+}
+
+fn write_raw_skill(dir: &Path, folder: &str, frontmatter: &str, body: &str) {
+    let skill = dir.join(folder);
+    std::fs::create_dir_all(&skill).unwrap();
+    std::fs::write(
+        skill.join("SKILL.md"),
+        format!("---\n{frontmatter}\n---\n{body}\n"),
+    )
+    .unwrap();
+}
+
+#[test]
+fn pi_sync_repairs_names_collapses_aliases_and_identical_project_shadows() {
+    with_temp_home(|home| {
+        let agents = home.join(".agents/skills");
+        std::fs::create_dir_all(&agents).unwrap();
+        write_raw_skill(
+            &agents,
+            "make-bot-ui",
+            "name: Make Bot UI\ndescription: Triggers: webhook ui",
+            "# bot",
+        );
+        let same = "name: design-swiftui-interfaces\ndescription: SwiftUI interfaces";
+        write_raw_skill(&agents, "design-swiftui-interfaces", same, "# swift");
+        write_raw_skill(&agents, "swiftui-interface-design", same, "# swift");
+        write_raw_skill(&agents, "but", "name: but\ndescription: git butler", "# but");
+
+        let proj_raw = home.join("viclass");
+        std::fs::create_dir_all(proj_raw.join(".git")).unwrap();
+        let proj_skills = proj_raw.join(".agents/skills");
+        write_raw_skill(&proj_skills, "but", "name: but\ndescription: git butler", "# but");
+        write_raw_skill(
+            &proj_skills,
+            "viclass-only",
+            "name: viclass-only\ndescription: local",
+            "# local",
+        );
+        // Same name, different tree: must stay a real project directory.
+        write_raw_skill(
+            &proj_skills,
+            "make-bot-ui",
+            "name: make-bot-ui\ndescription: project specific",
+            "# different",
+        );
+        let proj = proj_raw.canonicalize().unwrap();
+
+        let plan = plan_sync_skills(Scope::User, &proj, None, None).unwrap();
+        assert!(
+            plan.actions.iter().any(|a| matches!(
+                a,
+                SyncAction::RepairSkillFrontmatter { skill_key, .. } if skill_key == "make-bot-ui"
+            )),
+            "missing name repair: {:?}",
+            plan.actions
+        );
+        assert!(
+            plan.actions.iter().any(|a| matches!(
+                a,
+                SyncAction::CollapseSkillAlias { skill_key, .. } if skill_key == "design-swiftui-interfaces"
+            )),
+            "missing alias collapse: {:?}",
+            plan.actions
+        );
+        assert!(
+            plan.actions.iter().any(|a| matches!(
+                a,
+                SyncAction::CollapseSkillAlias { from, skill_key, .. }
+                    if skill_key == "but" && from.ends_with("viclass/.agents/skills/but")
+                        || (skill_key == "but" && from.components().any(|c| c.as_os_str() == "viclass"))
+            )),
+            "missing project shadow relink: {:?}",
+            plan.actions
+        );
+
+        let decisions = ConflictDecisions::with_default(ConflictPolicy::Skip);
+        apply_plan(&plan, &proj, Scope::User, &decisions).unwrap();
+
+        let repaired = std::fs::read_to_string(agents.join("make-bot-ui/SKILL.md")).unwrap();
+        assert!(repaired.contains("name: make-bot-ui\n"), "{repaired}");
+        assert!(
+            repaired.contains("description: \"Triggers: webhook ui\"\n"),
+            "{repaired}"
+        );
+
+        let alias = agents.join("swiftui-interface-design");
+        assert!(
+            std::fs::symlink_metadata(&alias).unwrap().file_type().is_symlink(),
+            "duplicate skill dir should be a symlink"
+        );
+        assert_eq!(
+            alias.canonicalize().unwrap(),
+            agents.join("design-swiftui-interfaces").canonicalize().unwrap()
+        );
+
+        let proj_but = proj.join(".agents/skills/but");
+        assert!(
+            std::fs::symlink_metadata(&proj_but).unwrap().file_type().is_symlink(),
+            "identical project shadow should alias the user skill"
+        );
+        assert_eq!(
+            proj_but.canonicalize().unwrap(),
+            agents.join("but").canonicalize().unwrap()
+        );
+        let proj_only = proj.join(".agents/skills/viclass-only");
+        assert!(
+            !std::fs::symlink_metadata(&proj_only).unwrap().file_type().is_symlink(),
+            "project-only skill must stay a real directory"
+        );
+        let proj_bot = proj.join(".agents/skills/make-bot-ui");
+        assert!(
+            !std::fs::symlink_metadata(&proj_bot).unwrap().file_type().is_symlink(),
+            "different project tree must not be replaced"
+        );
+    });
 }

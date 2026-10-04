@@ -4,6 +4,7 @@ pub mod agents;
 pub mod discover;
 pub mod models;
 pub mod paths;
+pub mod pi_skills;
 pub mod scan;
 pub mod sync;
 pub mod manage;

@@ -13,7 +13,7 @@ fn name_re() -> &'static Regex {
 }
 
 /// Slice of YAML between the opening `---` and closing `\n---`.
-fn frontmatter_block(text: &str) -> Option<&str> {
+pub(crate) fn frontmatter_block(text: &str) -> Option<&str> {
     if !text.starts_with("---") {
         return None;
     }

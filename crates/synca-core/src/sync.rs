@@ -51,6 +51,18 @@ pub enum SyncAction {
         server: String,
         fingerprints: Vec<String>,
     },
+    /// Rewrite SKILL.md frontmatter so Pi accepts the name and YAML.
+    RepairSkillFrontmatter {
+        path: PathBuf,
+        skill_key: String,
+    },
+    /// Replace `from` with a symlink to `to`. Same skill name, identical tree.
+    /// Pi realpath-dedupes the alias and stops reporting a collision.
+    CollapseSkillAlias {
+        from: PathBuf,
+        to: PathBuf,
+        skill_key: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -85,6 +97,8 @@ pub fn plan_sync_skills(
         dry_run: true,
         actions: vec![],
     };
+    plan.actions
+        .extend(crate::pi_skills::plan_pi_compat(scope, cwd, &canonical, only_key));
 
     for skill in &skills {
         if let Some(k) = only_key {
@@ -386,6 +400,53 @@ pub fn apply_plan(
                 upsert_mcp_json_hub(hub, server, norm)?;
                 log.push(format!("hub upsert {} in {}", server, hub.display()));
             }
+            SyncAction::RepairSkillFrontmatter { path, skill_key } => {
+                match crate::pi_skills::apply_frontmatter_repair(path) {
+                    Ok(true) => log.push(format!(
+                        "repaired frontmatter {skill_key}: {}",
+                        path.display()
+                    )),
+                    Ok(false) => log.push(format!(
+                        "skip repair {skill_key}: {}",
+                        path.display()
+                    )),
+                    Err(err) => log.push(format!(
+                        "repair failed {skill_key} ({}): {err}",
+                        path.display()
+                    )),
+                }
+            }
+            SyncAction::CollapseSkillAlias { from, to, skill_key } => {
+                if !to.exists() {
+                    log.push(format!(
+                        "skip collapse {skill_key}: target missing {}",
+                        to.display()
+                    ));
+                    continue;
+                }
+                let same = from.canonicalize().ok() == to.canonicalize().ok();
+                if same {
+                    log.push(format!(
+                        "skip collapse {skill_key}: {} already aliases {}",
+                        from.display(),
+                        to.display()
+                    ));
+                    continue;
+                }
+                match (crate::pi_skills::tree_hash(from), crate::pi_skills::tree_hash(to)) {
+                    (Ok(a), Ok(b)) if a == b => {
+                        force_symlink(from, to, "pi-dedupe", &mut log)?;
+                    }
+                    (Ok(_), Ok(_)) => log.push(format!(
+                        "skip collapse {skill_key}: trees differ {} vs {}",
+                        from.display(),
+                        to.display()
+                    )),
+                    (Err(err), _) | (_, Err(err)) => log.push(format!(
+                        "skip collapse {skill_key}: {err}"
+                    )),
+                }
+            }
             SyncAction::WriteMcpServer {
                 path,
                 agent,
@@ -402,6 +463,11 @@ pub fn apply_plan(
                 ));
             }
         }
+    }
+    // Copies and conflict resolution can land a SKILL.md after the planned
+    // repair. Run once more so Pi still sees a valid name and quoted scalars.
+    if let Some(canon) = canonical_skills_dir(scope, cwd) {
+        log.extend(crate::pi_skills::repair_installed_skills(&canon));
     }
     Ok(log)
 }

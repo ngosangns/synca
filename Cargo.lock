@@ -2071,7 +2071,7 @@ dependencies = [
 
 [[package]]
 name = "synca"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "synca-cli",
@@ -2079,7 +2079,7 @@ dependencies = [
 
 [[package]]
 name = "synca-cli"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "clap",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "synca-core"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2110,7 +2110,7 @@ dependencies = [
 
 [[package]]
 name = "synca-tui"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "crossterm",
