@@ -9,45 +9,50 @@ use Illuminate\View\View;
 
 class NoteController extends Controller
 {
+    private const PER_PAGE = 24;
+
     public function index(Request $request): View
     {
+        $term = $request->string('q')->trim()->toString();
+
         $notes = Note::query()
-            ->when($request->string('q')->toString(), fn ($q, $term) => $q->where(
+            ->when($term, fn ($q) => $q->where(
                 fn ($q) => $q->where('title', 'like', "%{$term}%")->orWhere('body', 'like', "%{$term}%")
             ))
             ->orderByDesc('pinned')
             ->latest('updated_at')
-            ->get();
+            ->paginate(self::PER_PAGE)
+            ->withQueryString();
 
-        return view('notes.index', ['notes' => $notes, 'q' => $request->string('q')->toString()]);
+        return view('notes.index', ['notes' => $notes, 'q' => $term]);
     }
 
     public function store(Request $request): RedirectResponse
     {
         Note::create($this->validated($request));
 
-        return redirect()->route('notes.index');
+        return back()->with('status', 'Note added.');
     }
 
     public function update(Request $request, Note $note): RedirectResponse
     {
         $note->update($this->validated($request));
 
-        return redirect()->route('notes.index');
+        return back()->with('status', 'Note saved.');
     }
 
     public function togglePin(Note $note): RedirectResponse
     {
         $note->update(['pinned' => ! $note->pinned]);
 
-        return redirect()->route('notes.index');
+        return back()->with('status', $note->pinned ? 'Note pinned.' : 'Note unpinned.');
     }
 
     public function destroy(Note $note): RedirectResponse
     {
         $note->delete();
 
-        return redirect()->route('notes.index');
+        return back()->with('status', 'Note deleted.');
     }
 
     private function validated(Request $request): array
