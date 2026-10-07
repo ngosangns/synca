@@ -24,10 +24,12 @@ class NativeAppServiceProvider implements ProvidesPhpIni
 
         Window::open()
             ->title(config('app.name'))
-            ->width(960)
+            ->width(1024)
             ->height(720)
             ->minWidth(640)
             ->minHeight(480)
+            ->titleBarHiddenInset()
+            ->trafficLightPosition(16, 8)
             ->rememberState();
     }
 

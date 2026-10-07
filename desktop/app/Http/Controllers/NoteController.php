@@ -24,7 +24,11 @@ class NoteController extends Controller
             ->paginate(self::PER_PAGE)
             ->withQueryString();
 
-        return view('notes.index', ['notes' => $notes, 'q' => $term]);
+        $data = ['notes' => $notes, 'q' => $term];
+
+        return $request->boolean('partial')
+            ? view('notes._region', $data)
+            : view('notes.index', $data);
     }
 
     public function store(Request $request): RedirectResponse

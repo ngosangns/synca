@@ -59,6 +59,17 @@ class NoteTest extends TestCase
         $this->get('/?q=Groc')->assertOk()->assertSee('q=Groc', false);
     }
 
+    public function test_partial_request_returns_only_the_notes_region(): void
+    {
+        Note::factory()->create(['title' => 'Lazy loaded']);
+
+        $this->get('/?partial=1')
+            ->assertOk()
+            ->assertSee('Lazy loaded')
+            ->assertDontSee('<!DOCTYPE html>', false)
+            ->assertSee('notes-meta');
+    }
+
     public function test_title_is_required(): void
     {
         $this->post('/notes', ['title' => ''])->assertSessionHasErrors('title');
