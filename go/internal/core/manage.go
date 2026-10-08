@@ -209,6 +209,15 @@ func PlanInstallSkill(scope Scope, cwd, sourceDir string, agentsFilter []AgentKi
 	return plan, nil
 }
 
+func presenceAgentIn(name string, filter []AgentKind) bool {
+	for _, a := range filter {
+		if a.String() == name {
+			return true
+		}
+	}
+	return false
+}
+
 func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, purge bool) (*ManagePlan, error) {
 	key = NormalizeKey(key)
 	canonical := CanonicalSkillsDir(scope, cwd)
@@ -220,25 +229,27 @@ func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, pur
 		note = fmt.Sprintf("PURGE skill '%s' (canonical + all agent links)", key)
 	}
 	plan := &ManagePlan{Scope: scope.String(), DryRun: true, Notes: []string{note}}
-	for _, r := range SkillRoots(scope, cwd) {
-		if r.Agent == AgentAgents {
+	// Skill keys come from SKILL.md frontmatter, so the folder name can differ
+	// from the key (folder "gitbutler", name "but"). Act on the paths the scan
+	// actually found for this key instead of guessing <root>/<key>.
+	for _, e := range ScanSkills(scope, cwd) {
+		if e.Key != key {
 			continue
 		}
-		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
-			continue
-		}
-		link := filepath.Join(r.Path, key)
-		if _, err := os.Lstat(link); err == nil {
+		for _, p := range e.Presence {
+			if p.Agent == AgentAgents.String() {
+				if purge {
+					plan.Actions = append(plan.Actions, ManageAction{
+						Kind: "purge_canonical_skill", Path: p.Path, SkillKey: key,
+					})
+				}
+				continue
+			}
+			if agentsFilter != nil && !presenceAgentIn(p.Agent, agentsFilter) {
+				continue
+			}
 			plan.Actions = append(plan.Actions, ManageAction{
-				Kind: "unlink_skill", Path: link, SkillKey: key, Agent: r.Agent.String(),
-			})
-		}
-	}
-	if purge {
-		canon := filepath.Join(canonical, key)
-		if _, err := os.Lstat(canon); err == nil {
-			plan.Actions = append(plan.Actions, ManageAction{
-				Kind: "purge_canonical_skill", Path: canon, SkillKey: key,
+				Kind: "unlink_skill", Path: p.Path, SkillKey: key, Agent: p.Agent,
 			})
 		}
 	}

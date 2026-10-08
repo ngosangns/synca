@@ -1,6 +1,10 @@
 package core
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestNormalizeKey(t *testing.T) {
 	cases := map[string]string{
@@ -166,4 +170,73 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+// Skill keys come from SKILL.md frontmatter; the folder name may differ.
+func TestRemoveSkillWhenFolderNameDiffersFromKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	canon := filepath.Join(home, ".agents/skills/gitbutler")
+	if err := os.MkdirAll(canon, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(canon, "SKILL.md"), []byte("---\nname: but\ndescription: d\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cursorRoot := filepath.Join(home, ".cursor/skills")
+	if err := os.MkdirAll(cursorRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(cursorRoot, "gitbutler")
+	if err := os.Symlink("../../.agents/skills/gitbutler", link); err != nil {
+		t.Fatal(err)
+	}
+
+	// unlink keeps the canonical copy
+	if _, _, err := RemoveSkill(ScopeUser, home, "but", nil, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(link); err == nil {
+		t.Error("unlink left the agent link behind")
+	}
+	if _, err := os.Stat(canon); err != nil {
+		t.Errorf("unlink must keep canonical: %v", err)
+	}
+
+	// purge removes it, and the skill disappears from the scan
+	if err := os.Symlink("../../.agents/skills/gitbutler", link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := RemoveSkill(ScopeUser, home, "but", nil, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(canon); err == nil {
+		t.Error("purge left the canonical directory behind")
+	}
+	if _, err := os.Lstat(link); err == nil {
+		t.Error("purge left the agent link behind")
+	}
+	for _, e := range ScanSkills(ScopeUser, home) {
+		if e.Key == "but" {
+			t.Error("purged skill still listed by scan")
+		}
+	}
+}
+
+func TestRemoveSkillDryRunTouchesNothing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	canon := filepath.Join(home, ".agents/skills/gitbutler")
+	_ = os.MkdirAll(canon, 0o755)
+	_ = os.WriteFile(filepath.Join(canon, "SKILL.md"), []byte("---\nname: but\n---\n"), 0o644)
+	plan, _, err := RemoveSkill(ScopeUser, home, "but", nil, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Actions) != 1 || plan.Actions[0].Kind != "purge_canonical_skill" {
+		t.Errorf("unexpected plan: %+v", plan.Actions)
+	}
+	if _, err := os.Stat(canon); err != nil {
+		t.Error("dry run deleted the skill")
+	}
 }

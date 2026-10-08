@@ -1,11 +1,9 @@
 //! Install / remove skills and MCP servers (scope-locked).
 
-use crate::agents::{
-    canonical_mcp_path, canonical_skills_dir, mcp_config_paths, skill_roots,
-};
+use crate::agents::{canonical_mcp_path, canonical_skills_dir, mcp_config_paths, skill_roots};
 use crate::discover::{skill_display_name, skill_frontmatter_name};
 use crate::models::{normalize_key, AgentKind, McpNormalized, Scope};
-use crate::scan::canonical_transport;
+use crate::scan::{canonical_transport, scan_skills};
 use crate::sync::{
     copy_dir_recursive, force_symlink, remove_path, upsert_mcp_json_hub, write_mcp_to_agent,
 };
@@ -213,30 +211,30 @@ pub fn plan_remove_skill(
             format!("unlink skill '{key}' from agents (canonical kept)")
         }],
     };
-    let targets: Vec<(AgentKind, PathBuf)> = skill_roots(scope, cwd)
-        .into_iter()
-        .filter(|(a, _)| *a != AgentKind::Agents)
-        .filter(|(a, _)| agents_filter.map(|f| f.contains(a)).unwrap_or(true))
-        .collect();
-    for (agent, root) in targets {
-        let link = root.join(&key);
-        if link.exists() || std::fs::symlink_metadata(&link).is_ok() {
+    // Skill keys come from SKILL.md frontmatter, so the folder name can differ
+    // from the key (folder "gitbutler", name "but"). Act on the paths the scan
+    // actually found for this key instead of guessing <root>/<key>.
+    let _ = &canonical;
+    for entry in scan_skills(scope, cwd).into_iter().filter(|e| e.key == key) {
+        for p in entry.presence {
+            if p.agent == AgentKind::Agents {
+                if purge {
+                    plan.actions.push(ManageAction::PurgeCanonicalSkill {
+                        path: p.path,
+                        skill_key: key.clone(),
+                    });
+                }
+                continue;
+            }
+            if !agents_filter.map(|f| f.contains(&p.agent)).unwrap_or(true) {
+                continue;
+            }
             plan.actions.push(ManageAction::UnlinkSkill {
-                path: link,
+                path: p.path,
                 skill_key: key.clone(),
-                agent: agent.as_str().into(),
+                agent: p.agent.as_str().into(),
             });
         }
-    }
-    if purge {
-        let canon = canonical.join(&key);
-        if canon.exists() || std::fs::symlink_metadata(&canon).is_ok() {
-            plan.actions.push(ManageAction::PurgeCanonicalSkill {
-                path: canon,
-                skill_key: key.clone(),
-            });
-        }
-        // Also unlink Agents root if somehow separate (same as canonical usually)
     }
     if plan.actions.is_empty() {
         plan.notes

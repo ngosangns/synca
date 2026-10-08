@@ -651,3 +651,32 @@ fn pi_sync_repairs_names_collapses_aliases_and_identical_project_shadows() {
         );
     });
 }
+
+#[test]
+fn remove_skill_works_when_folder_name_differs_from_key() {
+    with_temp_home(|home| {
+        let canon = home.join(".agents/skills/gitbutler");
+        std::fs::create_dir_all(&canon).unwrap();
+        std::fs::write(canon.join("SKILL.md"), "---\nname: but\ndescription: d\n---\n").unwrap();
+        let cursor = home.join(".cursor/skills");
+        std::fs::create_dir_all(&cursor).unwrap();
+        let link = cursor.join("gitbutler");
+        std::os::unix::fs::symlink("../../.agents/skills/gitbutler", &link).unwrap();
+
+        // dry run touches nothing
+        let (plan, _) = remove_skill(Scope::User, home, "but", None, true, true).unwrap();
+        assert_eq!(plan.actions.len(), 2);
+        assert!(canon.exists() && link.symlink_metadata().is_ok());
+
+        // unlink keeps canonical
+        remove_skill(Scope::User, home, "but", None, false, false).unwrap();
+        assert!(link.symlink_metadata().is_err(), "link must be removed");
+        assert!(canon.exists(), "canonical must be kept on unlink");
+
+        // purge removes it and the scan no longer lists it
+        std::os::unix::fs::symlink("../../.agents/skills/gitbutler", &link).unwrap();
+        remove_skill(Scope::User, home, "but", None, true, false).unwrap();
+        assert!(!canon.exists() && link.symlink_metadata().is_err());
+        assert!(scan_skills(Scope::User, home).iter().all(|e| e.key != "but"));
+    });
+}
