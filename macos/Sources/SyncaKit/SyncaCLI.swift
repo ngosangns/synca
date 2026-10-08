@@ -25,6 +25,49 @@ public enum CLIError: Error, LocalizedError, Sendable {
     }
 }
 
+/// Drains a pipe to EOF without holding a thread while it waits (DispatchIO is
+/// event-driven). Blocking reads would exhaust the cooperative pool or GCD's thread
+/// limit when many commands run at once, and then a timeout could fire late.
+private final class PipeReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private var finished = false
+    private var waiter: CheckedContinuation<Data, Never>?
+    private var io: DispatchIO?
+    private let handle: FileHandle
+
+    init(_ handle: FileHandle) {
+        self.handle = handle
+        let queue = DispatchQueue.global(qos: .userInitiated)
+        let io = DispatchIO(type: .stream, fileDescriptor: handle.fileDescriptor, queue: queue) { _ in }
+        self.io = io
+        io.setLimit(lowWater: 1)
+        io.read(offset: 0, length: Int.max, queue: queue) { [self] done, chunk, _ in
+            lock.lock()
+            if let chunk, !chunk.isEmpty { buffer.append(contentsOf: chunk) }
+            guard done else { lock.unlock(); return }
+            finished = true
+            let w = waiter
+            waiter = nil
+            let out = buffer
+            let channel = self.io
+            self.io = nil
+            lock.unlock()
+            channel?.close()
+            try? handle.close()
+            w?.resume(returning: out)
+        }
+    }
+
+    func data() async -> Data {
+        await withCheckedContinuation { (cont: CheckedContinuation<Data, Never>) in
+            lock.lock()
+            if finished { let d = buffer; lock.unlock(); cont.resume(returning: d) }
+            else { waiter = cont; lock.unlock() }
+        }
+    }
+}
+
 /// Lets cancel / timeout / exit race safely and records why we killed it.
 private final class ProcessBox: @unchecked Sendable {
     let process = Process()
@@ -101,10 +144,12 @@ public struct SyncaCLI: Sendable {
         p.standardOutput = out
         p.standardError = err
         p.standardInput = FileHandle.nullDevice
-        // Each pipe is drained to EOF by its own task. A readabilityHandler can lose the
-        // tail of the output when it is cleared while a read is still in flight.
-        let outReader = Task.detached { (try? out.fileHandleForReading.readToEnd()) ?? Data() }
-        let errReader = Task.detached { (try? err.fileHandleForReading.readToEnd()) ?? Data() }
+        // Each pipe is drained to EOF by its own reader. A readabilityHandler can lose the
+        // tail of the output when it is cleared while a read is still in flight. The
+        // reads block, so they run on GCD threads: blocking the cooperative pool would
+        // starve the timeout task (and every other async call) when cores are scarce.
+        let outReader = PipeReader(out.fileHandleForReading)
+        let errReader = PipeReader(err.fileHandleForReading)
 
         let timeoutTask = Task {
             try await Task.sleep(for: timeout)
@@ -126,11 +171,11 @@ public struct SyncaCLI: Sendable {
                 }
             } onCancel: { box.terminate() }
         } catch {
-            _ = await (outReader.value, errReader.value)
+            _ = await (outReader.data(), errReader.data())
             throw error
         }
         // EOF arrives once the child (and any grandchild holding the pipe) has exited.
-        let outData = await outReader.value, errData = await errReader.value
+        let outData = await outReader.data(), errData = await errReader.data()
 
         if Task.isCancelled { throw CancellationError() }
         if box.timedOut { throw CLIError.timedOut(seconds: Int(timeout.components.seconds)) }

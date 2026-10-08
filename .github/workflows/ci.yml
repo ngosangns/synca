@@ -44,6 +44,8 @@ jobs:
         working-directory: macos
         env:
           SYNCA_BIN: ${{ runner.temp }}/cli/synca
+          # Mimic a small runner: one starved cooperative thread pool exposed a late-timeout bug.
+          LIBDISPATCH_COOPERATIVE_POOL_STRICT: "1"
         run: |
           chmod +x "$SYNCA_BIN"
           swift test

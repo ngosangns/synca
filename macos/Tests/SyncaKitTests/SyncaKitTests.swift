@@ -59,6 +59,25 @@ import Testing
         }
     }
 
+    /// Reading child output must not occupy the cooperative thread pool: with many
+    /// slow commands running, a short timeout still has to fire on time.
+    @Test func timeoutStillFiresWhileManySlowCommandsRun() async {
+        let sh = SyncaCLI(executable: URL(fileURLWithPath: "/bin/sh"))
+        let load = Task {
+            await withTaskGroup(of: Void.self) { g in
+                for _ in 0..<48 { g.addTask { _ = try? await sh.run(["-c", "sleep 3"]) } }
+            }
+        }
+        try? await Task.sleep(for: .milliseconds(300))
+        let start = Date()
+        await #expect(throws: CLIError.self) {
+            _ = try await sh.run(["-c", "sleep 30"], timeout: .milliseconds(300))
+        }
+        #expect(Date().timeIntervalSince(start) < 2.5, "timeout fired late: pool starved")
+        load.cancel()
+        _ = await load.value
+    }
+
     @Test func cancellationStopsProcess() async {
         let sh = SyncaCLI(executable: URL(fileURLWithPath: "/bin/sh"))
         let t = Task { try await sh.run(["-c", "sleep 5"]) }
