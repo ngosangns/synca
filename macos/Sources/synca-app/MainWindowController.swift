@@ -17,7 +17,6 @@ import AppKit
 final class MainWindowController: NSWindowController, NSToolbarDelegate {
     let boards = BoardsViewController()
     let detail = DetailViewController()
-    let logs = LogViewController()
     let split = NSSplitViewController()
 
     var scope: SyncaScope = .user {
@@ -41,18 +40,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         window.contentMinSize = NSSize(width: 960, height: 560)
         window.titlebarSeparatorStyle = .automatic
 
-        // ---- 3-column split: boards | detail | log ----
+        // ---- 2-column split: boards | detail ----
         let boardsItem = NSSplitViewItem(viewController: boards)
         boardsItem.minimumThickness = 220
-        boardsItem.preferredThicknessFraction = 0.22
+        boardsItem.preferredThicknessFraction = 0.24
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 480
-        let logsItem = NSSplitViewItem(viewController: logs)
-        logsItem.minimumThickness = 260
-        logsItem.preferredThicknessFraction = 0.27
-        split.splitViewItems = [boardsItem, detailItem, logsItem]
+        split.splitViewItems = [boardsItem, detailItem]
         split.splitView.isVertical = true // side-by-side panes
-        split.splitView.autosaveName = "synca.split"
+        // v2: two panes. The old name stored a three-pane (boards|detail|log) divider.
+        split.splitView.autosaveName = "synca.split.v2"
         window.contentView = split.view
         window.setFrameAutosaveName("synca.main")
 
@@ -64,7 +61,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
             kind == .skills ? self?.detail.showInstallSkill() : self?.detail.showAddMcp()
         }
         detail.actions = self
-        logs.onClear = { [weak self] in self?.confirmClearLogs() }
 
         NotificationCenter.default.addObserver(self, selector: #selector(reload), name: .reloadInventory, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(busyChanged(_:)), name: .busyChanged, object: nil)
@@ -87,7 +83,9 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         static let status = NSToolbarItem.Identifier("status") }
 
     private func buildToolbar(_ window: NSWindow) {
-        let toolbar = NSToolbar(identifier: "synca.toolbar")
+        // v2: scope + actions lead. The old identifier restores a saved
+        // layout that parked those items on the trailing side.
+        let toolbar = NSToolbar(identifier: "synca.toolbar.v2")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
         window.toolbar = toolbar
@@ -98,7 +96,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
         [TID.scope, TID.syncAll, TID.reload, TID.update, TID.help, TID.progress, TID.status, .flexibleSpace, .space]
     }
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [TID.scope, .flexibleSpace, TID.status, TID.progress, TID.syncAll, TID.reload, TID.update, TID.help]
+        [TID.scope, TID.syncAll, TID.reload, TID.update, TID.help, .flexibleSpace, TID.status, TID.progress]
     }
 
     func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
@@ -198,16 +196,16 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
           s   sync everything    r   reload inventory
           u   check updates      ?   this help
 
-        Every action runs the synca CLI and is written to the log column.
+        Every action runs the synca CLI underneath.
         Sync always shows a dry-run plan before applying.
         """
         vc.view = text
         helpPopover.contentViewController = vc
         helpPopover.behavior = .transient
-        // Image-only toolbar items don't expose a view; anchor to the top-right
-        // corner of the window content instead.
+        // Image-only toolbar items don't expose a view. Help sits with the
+        // other leading actions, so anchor the popover to that side.
         if let content = window?.contentView {
-            let rect = NSRect(x: content.bounds.maxX - 60, y: content.bounds.maxY - 40,
+            let rect = NSRect(x: 12, y: content.bounds.maxY - 40,
                               width: 40, height: 30)
             helpPopover.show(relativeTo: rect, of: content, preferredEdge: .maxY)
         }
@@ -229,18 +227,6 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
 
     static func flash(_ text: String) {
         NotificationCenter.default.post(name: .flashStatus, object: text)
-    }
-
-    private func confirmClearLogs() {
-        let alert = NSAlert()
-        alert.messageText = "Clear command log?"
-        alert.informativeText = "This removes all recorded commands."
-        alert.addButton(withTitle: "Clear")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
-        alert.beginSheetModal(for: window!) { res in
-            if res == .alertFirstButtonReturn { LogStore.shared.clear() }
-        }
     }
 
     // MARK: - TUI-flavoured hotkeys
@@ -293,7 +279,7 @@ extension MainWindowController: DetailActions {
         guard case let .installSkill(source) = plan.apply else { return }
         let s = scope
         Busy.run({ await Synca.installSkill(scope: s, source: source, dryRun: false) }) { [weak self] r in
-            Self.flash(r.ok ? "Skill installed." : "Install failed — see log.")
+            Self.flash(r.ok ? "Skill installed." : r.statusDetail(fallback: "Install failed."))
             self?.detail.showEmpty()
             self?.loadInventory()
         }
@@ -303,7 +289,7 @@ extension MainWindowController: DetailActions {
         guard case let .addMcp(payload) = plan.apply else { return }
         let s = scope
         Busy.run({ await Synca.addMcp(scope: s, payload: payload, dryRun: false) }) { [weak self] r in
-            Self.flash(r.ok ? "MCP added." : "Add failed — see log.")
+            Self.flash(r.ok ? "MCP added." : r.statusDetail(fallback: "Add failed."))
             self?.detail.showEmpty()
             self?.loadInventory()
         }
@@ -322,7 +308,7 @@ extension MainWindowController: DetailActions {
         alert.beginSheetModal(for: window!) { [weak self] res in
             guard res == .alertFirstButtonReturn, let self else { return }
             Busy.run({ await Synca.removeSkill(scope: s, key: key, purge: purge) }) { [weak self] r in
-                Self.flash(r.ok ? (purge ? "Purged '\(key)'." : "Unlinked '\(key)'.") : "Remove failed — see log.")
+                Self.flash(r.ok ? (purge ? "Purged '\(key)'." : "Unlinked '\(key)'.") : r.statusDetail(fallback: "Remove failed."))
                 self?.detail.showEmpty()
                 self?.loadInventory()
             }
@@ -339,7 +325,7 @@ extension MainWindowController: DetailActions {
         alert.beginSheetModal(for: window!) { [weak self] res in
             guard res == .alertFirstButtonReturn, let self else { return }
             Busy.run({ await Synca.removeMcp(scope: s, key: key) }) { [weak self] r in
-                Self.flash(r.ok ? "Removed '\(key)'." : "Remove failed — see log.")
+                Self.flash(r.ok ? "Removed '\(key)'." : r.statusDetail(fallback: "Remove failed."))
                 self?.detail.showEmpty()
                 self?.loadInventory()
             }
@@ -384,7 +370,7 @@ extension MainWindowController: DetailActions {
         Busy.run({ await Synca.updateInstall() }) { r in
             let info = try? JSONDecoder().decode(UpdateInfo.self,
                      from: Data(r.output.trimmingCharacters(in: .whitespacesAndNewlines).utf8))
-            Self.flash(info?.message ?? (r.ok ? "Update finished." : "Update failed — see log."))
+            Self.flash(info?.message ?? (r.ok ? "Update finished." : r.statusDetail(fallback: "Update failed.")))
         }
     }
 

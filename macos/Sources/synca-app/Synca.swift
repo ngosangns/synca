@@ -4,6 +4,16 @@ struct RunResult {
     let ok: Bool
     let exit: Int32
     let output: String
+
+    /// Status-bar text. The log pane is gone, so a failure has to carry
+    /// the first line of CLI output itself.
+    func statusDetail(fallback: String) -> String {
+        let line = output.split(whereSeparator: \.isNewline).first
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        guard !line.isEmpty else { return fallback }
+        let clipped = line.count > 140 ? String(line.prefix(137)) + "…" : line
+        return "\(fallback) \(clipped)"
+    }
 }
 
 /// Accumulates pipe output from readabilityHandler callbacks.
@@ -115,7 +125,7 @@ enum Synca {
         var args = ["sync", target] + scopeArgs(scope) + ["--on-conflict", "skip"]
         if let key, target != "all" { args += ["--key", key] }
         let r = await runLogged(args, scope: scope, kind: "ok")
-        messages.append(r.ok ? "sync applied" : "sync failed — see log")
+        messages.append(r.ok ? "sync applied" : r.statusDetail(fallback: "sync failed."))
         return messages
     }
 

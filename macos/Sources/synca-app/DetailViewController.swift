@@ -92,6 +92,14 @@ final class DetailViewController: NSViewController {
         fadeIn(stack)
     }
 
+    /// Adds an arranged subview pinned to the stack's full content width.
+    private func addWide(_ v: NSView) {
+        stack.addArrangedSubview(v)
+        v.translatesAutoresizingMaskIntoConstraints = false
+        v.widthAnchor.constraint(equalTo: stack.widthAnchor,
+                                 constant: -(Theme.pad * 2)).isActive = true
+    }
+
     private func fadeIn(_ v: NSView) {
         v.alphaValue = 0
         NSAnimationContext.runAnimationGroup { ctx in
@@ -149,23 +157,44 @@ final class DetailViewController: NSViewController {
     // MARK: - Skill detail
 
     private func buildSkillDetail(_ s: SkillEntry) {
-        stack.addArrangedSubview(header(s.display_name ?? s.key, warning: s.mismatch))
-        if s.mismatch {
-            stack.addArrangedSubview(Theme.caption("Agent copies differ — sync to unify them.",
-                                                 color: .systemOrange))
-        }
-        if let desc = s.description, !desc.isEmpty {
-            stack.addArrangedSubview(Theme.body(desc))
-        }
-        stack.addArrangedSubview(Theme.caption("Present on \(s.presence.count) agent\(s.presence.count == 1 ? "" : "s")"))
+        // Hero card: tinted icon + name + key/meta + description + actions.
+        let hero = NSStackView()
+        hero.orientation = .vertical
+        hero.alignment = .leading
+        hero.spacing = 10
 
-        let rows = s.presence.map {
-            ["agent": $0.agent, "path": $0.path,
-             "target": $0.symlink_target ?? ($0.is_symlink ? "(symlink)" : "—"),
-             "hash": String(($0.content_hash ?? "—").prefix(10))]
+        let titleRow = NSStackView()
+        titleRow.spacing = 10
+        titleRow.alignment = .centerY
+        titleRow.addArrangedSubview(iconBadge("shippingbox.fill"))
+        let nameCol = NSStackView()
+        nameCol.orientation = .vertical
+        nameCol.spacing = 2
+        nameCol.alignment = .leading
+        nameCol.addArrangedSubview(Theme.title(s.display_name ?? s.key))
+        nameCol.addArrangedSubview(Theme.caption(
+            "\(s.key) · \(s.presence.count) agent\(s.presence.count == 1 ? "" : "s")"))
+        titleRow.addArrangedSubview(nameCol)
+        titleRow.addArrangedSubview(NSView())
+        if s.mismatch {
+            titleRow.addArrangedSubview(Theme.pill("mismatch", color: .systemOrange))
         }
-        stack.addArrangedSubview(cardTable(columns: ["agent", "path", "target", "hash"],
-                                           rows: rows))
+        hero.addArrangedSubview(titleRow)
+        titleRow.widthAnchor.constraint(equalTo: hero.widthAnchor).isActive = true
+
+        if let desc = s.description, !desc.isEmpty {
+            let d = Theme.body(desc)
+            d.textColor = .secondaryLabelColor
+            d.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // Add first — activating a width constraint before the label shares
+            // an ancestor with `hero` throws NSGenericException.
+            hero.addArrangedSubview(d)
+            d.widthAnchor.constraint(equalTo: hero.widthAnchor).isActive = true
+        }
+        if s.mismatch {
+            hero.addArrangedSubview(Theme.caption(
+                "Agent copies differ — sync to unify them.", color: .systemOrange))
+        }
 
         let buttons = NSStackView()
         buttons.spacing = 8
@@ -182,41 +211,73 @@ final class DetailViewController: NSViewController {
         buttons.addArrangedSubview(unlink)
         buttons.addArrangedSubview(purge)
         buttons.addArrangedSubview(NSView())
-        stack.addArrangedSubview(buttons)
+        hero.addArrangedSubview(buttons)
+        buttons.widthAnchor.constraint(equalTo: hero.widthAnchor).isActive = true
+
+        addWide(Theme.card(hero))
+
+        stack.addArrangedSubview(sectionHeader("Presence"))
+        let rows = s.presence.map {
+            ["agent": $0.agent, "path": $0.path,
+             "target": $0.symlink_target ?? ($0.is_symlink ? "(symlink)" : "—"),
+             "hash": String(($0.content_hash ?? "—").prefix(10))]
+        }
+        addWide(cardTable(columns: ["agent", "path", "target", "hash"],
+                          rows: rows))
     }
 
     // MARK: - MCP detail
 
     private func buildMcpDetail(_ m: McpEntry) {
-        stack.addArrangedSubview(header(m.key, warning: m.mismatch))
-        if m.mismatch {
-            stack.addArrangedSubview(Theme.caption("Agent configurations differ — sync to unify them.",
-                                                 color: .systemOrange))
+        let hero = NSStackView()
+        hero.orientation = .vertical
+        hero.alignment = .leading
+        hero.spacing = 10
+
+        let titleRow = NSStackView()
+        titleRow.spacing = 10
+        titleRow.alignment = .centerY
+        titleRow.addArrangedSubview(iconBadge("terminal.fill"))
+        let nameCol = NSStackView()
+        nameCol.orientation = .vertical
+        nameCol.spacing = 2
+        nameCol.alignment = .leading
+        nameCol.addArrangedSubview(Theme.title(m.key))
+        nameCol.addArrangedSubview(Theme.caption(
+            "\(m.presence.count) agent\(m.presence.count == 1 ? "" : "s")"))
+        titleRow.addArrangedSubview(nameCol)
+        titleRow.addArrangedSubview(NSView())
+        if let t = m.presence.first?.normalized?.transport {
+            titleRow.addArrangedSubview(Theme.pill(t))
         }
+        if m.mismatch {
+            titleRow.addArrangedSubview(Theme.pill("mismatch", color: .systemOrange))
+        }
+        hero.addArrangedSubview(titleRow)
+        titleRow.widthAnchor.constraint(equalTo: hero.widthAnchor).isActive = true
+
         let first = m.presence.first?.normalized
-        var facts: [(String, String)] = [("agents", "\(m.presence.count)")]
+        var facts: [(String, String)] = []
         if let n = first {
-            facts.append(("transport", n.transport ?? "—"))
             if let cmd = n.command { facts.append(("command", cmd.joined(separator: " "))) }
             if let url = n.url { facts.append(("url", url)) }
             if let args = n.args, !args.isEmpty { facts.append(("args", args.joined(separator: " "))) }
             if let en = n.enabled { facts.append(("enabled", en ? "true" : "false")) }
             if let env = n.env_keys, !env.isEmpty { facts.append(("env keys", env.joined(separator: ", "))) }
         }
-        let grid = NSGridView(views: facts.map { (k, v) in
-            [Theme.caption(k), Theme.body(v)]
-        })
-        grid.column(at: 0).xPlacement = .trailing
-        grid.columnSpacing = 10
-        grid.rowSpacing = 5
-        stack.addArrangedSubview(grid)
-
-        let rows = m.presence.map {
-            ["agent": $0.agent, "path": $0.path,
-             "fingerprint": String(($0.fingerprint ?? "—").prefix(12))]
+        if !facts.isEmpty {
+            let grid = NSGridView(views: facts.map { (k, v) in
+                [Theme.caption(k), Theme.mono(v)]
+            })
+            grid.column(at: 0).xPlacement = .trailing
+            grid.columnSpacing = 10
+            grid.rowSpacing = 5
+            hero.addArrangedSubview(grid)
         }
-        stack.addArrangedSubview(cardTable(columns: ["agent", "path", "fingerprint"],
-                                           rows: rows))
+        if m.mismatch {
+            hero.addArrangedSubview(Theme.caption(
+                "Agent configurations differ — sync to unify them.", color: .systemOrange))
+        }
 
         let buttons = NSStackView()
         buttons.spacing = 8
@@ -229,7 +290,18 @@ final class DetailViewController: NSViewController {
         buttons.addArrangedSubview(sync)
         buttons.addArrangedSubview(remove)
         buttons.addArrangedSubview(NSView())
-        stack.addArrangedSubview(buttons)
+        hero.addArrangedSubview(buttons)
+        buttons.widthAnchor.constraint(equalTo: hero.widthAnchor).isActive = true
+
+        addWide(Theme.card(hero))
+
+        stack.addArrangedSubview(sectionHeader("Presence"))
+        let rows = m.presence.map {
+            ["agent": $0.agent, "path": $0.path,
+             "fingerprint": String(($0.fingerprint ?? "—").prefix(12))]
+        }
+        addWide(cardTable(columns: ["agent", "path", "fingerprint"],
+                          rows: rows))
     }
 
     // MARK: - Forms
@@ -299,7 +371,7 @@ final class DetailViewController: NSViewController {
         grid.column(at: 0).xPlacement = .trailing
         grid.columnSpacing = 10
         grid.rowSpacing = 5
-        stack.addArrangedSubview(Theme.card(grid))
+        addWide(Theme.card(grid))
         if info.update_available == true {
             stack.addArrangedSubview(Theme.caption("An update is available.", color: .systemGreen))
             let b = Theme.button("Install update", symbol: "arrow.down.circle.fill", style: .primary)
@@ -312,7 +384,7 @@ final class DetailViewController: NSViewController {
             row.addArrangedSubview(Theme.caption("You're on the latest version."))
             stack.addArrangedSubview(row)
         } else {
-            stack.addArrangedSubview(Theme.body(info.message ?? "Update check failed — see log."))
+            stack.addArrangedSubview(Theme.body(info.message ?? "Update check failed."))
         }
         if let url = info.url, let link = URL(string: url) {
             let b = Theme.button("Open release page")
@@ -340,11 +412,11 @@ final class DetailViewController: NSViewController {
                 chips.addArrangedSubview(Theme.pill("\(kind) ×\(count)"))
             }
             chips.addArrangedSubview(NSView())
-            stack.addArrangedSubview(chips)
+            addWide(chips)
         }
 
         if !plan.output.isEmpty {
-            stack.addArrangedSubview(consoleView(plan.output, maxHeight: 200))
+            addWide(consoleView(plan.output, maxHeight: 220))
         }
 
         if !conflicts.isEmpty {
@@ -372,7 +444,7 @@ final class DetailViewController: NSViewController {
                 row.addArrangedSubview(popup)
                 col.addArrangedSubview(row)
             }
-            stack.addArrangedSubview(Theme.card(col))
+            addWide(Theme.card(col))
         }
 
         let buttons = NSStackView()
@@ -383,7 +455,7 @@ final class DetailViewController: NSViewController {
             apply.target = self; apply.action = #selector(applyPlan)
             buttons.addArrangedSubview(apply)
         } else {
-            stack.addArrangedSubview(Theme.caption("Command failed — see log for details.",
+            stack.addArrangedSubview(Theme.caption("Command failed.",
                                                  color: .systemRed))
         }
         let cancel = Theme.button("Dismiss", symbol: "xmark")
@@ -467,6 +539,32 @@ final class DetailViewController: NSViewController {
 
     // MARK: - View helpers
 
+    /// Rounded-square accent-tinted icon used in detail hero cards.
+    private func iconBadge(_ symbol: String) -> NSView {
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.cornerRadius = 8
+        v.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.15).cgColor
+        let icon = Theme.icon(symbol, size: 17, color: .controlAccentColor)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(icon)
+        NSLayoutConstraint.activate([
+            v.widthAnchor.constraint(equalToConstant: 36),
+            v.heightAnchor.constraint(equalToConstant: 36),
+            icon.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+        ])
+        return v
+    }
+
+    /// Uppercase-style small section label ("PRESENCE", "CONFLICTS"...).
+    private func sectionHeader(_ text: String) -> NSTextField {
+        let f = NSTextField(labelWithString: text.uppercased())
+        f.font = Theme.sectionFont
+        f.textColor = .tertiaryLabelColor
+        return f
+    }
+
     private func header(_ text: String, warning: Bool = false) -> NSView {
         let row = NSStackView()
         row.spacing = 8
@@ -495,7 +593,6 @@ final class DetailViewController: NSViewController {
         sv.hasVerticalScroller = true
         sv.drawsBackground = false
         sv.translatesAutoresizingMaskIntoConstraints = false
-        sv.widthAnchor.constraint(equalToConstant: 460).isActive = true
         sv.heightAnchor.constraint(lessThanOrEqualToConstant: maxHeight).isActive = true
         sv.heightAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
         return Theme.card(sv, padding: 8)
@@ -508,10 +605,13 @@ final class DetailViewController: NSViewController {
         tv.intercellSpacing = NSSize(width: 8, height: 4)
         tv.style = .inset
         tv.backgroundColor = .clear
+        tv.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        tv.usesAutomaticRowHeights = false
         for c in columns {
             let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(c))
             col.title = c
-            col.width = c == "path" ? 150 : (c == "target" ? 130 : 80)
+            col.width = c == "path" ? 220 : (c == "target" ? 160 : 100)
+            col.minWidth = 60
             tv.addTableColumn(col)
         }
         let ds = SimpleTable(columns: columns, rows: rows)
@@ -524,9 +624,8 @@ final class DetailViewController: NSViewController {
         sv.hasVerticalScroller = true
         sv.drawsBackground = false
         sv.translatesAutoresizingMaskIntoConstraints = false
-        sv.widthAnchor.constraint(equalToConstant: 460).isActive = true
         sv.heightAnchor.constraint(equalToConstant:
-            min(180, CGFloat(rows.count) * 28 + 30)).isActive = true
+            min(240, CGFloat(rows.count) * 28 + 30)).isActive = true
         return Theme.card(sv, padding: 4)
     }
 }

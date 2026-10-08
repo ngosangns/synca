@@ -109,6 +109,12 @@ import AppKit
         return f
     }
 
+    static func mono(_ text: String) -> NSTextField {
+        let f = NSTextField(wrappingLabelWithString: text)
+        f.font = monoFont
+        return f
+    }
+
     static func body(_ text: String) -> NSTextField {
         let f = NSTextField(wrappingLabelWithString: text)
         f.font = bodyFont

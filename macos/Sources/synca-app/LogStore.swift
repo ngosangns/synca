@@ -16,8 +16,8 @@ struct LogEntry: Codable {
     }
 }
 
-/// Append-only JSONL store at ~/Library/Application Support/synca/command-log.jsonl.
-/// The log pane pages older entries lazily — never loads the whole file.
+/// Append-only JSONL audit at ~/Library/Application Support/synca/command-log.jsonl.
+/// Not shown in the UI. Failures surface through the status bar and plan output.
 final class LogStore: @unchecked Sendable {
     static let shared = LogStore()
     static let changed = Notification.Name("LogStore.changed")
