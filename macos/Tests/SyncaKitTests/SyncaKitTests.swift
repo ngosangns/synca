@@ -69,6 +69,28 @@ import Testing
         #expect(Date().timeIntervalSince(start) < 2)
     }
 
+    /// Output written just before exit used to be lost under load (the pipe was
+    /// closed while a read was still in flight), which made fast CLI failures look
+    /// like silent successes.
+    @Test func outputWrittenRightBeforeExitIsNeverLost() async {
+        let sh = SyncaCLI(executable: URL(fileURLWithPath: "/bin/sh"))
+        let lost = await withTaskGroup(of: Int.self) { g -> Int in
+            for _ in 0..<8 {
+                g.addTask {
+                    var bad = 0
+                    for _ in 0..<60 {
+                        let r = try? await sh.run(["-c", "echo out-line; echo err-line 1>&2; exit 3"])
+                        let o = r?.output ?? ""
+                        if !(o.contains("out-line") && o.contains("err-line") && r?.exit == 3) { bad += 1 }
+                    }
+                    return bad
+                }
+            }
+            return await g.reduce(0, +)
+        }
+        #expect(lost == 0)
+    }
+
     @Test func missingBinaryThrowsSpawn() async {
         let bad = SyncaCLI(executable: URL(fileURLWithPath: "/nonexistent/synca"))
         await #expect(throws: CLIError.self) { _ = try await bad.run(["x"]) }

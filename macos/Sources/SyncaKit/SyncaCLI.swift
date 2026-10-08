@@ -25,14 +25,6 @@ public enum CLIError: Error, LocalizedError, Sendable {
     }
 }
 
-/// Thread-safe accumulator for pipe output.
-private final class Buffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-    func append(_ d: Data) { lock.lock(); data.append(d); lock.unlock() }
-    var string: String { lock.lock(); defer { lock.unlock() }; return String(decoding: data, as: UTF8.self) }
-}
-
 /// Lets cancel / timeout / exit race safely and records why we killed it.
 private final class ProcessBox: @unchecked Sendable {
     let process = Process()
@@ -109,9 +101,10 @@ public struct SyncaCLI: Sendable {
         p.standardOutput = out
         p.standardError = err
         p.standardInput = FileHandle.nullDevice
-        let outBuf = Buffer(), errBuf = Buffer()
-        out.fileHandleForReading.readabilityHandler = { outBuf.append($0.availableData) }
-        err.fileHandleForReading.readabilityHandler = { errBuf.append($0.availableData) }
+        // Each pipe is drained to EOF by its own task. A readabilityHandler can lose the
+        // tail of the output when it is cleared while a read is still in flight.
+        let outReader = Task.detached { (try? out.fileHandleForReading.readToEnd()) ?? Data() }
+        let errReader = Task.detached { (try? err.fileHandleForReading.readToEnd()) ?? Data() }
 
         let timeoutTask = Task {
             try await Task.sleep(for: timeout)
@@ -119,26 +112,30 @@ public struct SyncaCLI: Sendable {
         }
         defer { timeoutTask.cancel() }
 
-        let status: Int32 = try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Int32, Error>) in
-                p.terminationHandler = { proc in
-                    out.fileHandleForReading.readabilityHandler = nil
-                    err.fileHandleForReading.readabilityHandler = nil
-                    if let rest = try? out.fileHandleForReading.readToEnd() { outBuf.append(rest) }
-                    if let rest = try? err.fileHandleForReading.readToEnd() { errBuf.append(rest) }
-                    cont.resume(returning: proc.terminationStatus)
+        let status: Int32
+        do {
+            status = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Int32, Error>) in
+                    p.terminationHandler = { cont.resume(returning: $0.terminationStatus) }
+                    do { try p.run() } catch {
+                        // Closing our write ends lets the readers see EOF.
+                        try? out.fileHandleForWriting.close()
+                        try? err.fileHandleForWriting.close()
+                        cont.resume(throwing: CLIError.spawn(error.localizedDescription))
+                    }
                 }
-                do { try p.run() } catch {
-                    out.fileHandleForReading.readabilityHandler = nil
-                    err.fileHandleForReading.readabilityHandler = nil
-                    cont.resume(throwing: CLIError.spawn(error.localizedDescription))
-                }
-            }
-        } onCancel: { box.terminate() }
+            } onCancel: { box.terminate() }
+        } catch {
+            _ = await (outReader.value, errReader.value)
+            throw error
+        }
+        // EOF arrives once the child (and any grandchild holding the pipe) has exited.
+        let outData = await outReader.value, errData = await errReader.value
 
         if Task.isCancelled { throw CancellationError() }
         if box.timedOut { throw CLIError.timedOut(seconds: Int(timeout.components.seconds)) }
-        return RunResult(ok: status == 0, exit: status, output: outBuf.string + errBuf.string)
+        return RunResult(ok: status == 0, exit: status,
+                         output: String(decoding: outData, as: UTF8.self) + String(decoding: errData, as: UTF8.self))
     }
 
     public func version() async -> String? {
