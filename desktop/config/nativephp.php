@@ -15,7 +15,7 @@ return [
      * usually in the form of a reverse domain name.
      * For example: com.nativephp.app
      */
-    'app_id' => env('NATIVEPHP_APP_ID', 'com.ngosangns.notes'),
+    'app_id' => env('NATIVEPHP_APP_ID', 'com.ngosangns.synca'),
 
     /**
      * If your application allows deep linking, you can specify the scheme
@@ -41,7 +41,7 @@ return [
     /**
      * The description of your application.
      */
-    'description' => env('NATIVEPHP_APP_DESCRIPTION', 'Notes app built with Laravel and NativePHP'),
+    'description' => env('NATIVEPHP_APP_DESCRIPTION', 'synca desktop: manage skills + MCP configs across coding agents'),
 
     /**
      * The Website of your application.

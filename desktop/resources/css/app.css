@@ -109,11 +109,11 @@
     animation: progress-slide 900ms ease-in-out infinite;
 }
 
-/* Region fades while a search request is in flight */
-#notes-region {
+/* Region fades while a board swap is in flight */
+#boards-region > * {
     transition: opacity 160ms ease-out;
 }
-#notes-region.is-loading {
+#boards-region.is-loading > * {
     opacity: 0.45;
     pointer-events: none;
 }
