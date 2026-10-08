@@ -109,10 +109,10 @@ func jsonCompact(v any) string {
 	return string(b)
 }
 
-func Run(args []string, runTUI func(cwd string) error) error {
+func Run(args []string) error {
 	if len(args) == 0 {
-		cwd, _ := os.Getwd()
-		return runTUI(cwd)
+		printHelp()
+		return nil
 	}
 	cmd := args[0]
 	rest := args[1:]
@@ -124,15 +124,6 @@ func Run(args []string, runTUI func(cwd string) error) error {
 	case "--version", "-V", "version":
 		fmt.Println("synca", core.Version)
 		return nil
-	case "tui":
-		f := parseFlags(rest, commonBool)
-		cwd := cwdOf(f)
-		if f.str("cwd", "") == "" {
-			if w, err := os.Getwd(); err == nil {
-				cwd = w
-			}
-		}
-		return runTUI(cwd)
 	case "skills":
 		return runSkills(rest)
 	case "mcp":
@@ -151,8 +142,6 @@ func printHelp() {
 	fmt.Print(`synca — Browse and sync skills + MCP across coding agents
 
 USAGE:
-  synca                        # open TUI (default)
-  synca tui [--cwd <dir>]
   synca skills <list|install|remove> [flags]
   synca mcp <list|add|remove> [flags]
   synca sync <skills|mcp|all> [flags]

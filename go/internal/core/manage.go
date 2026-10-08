@@ -315,7 +315,7 @@ func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind) (*Ma
 	return plan, nil
 }
 
-// ApplyManagePlan mirrors manage.rs::apply_manage_plan.
+// ApplyManagePlan.
 func ApplyManagePlan(plan *ManagePlan, mcpPayload *McpNormalized) ([]string, error) {
 	var log []string
 	for _, a := range plan.Actions {

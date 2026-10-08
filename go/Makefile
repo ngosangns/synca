@@ -1,6 +1,7 @@
 BIN_DIR := $(HOME)/.local/share/synca/bin
 LINK := $(HOME)/.local/bin/synca
-VERSION := 0.1.12
+# Single source of truth: the Version const the updater compares against.
+VERSION := $(shell sed -n 's/.*Version *= *"\(.*\)"/\1/p' internal/core/update.go)
 NAME := synca-$(VERSION)-go
 
 .PHONY: build test install clean
@@ -11,8 +12,9 @@ build:
 test:
 	go test ./...
 
-# Install alongside the Rust release binaries and point ~/.local/bin/synca at it.
-# Rollback: ln -sf $(BIN_DIR)/synca-$(VERSION) $(LINK)
+# Install next to the other versioned binaries and point ~/.local/bin/synca at it.
+# The -go suffix keeps an older same-version binary available for rollback:
+#   ln -sf $(BIN_DIR)/synca-$(VERSION) $(LINK)
 install: build
 	mkdir -p $(BIN_DIR) $(dir $(LINK))
 	cp bin/synca $(BIN_DIR)/$(NAME)

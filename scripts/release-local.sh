@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# Build darwin-arm64 asset locally and optionally publish with gh.
+# Build the darwin-arm64 CLI asset locally and optionally publish it with gh.
 # Usage:
 #   ./scripts/release-local.sh           # build only
-#   ./scripts/release-local.sh --publish # create/upload GitHub release for Cargo.toml version
+#   ./scripts/release-local.sh --publish # create/upload GitHub release for the Version const
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-VER="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+# Single source of truth: the const the updater compares against.
+VER="$(sed -n 's/.*Version *= *"\(.*\)"/\1/p' go/internal/core/update.go)"
+[[ -n "$VER" ]] || { echo "could not read Version from go/internal/core/update.go" >&2; exit 1; }
 TAG="v${VER}"
 ASSET="synca-v${VER}-darwin-arm64"
 OUTDIR="${ROOT}/dist"
 mkdir -p "$OUTDIR"
 
-echo "Building release binary (version ${VER})..."
-cargo build --release -p synca
-cp target/release/synca "${OUTDIR}/${ASSET}"
+echo "Testing and building (version ${VER})..."
+(cd go && go vet ./... && go test ./... && go build -trimpath -ldflags "-s -w" -o "${OUTDIR}/${ASSET}" ./cmd/synca)
 chmod +x "${OUTDIR}/${ASSET}"
 shasum -a 256 "${OUTDIR}/${ASSET}" | awk '{print $1}' > "${OUTDIR}/${ASSET}.sha256"
 echo "Wrote ${OUTDIR}/${ASSET}"

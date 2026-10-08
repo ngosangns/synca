@@ -22,11 +22,13 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
 
-      - name: Build release
-        run: cargo build --release -p synca
+      - name: Test
+        working-directory: go
+        run: go vet ./... && go test ./...
 
       - name: Package asset
         id: pkg
@@ -38,10 +40,14 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
           fi
           VER="${TAG#v}"
+          # The updater compares against this const; refuse to publish a mismatched tag.
+          SRC_VER="$(sed -n 's/.*Version *= *"\(.*\)"/\1/p' go/internal/core/update.go)"
+          if [ "$SRC_VER" != "$VER" ]; then
+            echo "tag $TAG does not match Version=$SRC_VER in go/internal/core/update.go" >&2
+            exit 1
+          fi
           ASSET="synca-v${VER}-darwin-arm64"
-          BIN="target/release/synca"
-          test -x "$BIN"
-          cp "$BIN" "$ASSET"
+          (cd go && go build -trimpath -ldflags "-s -w" -o "../${ASSET}" ./cmd/synca)
           chmod +x "$ASSET"
           shasum -a 256 "$ASSET" | awk '{print $1}' > "${ASSET}.sha256"
           {

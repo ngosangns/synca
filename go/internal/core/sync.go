@@ -31,7 +31,7 @@ type SyncAction struct {
 }
 
 // MarshalJSON emits per-variant field order identical to the serde enum
-// (tagged "kind"), so dry-run text output matches the Rust CLI.
+// (tagged "kind"), so dry-run text output is stable.
 func (a SyncAction) MarshalJSON() ([]byte, error) {
 	type j struct {
 		Kind         string   `json:"kind"`
@@ -279,7 +279,7 @@ func findMcpAgent(p []McpPresence, a AgentKind) *McpPresence {
 	return nil
 }
 
-// ApplyPlan mirrors sync.rs::apply_plan.
+// ApplyPlan.
 func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecisions) ([]string, error) {
 	var log []string
 	skills := ScanSkills(scope, cwd)
@@ -443,41 +443,47 @@ func agentByName(name string) AgentKind {
 }
 
 func pickSkillWinner(entry *SkillEntry, policy ConflictPolicy) *SkillPresence {
+	source := &entry.Presence[0]
+	for i := range entry.Presence {
+		if entry.Presence[i].Agent == "agents" {
+			source = &entry.Presence[i]
+			break
+		}
+	}
 	switch policy {
 	case ConflictKeepSource:
-		for i := range entry.Presence {
-			if entry.Presence[i].Agent == "agents" {
-				return &entry.Presence[i]
-			}
-		}
-		return &entry.Presence[0]
+		return source
 	case ConflictKeepTarget:
+		// First copy whose content differs from the source. A symlink to the
+		// canonical copy has the same hash and would silently keep the source.
 		for i := range entry.Presence {
-			if entry.Presence[i].Agent != "agents" {
+			if entry.Presence[i].ContentHash != source.ContentHash {
 				return &entry.Presence[i]
 			}
 		}
-		return &entry.Presence[len(entry.Presence)-1]
+		return source
 	}
 	return nil
 }
 
 func pickMcpWinner(entry *McpEntry, policy ConflictPolicy) *McpPresence {
+	source := &entry.Presence[0]
+	for i := range entry.Presence {
+		if entry.Presence[i].Agent == "agents" {
+			source = &entry.Presence[i]
+			break
+		}
+	}
 	switch policy {
 	case ConflictKeepSource:
-		for i := range entry.Presence {
-			if entry.Presence[i].Agent == "agents" {
-				return &entry.Presence[i]
-			}
-		}
-		return &entry.Presence[0]
+		return source
 	case ConflictKeepTarget:
 		for i := range entry.Presence {
-			if entry.Presence[i].Agent != "agents" {
+			if entry.Presence[i].Fingerprint != source.Fingerprint {
 				return &entry.Presence[i]
 			}
 		}
-		return &entry.Presence[len(entry.Presence)-1]
+		return source
 	}
 	return nil
 }
@@ -703,15 +709,26 @@ func mergeEnv(obj map[string]any, existing any) {
 	if !ok {
 		return
 	}
-	env, _ := obj["env"].(map[string]any)
-	if env == nil {
-		env = map[string]any{}
-		obj["env"] = env
+	// Source env may arrive as map[string]string (from McpNormalized) or map[string]any
+	// (read back from JSON); accept both so source values are never dropped.
+	env := map[string]any{}
+	switch cur := obj["env"].(type) {
+	case map[string]string:
+		for k, v := range cur {
+			env[k] = v
+		}
+	case map[string]any:
+		for k, v := range cur {
+			env[k] = v
+		}
 	}
 	for k, v := range oldEnv {
 		if _, present := env[k]; !present {
 			env[k] = v
 		}
+	}
+	if len(env) > 0 {
+		obj["env"] = env
 	}
 }
 
@@ -926,15 +943,4 @@ func MergePlans(a, b *SyncPlan) *SyncPlan {
 	a.Actions = append(a.Actions, b.Actions...)
 	a.DryRun = a.DryRun && b.DryRun
 	return a
-}
-
-func FilterMissing(plan *SyncPlan) *SyncPlan {
-	var actions []SyncAction
-	for _, a := range plan.Actions {
-		switch a.Kind {
-		case "ensure_canonical_copy", "symlink_skill", "ensure_mcp_hub", "write_mcp_server":
-			actions = append(actions, a)
-		}
-	}
-	return &SyncPlan{Scope: plan.Scope, DryRun: plan.DryRun, Actions: actions}
 }

@@ -1,8 +1,8 @@
 # synca
 
-Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one Ratatui TUI / CLI.
+Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one CLI, with a native macOS app in [`macos/`](macos/) on top of it.
 
-Inspired by [hearth](https://github.com/ngosangns/hearth)’s TUI stack (Ratatui + crossterm), focused on skills/MCP sync — not Hearth’s daemon/services.
+The CLI is the source of truth; the app only runs it. Skills/MCP sync only — no daemon or services.
 
 ## Manage skills / MCP
 
@@ -15,8 +15,6 @@ synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
 synca mcp remove my-server --scope user
 ```
 
-TUI: `i` install/add, `d` delete (skill: `y` unlink / `p` then `y` purge).
-
 ## Install
 
 ### From GitHub Release (recommended)
@@ -24,7 +22,7 @@ TUI: `i` install/add, `d` delete (skill: `y` unlink / `p` then `y` purge).
 Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
 
 ```bash
-TAG=v0.1.11
+TAG=v0.2.0
 ASSET=synca-${TAG}-darwin-arm64
 curl -fsSL -o /tmp/$ASSET \
   "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"
@@ -46,15 +44,16 @@ synca update
 
 ```bash
 git clone https://github.com/ngosangns/synca.git
-cd synca
-cargo build --release
-cp target/release/synca ~/.local/bin/
+cd synca/go
+make install    # builds, copies to ~/.local/share/synca/bin, links ~/.local/bin/synca
 ```
+
+Needs Go (version in `go/go.mod`).
 
 Local release packaging:
 
 ```bash
-./scripts/release-local.sh            # build dist/ asset + sha256
+./scripts/release-local.sh            # test + build dist/ asset + sha256
 ./scripts/release-local.sh --publish  # also gh release create/upload
 ```
 
@@ -63,8 +62,7 @@ CI builds the same asset on tag push (`v*`) via `.github/workflows/release.yml`.
 ## Usage
 
 ```bash
-synca                 # TUI (project scope = cwd → git root)
-synca tui
+synca                 # print help
 
 synca skills list --scope user
 synca skills list --scope project --json
@@ -89,23 +87,16 @@ synca sync all --scope user --on-conflict keep-source
 
 Never silent overwrite.
 
-### TUI keys
+## macOS app
 
-| Key | Action |
-|-----|--------|
-| `Tab` | User ↔ Project |
-| `[` / `]` / `Space` | Skills / MCPs section |
-| `j` / `k` | Move |
-| `s` | Sync focused item → `y`/`n`; conflicts → `a`/`b`/`s` |
-| `S` | Sync **ALL skills** (current User\|Project page) |
-| `M` | Sync **ALL MCPs** (current page) |
-| `A` | Sync **ALL skills + MCPs** (current page) |
-| `u` | Check GitHub Releases; `y` installs to `~/.local/share/synca/bin` + symlink `~/.local/bin/synca` |
-| `r` | Reload |
-| `?` | Help |
-| `q` | Quit |
+```bash
+cd macos
+make            # build synca.app (needs the synca CLI on PATH or SYNCA_BIN)
+make install    # copy to /Applications
+make test       # SyncaKit + end-to-end app tests (sandboxed HOME)
+```
 
-Conflict keys when prompted: **`a`** keep-source · **`b`** keep-target · **`s`** skip · **`n`** cancel.
+Three columns: Library (user/project switcher, project manager, actions, skills + MCP lists), Details (file tree, presence, conflict diffs) and Activity (command log).
 
 ## Canonical paths
 

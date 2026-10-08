@@ -1,5 +1,5 @@
-// Package core ports crates/synca-core: models, paths, agents, discover,
-// scan, sync, pi_skills, manage, update.
+// Package core scans, syncs and manages skills + MCP configs across coding agents:
+// models, paths, agents, discover, scan, sync, pi skills, manage, update.
 package core
 
 import (
@@ -201,7 +201,7 @@ func (d *ConflictDecisions) ForMcp(key string) ConflictPolicy {
 	return d.Default
 }
 
-// ---------- paths.rs ----------
+// ---------- paths ----------
 
 func HomeDir() string {
 	h, err := os.UserHomeDir()

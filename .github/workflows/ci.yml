@@ -9,12 +9,41 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  cli:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Cargo test
-        run: cargo test --workspace
-      - name: Cargo build release
-        run: cargo build --release -p synca
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+      - name: Vet
+        working-directory: go
+        run: go vet ./...
+      - name: Test
+        working-directory: go
+        run: go test ./...
+      - name: Build
+        working-directory: go
+        run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: synca-cli
+          path: go/bin/synca
+
+  macos-app:
+    needs: cli
+    # Swift Testing needs Xcode 16+.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: synca-cli
+          path: ${{ runner.temp }}/cli
+      - name: Test (SyncaKit + end-to-end app tests against the real CLI, sandboxed HOME)
+        working-directory: macos
+        env:
+          SYNCA_BIN: ${{ runner.temp }}/cli/synca
+        run: |
+          chmod +x "$SYNCA_BIN"
+          swift test

@@ -7,7 +7,7 @@ type agentPath struct {
 	Path  string
 }
 
-// SkillRoots mirrors agents.rs::skill_roots.
+// SkillRoots.
 func SkillRoots(scope Scope, cwd string) []agentPath {
 	if scope == ScopeUser {
 		h := HomeDir()
@@ -42,7 +42,7 @@ func SkillRoots(scope Scope, cwd string) []agentPath {
 	}
 }
 
-// McpConfigPaths mirrors agents.rs::mcp_config_paths.
+// McpConfigPaths.
 func McpConfigPaths(scope Scope, cwd string) []agentPath {
 	if scope == ScopeUser {
 		h := HomeDir()

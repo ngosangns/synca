@@ -284,7 +284,7 @@ func pickKeeper(dirs []*skillDir) *skillDir {
 	return dirs[0]
 }
 
-// PlanPiCompat mirrors pi_skills.rs::plan_pi_compat.
+// PlanPiCompat.
 func PlanPiCompat(scope Scope, cwd, canonical, onlyKey string) []SyncAction {
 	if st, err := os.Stat(canonical); err != nil || !st.IsDir() {
 		return nil

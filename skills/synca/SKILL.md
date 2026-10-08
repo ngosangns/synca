@@ -1,6 +1,6 @@
 ---
 name: synca
-description: "Browse, install, and sync skills + MCP configs across coding agents (Grok, Devin, Cognition, OMP, Pi, Kiro, OpenCode, Claude, Cursor) via the `synca` CLI/TUI. Use when installing a skill or MCP server so every agent sees it, checking drift between canonical ~/.agents and per-agent dirs, resolving skill/MCP conflicts, or updating synca itself. Triggers: synca, sync skills, sync mcp, install skill for all agents, đồng bộ skills."
+description: "Browse, install, and sync skills + MCP configs across coding agents (Grok, Devin, Cognition, OMP, Pi, Kiro, OpenCode, Claude, Cursor) via the `synca` CLI. Use when installing a skill or MCP server so every agent sees it, checking drift between canonical ~/.agents and per-agent dirs, resolving skill/MCP conflicts, or updating synca itself. Triggers: synca, sync skills, sync mcp, install skill for all agents, đồng bộ skills."
 ---
 
 # synca
@@ -20,7 +20,7 @@ hand-edited copies drift and synca cannot update them later.
 ## Commands
 
 ```bash
-synca                          # TUI (project scope = cwd → git root)
+synca                          # print help
 synca skills list [--scope user|project] [--json]
 synca mcp list [--scope user|project] [--json]
 
@@ -61,10 +61,4 @@ synca update [--check]
 ## Updating synca
 
 `synca update` checks GitHub Releases and installs to `~/.local/share/synca/bin/` with a symlink
-at `~/.local/bin/synca` (TUI: `u`).
-
-## TUI quick keys
-
-`Tab` user↔project · `j/k` move · `s` sync focused · `S`/`M`/`A` sync all skills/MCPs/both ·
-`i` install · `d` delete (`y` unlink / `p` purge) · `r` reload · `u` update · `q` quit.
-Conflict prompt: `a` keep-source · `b` keep-target · `s` skip · `n` cancel.
+at `~/.local/bin/synca`.

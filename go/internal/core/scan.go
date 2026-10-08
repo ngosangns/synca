@@ -282,7 +282,7 @@ func readGrokToml(path string) (map[string]McpNormalized, error) {
 	return out, nil
 }
 
-// CanonicalTransport mirrors scan.rs::canonical_transport.
+// CanonicalTransport.
 func CanonicalTransport(raw, url *string, hasCommand bool) string {
 	var r string
 	if raw != nil {

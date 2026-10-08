@@ -3,6 +3,7 @@ package core
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,52 +75,6 @@ func TestParseCommandLine(t *testing.T) {
 			t.Fatalf("got %v want %v", got, want)
 		}
 	}
-}
-
-func TestEnsureVisibleParity(t *testing.T) {
-	// ported from state.rs tests
-	if got := ensureVisibleForTest(7, 0, 5, 20); got != 3 {
-		t.Errorf("got %d", got)
-	}
-	if got := ensureVisibleForTest(2, 5, 5, 20); got != 2 {
-		t.Errorf("got %d", got)
-	}
-	if got := ensureVisibleForTest(6, 4, 5, 20); got != 4 {
-		t.Errorf("got %d", got)
-	}
-	if got := ensureVisibleForTest(0, 15, 5, 20); got != 0 {
-		t.Errorf("got %d", got)
-	}
-	if got := ensureVisibleForTest(9, 0, 4, 10); got != 6 {
-		t.Errorf("got %d", got)
-	}
-}
-
-// ensureVisibleForTest mirrors tui.ensureVisible (kept here to pin the math
-// against the Rust tests; the tui package has its own copy).
-func ensureVisibleForTest(selected, offset, visible, length int) int {
-	if length == 0 || visible == 0 {
-		return 0
-	}
-	if selected > length-1 {
-		selected = length - 1
-	}
-	maxOffset := length - visible
-	if maxOffset < 0 {
-		maxOffset = 0
-	}
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	if selected < offset {
-		offset = selected
-	} else if selected >= offset+visible {
-		offset = selected + 1 - visible
-	}
-	if offset > maxOffset {
-		offset = maxOffset
-	}
-	return offset
 }
 
 func TestMcpFromCLI(t *testing.T) {
@@ -238,5 +193,34 @@ func TestRemoveSkillDryRunTouchesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(canon); err != nil {
 		t.Error("dry run deleted the skill")
+	}
+}
+
+// keep-target must keep the copy that differs from the canonical one, even when
+// an earlier agent merely symlinks to the canonical copy.
+func TestKeepTargetSkipsSymlinkToCanonical(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	write := func(dir, body string) {
+		_ = os.MkdirAll(dir, 0o755)
+		_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: alpha\n---\n"+body+"\n"), 0o644)
+	}
+	canon := filepath.Join(home, ".agents/skills/alpha")
+	write(canon, "CANON")
+	_ = os.MkdirAll(filepath.Join(home, ".grok/skills"), 0o755)
+	_ = os.Symlink("../../.agents/skills/alpha", filepath.Join(home, ".grok/skills/alpha"))
+	write(filepath.Join(home, ".cursor/skills/alpha"), "CURSOR")
+
+	plan, err := PlanSyncSkills(ScopeUser, home, nil, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := NewDecisions(ConflictKeepTarget)
+	if _, err := ApplyPlan(plan, home, ScopeUser, dec); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(canon, "SKILL.md"))
+	if !strings.Contains(string(got), "CURSOR") {
+		t.Errorf("keep-target kept the source instead: %q", got)
 	}
 }
