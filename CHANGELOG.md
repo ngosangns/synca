@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-08
 
+- **Cleanup:** removed the PHP/NativePHP desktop app (`desktop/`) and its workflow, both terminal UIs (Ratatui in Rust, Bubble Tea in Go), the unused `filter_missing` / `agents_present_in_plan` helpers, unused Cargo dependencies, `GROK_TASK.md`, and stale TUI docs. `synca` with no arguments now prints help, and `synca tui` is gone.
+- **Go is the only CLI:** the Rust workspace (`crates/`, `bin/`, `Cargo.*`) is removed. CI and the release workflow now `go vet` / `go test` / build the Go binary, and the release job refuses a tag that does not match `Version` in `go/internal/core/update.go`. The macOS app tests run in CI against the freshly built CLI. The Rust test suite was ported to Go (10 -> 35 tests).
+- **Fix (MCP env merge):** the Go JSON writers dropped the source `env` values when the target already had an `env`, because of a `map[string]string` vs `map[string]any` type assertion. Source values now win and target-only secrets are kept (the Rust behaviour).
+- **macOS app, conflict resolution:** a sync conflict now shows both copies (agent, path, hash, file count) and the diff between them before you choose Skip / Keep source / Keep target. Skills list every changed file (modified, only in source, only in target) with unified or side-by-side line diffs and collapsed unchanged runs; binary and oversized files are not diffed. MCP conflicts diff the normalized config. Each side is tagged "will be kept" / "will be replaced" for the chosen resolution, and "Resolve all" applies one choice to every conflict.
+- **Fix (keep-target):** `--on-conflict keep-target` kept the first non-canonical copy, which could be a symlink to the canonical copy, so "keep target" silently kept the source. It now keeps the first copy whose content differs from the source (Go and Rust).
 - **Fix (purge/unlink):** `skills remove` looked for `<agent root>/<key>`, but keys come from the SKILL.md `name`, not the folder. A skill in folder `gitbutler` with `name: but` reported "nothing to remove" with exit 0, so Purge/Unlink changed nothing on disk and the skill stayed in the app. It now removes the paths the scan found for that key (Go and Rust). The macOS app also reports "Nothing was removed" instead of success when the CLI removes nothing.
 - **macOS app:** rewritten in SwiftUI with a layered layout: `SyncaKit` (CLI client, models, log store, file tree; unit-tested) and `synca-app` (`Model`, `Design`, `Features`). Three headed columns: Library, Details, Activity.
 - **Library pane:** the User/Project switcher, project folder picker and action buttons (Sync all, Install, Add MCP, Reload, Updates) sit at the top of the skills pane. Search filters skills and MCP servers.
