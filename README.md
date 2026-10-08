@@ -109,7 +109,7 @@ Sync prefers **symlinks** into per-agent skill dirs pointing at canonical `.agen
 
 ## Agents (v1)
 
-Grok, Devin, Cognition, OMP, Pi, Kiro, OpenCode, Claude, Cursor (+ canonical `agents`).
+Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor (+ canonical `agents`).
 
 ## License
 

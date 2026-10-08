@@ -19,8 +19,8 @@ Out of scope v1: crush, goose.
 - MCP project canonical: `<git-root>/.mcp.json`
 
 ### Per-agent skill roots (read; write via symlink to canonical when syncing)
-**User:** `~/.grok/skills`, `~/.config/devin/skills`, `~/.config/cognition/skills`, `~/.pi/agent/skills`, `~/.kiro/skills`, `~/.config/opencode/skills`, `~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`
-**Project:** `.grok/skills`, `.devin/skills`, `.cognition/skills`, `.omp/skills`, `.pi/skills`, `.kiro/skills`, `.opencode/skills`, `.claude/skills`, `.cursor/skills`, `.agents/skills`
+**User:** `~/.grok/skills`, `~/.config/devin/skills`, `~/.pi/agent/skills`, `~/.kiro/skills`, `~/.config/opencode/skills`, `~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`
+**Project:** `.grok/skills`, `.devin/skills`, `.omp/skills`, `.pi/skills`, `.kiro/skills`, `.opencode/skills`, `.claude/skills`, `.cursor/skills`, `.agents/skills`
 
 ### Per-agent MCP configs (read/write adapters)
 **User:** `~/.grok/config.toml` `[mcp_servers.<name>]`; `~/.config/devin/mcp_config.json`; `~/.omp/agent/mcp.json`; `~/.pi/agent/mcp.json`; `~/.kiro/settings/mcp.json`; `~/.config/opencode/opencode.json` key `mcp`; `~/.claude.json` `mcpServers`; `~/.cursor/mcp.json`; hub `~/.agents/mcp.json`

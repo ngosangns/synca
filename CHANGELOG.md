@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 — 2026-10-08
+
+- **Remove Cognition:** dropped the `cognition` agent from skills entirely — the `AgentCognition` enum value, its user (`~/.config/cognition/skills`) and project (`.cognition/skills`) skill roots, and the docs. `--agents cognition` now parses to an empty filter (all agents), same as any other unknown name.
+
 ## 0.2.1 — 2026-10-08
 
 - **Fix (skill reports "mismatch" even after sync):** when an agent's skills dir is a symlink to the canonical one (`.pi/skills -> ../.agents/skills`), sync linked the canonical skill into that root, which replaced the canonical copy with a symlink to itself. The skill then resolved to nothing, every agent link dangled, and the app kept showing "Agent copies differ". Sync now skips roots that alias the canonical dir, refuses to link a path to itself, and repairs the self-referencing link on the next run.

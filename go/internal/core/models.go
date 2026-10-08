@@ -38,7 +38,6 @@ const (
 	AgentAgents AgentKind = iota
 	AgentGrok
 	AgentDevin
-	AgentCognition
 	AgentOmp
 	AgentPi
 	AgentKiro
@@ -48,7 +47,7 @@ const (
 )
 
 var agentNames = [...]string{
-	"agents", "grok", "devin", "cognition", "omp",
+	"agents", "grok", "devin", "omp",
 	"pi", "kiro", "opencode", "claude", "cursor",
 }
 
@@ -57,7 +56,7 @@ func (a AgentKind) String() string { return agentNames[a] }
 // AllAgents in the canonical enum order (used for presence sort).
 func AllAgents() []AgentKind {
 	return []AgentKind{
-		AgentAgents, AgentGrok, AgentDevin, AgentCognition, AgentOmp,
+		AgentAgents, AgentGrok, AgentDevin, AgentOmp,
 		AgentPi, AgentKiro, AgentOpenCode, AgentClaude, AgentCursor,
 	}
 }

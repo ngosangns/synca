@@ -1,6 +1,6 @@
 ---
 name: synca
-description: "Browse, install, and sync skills + MCP configs across coding agents (Grok, Devin, Cognition, OMP, Pi, Kiro, OpenCode, Claude, Cursor) via the `synca` CLI. Use when installing a skill or MCP server so every agent sees it, checking drift between canonical ~/.agents and per-agent dirs, resolving skill/MCP conflicts, or updating synca itself. Triggers: synca, sync skills, sync mcp, install skill for all agents, đồng bộ skills."
+description: "Browse, install, and sync skills + MCP configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) via the `synca` CLI. Use when installing a skill or MCP server so every agent sees it, checking drift between canonical ~/.agents and per-agent dirs, resolving skill/MCP conflicts, or updating synca itself. Triggers: synca, sync skills, sync mcp, install skill for all agents, đồng bộ skills."
 ---
 
 # synca
@@ -15,7 +15,7 @@ hand-edited copies drift and synca cannot update them later.
 - **Canonical MCP hub**: `~/.agents/mcp.json` (user) · `<git-root>/.mcp.json` (project)
 - Agent dirs get **relative symlinks** to canonical; MCP writers translate per-agent format
   (TOML/JSON/OpenCode `mcp`) and preserve existing env secrets on the target.
-- Agents: grok, devin, cognition, omp, pi, kiro, opencode, claude, cursor (+ canonical `agents`).
+- Agents: grok, devin, omp, pi, kiro, opencode, claude, cursor (+ canonical `agents`).
 
 ## Commands
 
