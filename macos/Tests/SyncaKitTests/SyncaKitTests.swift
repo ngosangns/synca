@@ -139,3 +139,122 @@ import Testing
         #expect(l.paths == ["/p/1", "/p/legacy"] && l.active == "/p/legacy")
     }
 }
+
+@Suite struct TextDiffTests {
+    @Test func identicalTextCollapsesToNothingChanged() {
+        let rows = TextDiff.diff(old: "a\nb\n", new: "a\nb\n")
+        #expect(rows.count == 1 && rows[0].kind == .collapsed && rows[0].hidden == 2)
+    }
+
+    @Test func detectsReplacedAddedAndRemovedLinesWithNumbers() {
+        let rows = TextDiff.rows(old: TextDiff.lines(of: "one\ntwo\nthree\n"), new: TextDiff.lines(of: "one\nTWO\nthree\nfour\n"))
+        let changes = rows.filter { $0.kind != .same }.map { "\($0.kind)|\($0.text)|\($0.oldNo ?? 0)|\($0.newNo ?? 0)" }
+        #expect(changes == ["removed|two|2|0", "added|TWO|0|2", "added|four|0|4"])
+        #expect(rows.first?.oldNo == 1 && rows.first?.newNo == 1)
+    }
+
+    @Test func longUnchangedRunsAreCollapsedKeepingContext() {
+        let old = (1...30).map(String.init).joined(separator: "\n")
+        let new = old.replacingOccurrences(of: "\n15\n", with: "\nFIFTEEN\n")
+        let rows = TextDiff.diff(old: old, new: new, context: 2)
+        #expect(rows.first?.kind == .collapsed && rows.first?.hidden == 12)
+        #expect(rows.last?.kind == .collapsed)
+        #expect(rows.filter { $0.kind == .same }.count == 4)
+    }
+
+    @Test func splitAlignsReplacementOnOneRow() {
+        let rows = TextDiff.rows(old: ["a", "x", "c"], new: ["a", "y", "c"])
+        let split = TextDiff.split(rows)
+        #expect(split.count == 3)
+        #expect(split[1].left?.text == "x" && split[1].right?.text == "y")
+    }
+
+    @Test func splitLeavesGapsForPureAdditions() {
+        let split = TextDiff.split(TextDiff.rows(old: ["a"], new: ["a", "b"]))
+        #expect(split.last?.left == nil && split.last?.right?.text == "b")
+    }
+
+    @Test func emptySidesAndCRLF() {
+        #expect(TextDiff.rows(old: [], new: ["x"]).map(\.kind) == [.added])
+        #expect(TextDiff.rows(old: ["x"], new: []).map(\.kind) == [.removed])
+        #expect(TextDiff.lines(of: "a\r\nb\r\n") == ["a", "b"])
+        #expect(TextDiff.lines(of: "") == [])
+    }
+}
+
+@Suite struct ConflictCompareTests {
+    private func mk(_ files: [String: String]) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        for (rel, text) in files {
+            let f = root.appendingPathComponent(rel)
+            try FileManager.default.createDirectory(at: f.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try text.write(to: f, atomically: true, encoding: .utf8)
+        }
+        return root
+    }
+
+    @Test func skillComparisonListsModifiedAddedRemovedIdentical() throws {
+        let a = try mk(["SKILL.md": "---\nname: x\n---\nline1\nline2\n", "refs/a.md": "same", "only-src.txt": "s"])
+        let b = try mk(["SKILL.md": "---\nname: x\n---\nline1\nlineX\n", "refs/a.md": "same", "only-tgt.txt": "t"])
+        defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+        let c = PlanConflict(kind: .skill, key: "x", paths: [a.path, b.path], hashes: ["h1", "h2"])
+        let cmp = try #require(ConflictCompare.skill(c, entry: nil))
+        #expect(cmp.files.map { "\($0.path):\($0.status)" } == [
+            "SKILL.md:modified", "only-tgt.txt:added", "only-src.txt:removed", "refs/a.md:identical"])
+        let md = try #require(cmp.files.first)
+        #expect(md.additions == 1 && md.deletions == 1)
+        #expect(cmp.source.fileCount == 3 && cmp.target.fileCount == 3)
+    }
+
+    @Test func targetIsFirstCopyWithADifferentHash() throws {
+        let a = try mk(["SKILL.md": "A"]), same = try mk(["SKILL.md": "A"]), diff = try mk(["SKILL.md": "B"]), third = try mk(["SKILL.md": "C"])
+        defer { [a, same, diff, third].forEach { try? FileManager.default.removeItem(at: $0) } }
+        let c = PlanConflict(kind: .skill, key: "x", paths: [a.path, same.path, diff.path, third.path],
+                             hashes: ["ha", "ha", "hb", "hc"])
+        let cmp = try #require(ConflictCompare.skill(c, entry: nil))
+        #expect(cmp.target.path == diff.path)
+        #expect(cmp.otherVersions.map(\.path) == [third.path])
+    }
+
+    @Test func binaryAndLargeFilesAreNotDiffed() throws {
+        let a = try mk(["SKILL.md": "x"]), b = try mk(["SKILL.md": "x"])
+        defer { try? FileManager.default.removeItem(at: a); try? FileManager.default.removeItem(at: b) }
+        try Data([0, 1, 2]).write(to: a.appendingPathComponent("bin.dat"))
+        try Data([0, 9, 9]).write(to: b.appendingPathComponent("bin.dat"))
+        try String(repeating: "x", count: 300_000).write(to: a.appendingPathComponent("big.txt"), atomically: true, encoding: .utf8)
+        try "small".write(to: b.appendingPathComponent("big.txt"), atomically: true, encoding: .utf8)
+        let cmp = try #require(ConflictCompare.skill(PlanConflict(kind: .skill, key: "x", paths: [a.path, b.path], hashes: ["1", "2"]), entry: nil))
+        #expect(cmp.files.first { $0.path == "bin.dat" }?.content == .binary)
+        #expect(cmp.files.first { $0.path == "big.txt" }?.content == .tooLarge)
+    }
+
+    @Test func mcpComparisonDiffsNormalizedConfig() throws {
+        func n(_ args: [String]) -> McpNormalized {
+            McpNormalized(transport: "stdio", command: ["npx"], url: nil, args: args, enabled: true, envKeys: ["B", "A"])
+        }
+        let json = """
+        {"key":"srv","scope":"user","mismatch":true,"presence":[
+          {"agent":"agents","path":"/hub","fingerprint":"f1","normalized":{"transport":"stdio","command":["npx"],"args":["-y","a"],"enabled":true,"env_keys":["B","A"]}},
+          {"agent":"cursor","path":"/cur","fingerprint":"f2","normalized":{"transport":"stdio","command":["npx"],"args":["-y","b"],"enabled":true,"env_keys":["B","A"]}}]}
+        """
+        let entry = try SyncaCLI.decode(McpEntry.self, from: json)
+        let c = PlanConflict(kind: .mcp, key: "srv", fingerprints: ["f1", "f2"])
+        let cmp = try #require(ConflictCompare.mcp(c, entry: entry))
+        #expect(cmp.source.agent == "agents" && cmp.target.agent == "cursor")
+        #expect(cmp.source.summary.contains("env keys: A, B"))
+        guard case .text(let rows) = cmp.files[0].content else { Issue.record("expected text"); return }
+        #expect(rows.filter { $0.kind == .removed }.map(\.text) == ["  a"])
+        #expect(rows.filter { $0.kind == .added }.map(\.text) == ["  b"])
+        _ = n([])
+    }
+
+    @Test func parserKeepsConflictPathsAndFingerprints() {
+        let out = """
+        1. {"kind":"conflict_skill","skill_key":"alpha","paths":["/a","/b"],"hashes":["h1","h2"]}
+        2. {"kind":"conflict_mcp","server":"srv","fingerprints":["f1","f2"]}
+        """
+        let plan = Plan(title: "t", output: out, ok: true, apply: .sync(target: .all, key: nil))
+        #expect(plan.conflicts[0].paths == ["/a", "/b"] && plan.conflicts[0].hashes == ["h1", "h2"])
+        #expect(plan.conflicts[1].fingerprints == ["f1", "f2"])
+    }
+}

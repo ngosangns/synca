@@ -214,6 +214,66 @@ private func link(_ sbx: Sandbox, _ rel: String) -> String? {
         #expect(await eventually { m.skills.first?.mismatch == false })
     }
 
+    @Test func conflictPlanCarriesBothCopiesAndTheyDiffAgainstDisk() async throws {
+        let sbx = try Sandbox()
+        try sbx.skill("alpha", description: "canonical", extra: ["refs/a.md": "same", "only-src.txt": "s"])
+        try sbx.skill("alpha", in: sbx.home.appendingPathComponent(".cursor/skills"), description: "DIFFERENT",
+                      extra: ["refs/a.md": "same", "only-tgt.txt": "t"])
+        let m = sbx.makeModel()
+        #expect(await loaded(m))
+        m.planSync(target: .skills)
+        #expect(await eventually { plan(m) != nil })
+        let c = try #require(plan(m)?.conflicts.first)
+        #expect(c.paths.count == 2 && c.hashes.count == 2 && c.hashes[0] != c.hashes[1])
+
+        let cmp = try #require(ConflictCompare.skill(c, entry: m.skills.first))
+        #expect(cmp.source.agent == "agents" && cmp.target.agent == "cursor")
+        #expect(cmp.files.map { "\($0.path):\($0.status)" } == [
+            "SKILL.md:modified", "only-tgt.txt:added", "only-src.txt:removed", "refs/a.md:identical"])
+        guard case .text(let rows) = cmp.files[0].content else { Issue.record("SKILL.md should diff as text"); return }
+        #expect(rows.contains { $0.kind == .removed && $0.text.contains("canonical") })
+        #expect(rows.contains { $0.kind == .added && $0.text.contains("DIFFERENT") })
+    }
+
+    @Test func keepTargetKeepsTheDifferingCopyEvenWhenAnEarlierAgentIsASymlink() async throws {
+        let sbx = try Sandbox()
+        try sbx.skill("alpha", description: "CANON")
+        let grok = sbx.home.appendingPathComponent(".grok/skills")
+        try FileManager.default.createDirectory(at: grok, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: grok.appendingPathComponent("alpha").path,
+                                                   withDestinationPath: "../../.agents/skills/alpha")
+        try sbx.skill("alpha", in: sbx.home.appendingPathComponent(".cursor/skills"), description: "CURSOR-VERSION")
+        let m = sbx.makeModel()
+        #expect(await loaded(m))
+        m.planSync(target: .skills)
+        #expect(await eventually { plan(m) != nil })
+        var p = try #require(plan(m))
+        let cmp = try #require(ConflictCompare.skill(p.conflicts[0], entry: m.skills.first))
+        #expect(cmp.target.agent == "cursor", "the UI must show the copy keep-target will actually keep")
+        p.conflicts[0].policy = .keepTarget
+        m.apply(p); await settle(m)
+        let md = sbx.home.appendingPathComponent(".agents/skills/alpha/SKILL.md")
+        #expect(try String(contentsOf: md, encoding: .utf8).contains("CURSOR-VERSION"))
+    }
+
+    @Test func mcpConflictShowsConfigDiff() async throws {
+        let sbx = try Sandbox()
+        let hub = sbx.home.appendingPathComponent(".agents/mcp.json")
+        try FileManager.default.createDirectory(at: hub.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #"{"mcpServers":{"srv":{"command":"npx","args":["-y","a"]}}}"#.write(to: hub, atomically: true, encoding: .utf8)
+        try sbx.cursorMcp(["srv": ["command": "npx", "args": ["-y", "b"]]])
+        let m = sbx.makeModel()
+        #expect(await loaded(m))
+        m.planSync(target: .mcp)
+        #expect(await eventually { plan(m) != nil })
+        let c = try #require(plan(m)?.conflicts.first)
+        #expect(c.kind == .mcp && c.fingerprints.count >= 2)
+        let cmp = try #require(ConflictCompare.mcp(c, entry: m.mcps.first))
+        guard case .text(let rows) = cmp.files[0].content else { Issue.record("expected text diff"); return }
+        #expect(rows.filter { $0.kind == .removed }.map(\.text) == ["  a"])
+        #expect(rows.filter { $0.kind == .added }.map(\.text) == ["  b"])
+    }
+
     @Test func nothingToDoPlanIsOkWithoutConflicts() async throws {
         let sbx = try Sandbox()
         let m = sbx.makeModel()

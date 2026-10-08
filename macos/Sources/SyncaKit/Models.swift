@@ -98,9 +98,16 @@ public struct PlanConflict: Sendable, Identifiable, Hashable {
     public let kind: Kind
     public let key: String
     public var policy: ConflictPolicy = .skip
+    /// Skill copies (presence order: canonical first) and their content hashes.
+    public let paths: [String]
+    public let hashes: [String]
+    /// MCP config fingerprints, in presence order.
+    public let fingerprints: [String]
     public var id: String { "\(kind)|\(key)" }
-    public init(kind: Kind, key: String, policy: ConflictPolicy = .skip) {
+    public init(kind: Kind, key: String, policy: ConflictPolicy = .skip,
+                paths: [String] = [], hashes: [String] = [], fingerprints: [String] = []) {
         self.kind = kind; self.key = key; self.policy = policy
+        self.paths = paths; self.hashes = hashes; self.fingerprints = fingerprints
     }
 }
 
@@ -163,8 +170,15 @@ public enum PlanParser {
     public static func conflicts(from actions: [[String: Any]]) -> [PlanConflict] {
         actions.compactMap { a in
             switch a["kind"] as? String {
-            case "conflict_skill": (a["skill_key"] as? String).map { PlanConflict(kind: .skill, key: $0) }
-            case "conflict_mcp": (a["server"] as? String).map { PlanConflict(kind: .mcp, key: $0) }
+            case "conflict_skill":
+                (a["skill_key"] as? String).map {
+                    PlanConflict(kind: .skill, key: $0, paths: a["paths"] as? [String] ?? [],
+                                 hashes: a["hashes"] as? [String] ?? [])
+                }
+            case "conflict_mcp":
+                (a["server"] as? String).map {
+                    PlanConflict(kind: .mcp, key: $0, fingerprints: a["fingerprints"] as? [String] ?? [])
+                }
             default: nil
             }
         }

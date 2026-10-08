@@ -59,7 +59,7 @@ struct PlanView: View {
                 actions
             }
             .padding(Theme.Space.lg)
-            .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: 1000, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -80,35 +80,24 @@ struct PlanView: View {
     }
 
     private var conflictsCard: some View {
-        Card {
-            VStack(alignment: .leading, spacing: Theme.Space.sm) {
-                Label("Conflicts", systemImage: Icon.warning)
+        VStack(alignment: .leading, spacing: Theme.Space.md) {
+            HStack(spacing: Theme.Space.sm) {
+                Label("Conflicts (\(conflicts.count))", systemImage: Icon.warning)
                     .font(.headline).foregroundStyle(.orange)
-                Text("Unresolved conflicts are skipped — nothing is overwritten unless you choose a resolution.")
-                    .font(.callout).foregroundStyle(.secondary)
-                Grid(alignment: .leading, horizontalSpacing: Theme.Space.lg, verticalSpacing: Theme.Space.sm) {
-                    GridRow {
-                        Text("Item").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        Text("Resolution").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    }
-                    Divider().gridCellUnsizedAxes(.horizontal)
-                    ForEach($conflicts) { $c in
-                        GridRow {
-                            HStack(spacing: Theme.Space.sm) {
-                                Tag(text: c.kind == .skill ? "skill" : "mcp")
-                                Text(c.key).lineLimit(1).truncationMode(.middle)
-                            }
-                            Picker("Resolution for \(c.key)", selection: $c.policy) {
-                                ForEach(ConflictPolicy.allCases) { Text($0.title).tag($0) }
-                            }
-                            .labelsHidden()
-                            .fixedSize()
-                            .disabled(model.isBusy)
-                            .accessibilityLabel("Resolution for \(c.key)")
+                Spacer(minLength: 0)
+                if conflicts.count > 1 {
+                    Menu {
+                        ForEach(ConflictPolicy.allCases) { p in
+                            Button(p.title) { for i in conflicts.indices { conflicts[i].policy = p } }
                         }
-                    }
+                    } label: { Label("Resolve all", systemImage: Icon.sync) }
+                    .fixedSize().disabled(model.isBusy)
+                    .help("Apply one resolution to every conflict")
                 }
             }
+            Text("Compare both copies below, then choose how each conflict resolves. Unresolved conflicts are skipped — nothing is overwritten unless you choose a resolution.")
+                .font(.callout).foregroundStyle(.secondary)
+            ForEach($conflicts) { $c in ConflictCard(conflict: $c) }
         }
     }
 
