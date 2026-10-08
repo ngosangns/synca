@@ -80,6 +80,11 @@ func ScanSkills(scope Scope, cwd string) []SkillEntry {
 			if err != nil {
 				hash = "missing"
 			}
+			if isSymlink {
+				if _, serr := os.Stat(path); serr != nil {
+					hash = HashDangling
+				}
+			}
 			display := SkillDisplayName(resolveForHash)
 			description := skillDescription(resolveForHash)
 			key := NormalizeKey(display)
@@ -114,7 +119,9 @@ func ScanSkills(scope Scope, cwd string) []SkillEntry {
 		e := *byKey[k]
 		hashes := map[string]bool{}
 		for _, p := range e.Presence {
-			hashes[p.ContentHash] = true
+			if p.ContentHash != HashDangling {
+				hashes[p.ContentHash] = true
+			}
 		}
 		e.Mismatch = len(hashes) > 1
 		sort.SliceStable(e.Presence, func(i, j int) bool {

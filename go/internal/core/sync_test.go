@@ -383,3 +383,131 @@ func TestPlanSyncMcpRecordsSingleScope(t *testing.T) {
 		}
 	}
 }
+
+// ---- aliased skills roots and dangling links ------------------------------------
+
+// A project may symlink an agent's skills dir to the canonical one
+// (.pi/skills -> ../.agents/skills). Syncing must never turn the canonical copy
+// into a link to itself.
+func aliasedProject(t *testing.T) (proj string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	proj = filepath.Join(t.TempDir(), "proj")
+	for _, d := range []string{filepath.Join(proj, ".git"), filepath.Join(proj, ".agents/skills/unit-testing"), filepath.Join(proj, ".pi")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../.agents/skills", filepath.Join(proj, ".pi/skills")); err != nil {
+		t.Fatal(err)
+	}
+	// folder name differs from the SKILL.md name -> key "unit-test"
+	mustWrite(t, filepath.Join(proj, ".agents/skills/unit-testing/SKILL.md"), "---\nname: unit-test\ndescription: Write tests.\n---\nbody\n")
+	return proj
+}
+
+func syncAll(t *testing.T, proj string) {
+	t.Helper()
+	plan, err := PlanSyncSkills(ScopeProject, proj, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyPlan(plan, proj, ScopeProject, NewDecisions(ConflictSkip)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSyncNeverSelfLinksCanonicalThroughAliasedRoot(t *testing.T) {
+	proj := aliasedProject(t)
+	for i := 0; i < 3; i++ { // converges and stays put
+		syncAll(t, proj)
+	}
+	canon := filepath.Join(proj, ".agents/skills/unit-test")
+	fi, err := os.Lstat(canon)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		l, _ := os.Readlink(canon)
+		t.Fatalf("canonical became a symlink -> %q", l)
+	}
+	if _, err := os.Stat(filepath.Join(canon, "SKILL.md")); err != nil {
+		t.Fatalf("canonical skill has no content: %v", err)
+	}
+	for _, e := range ScanSkills(ScopeProject, proj) {
+		if e.Key == "unit-test" && e.Mismatch {
+			t.Errorf("unit-test still reports a mismatch after sync: %+v", e.Presence)
+		}
+	}
+	plan, _ := PlanSyncSkills(ScopeProject, proj, nil, "")
+	for _, a := range plan.Actions {
+		if a.Kind != "skip_same" {
+			t.Errorf("sync is not idempotent, pending action: %+v", a)
+		}
+	}
+}
+
+func TestSyncRepairsSelfReferencingCanonicalLeftByOlderVersions(t *testing.T) {
+	proj := aliasedProject(t)
+	canon := filepath.Join(proj, ".agents/skills/unit-test")
+	if err := os.Symlink("unit-test", canon); err != nil { // the broken state older binaries produced
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		syncAll(t, proj)
+	}
+	if fi, err := os.Lstat(canon); err != nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("canonical not repaired: %v %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(canon, "SKILL.md")); err != nil {
+		t.Fatalf("canonical lost its content: %v", err)
+	}
+	for _, e := range ScanSkills(ScopeProject, proj) {
+		if e.Key == "unit-test" && e.Mismatch {
+			t.Errorf("mismatch persists: %+v", e.Presence)
+		}
+	}
+}
+
+func TestDanglingLinksNeverCountAsAMismatch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	canon := filepath.Join(home, ".agents/skills/alpha")
+	mustWrite(t, filepath.Join(canon, "SKILL.md"), "---\nname: alpha\n---\nbody\n")
+	if err := os.MkdirAll(filepath.Join(home, ".cursor/skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../gone/alpha", filepath.Join(home, ".cursor/skills/alpha")); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ScanSkills(ScopeUser, home) {
+		if e.Key == "alpha" && e.Mismatch {
+			t.Errorf("a dangling link must not be reported as differing content")
+		}
+	}
+	syncAll2 := func() {
+		plan, err := PlanSyncSkills(ScopeUser, home, nil, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ApplyPlan(plan, home, ScopeUser, NewDecisions(ConflictSkip)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	syncAll2()
+	if _, err := os.Stat(filepath.Join(home, ".cursor/skills/alpha/SKILL.md")); err != nil {
+		t.Errorf("dead link was not repaired to point at canonical: %v", err)
+	}
+}
+
+func TestRemoveSkillNeverDeletesCanonicalThroughAliasedRoot(t *testing.T) {
+	proj := aliasedProject(t)
+	syncAll(t, proj)
+	if _, _, err := RemoveSkill(ScopeProject, proj, "unit-test", nil, false, false); err != nil { // unlink only
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(proj, ".agents/skills/unit-test/SKILL.md")); err != nil {
+		t.Fatalf("unlink deleted the canonical copy through the aliased root: %v", err)
+	}
+}

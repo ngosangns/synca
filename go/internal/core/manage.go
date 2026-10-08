@@ -201,6 +201,9 @@ func PlanInstallSkill(scope Scope, cwd, sourceDir string, agentsFilter []AgentKi
 		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
 			continue
 		}
+		if rootAliasesCanonical(r.Path, canonical) {
+			continue
+		}
 		plan.Actions = append(plan.Actions, ManageAction{
 			Kind: "symlink_skill", Link: filepath.Join(r.Path, key), Target: canonSkill,
 			SkillKey: key, Agent: r.Agent.String(),
@@ -246,6 +249,11 @@ func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, pur
 				continue
 			}
 			if agentsFilter != nil && !presenceAgentIn(p.Agent, agentsFilter) {
+				continue
+			}
+			// This agent reads the canonical dir through a symlinked root, so the path
+			// is the canonical copy itself; unlinking it would delete the skill.
+			if rootAliasesCanonical(filepath.Dir(p.Path), canonical) {
 				continue
 			}
 			plan.Actions = append(plan.Actions, ManageAction{

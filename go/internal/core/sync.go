@@ -104,6 +104,12 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
 			continue
 		}
+		// A root that is itself the canonical dir (e.g. .pi/skills -> ../.agents/skills)
+		// already sees every canonical skill; "linking" into it would replace the
+		// canonical copy with a link to itself.
+		if rootAliasesCanonical(r.Path, canonical) {
+			continue
+		}
 		targets = append(targets, r)
 	}
 
@@ -128,6 +134,12 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 
 		source := pickPresence(skill.Presence)
 		if source == nil {
+			// Only dangling links exist: there is no content to copy. Copying from
+			// them would create an empty canonical skill.
+			plan.Actions = append(plan.Actions, SyncAction{
+				Kind: "skip_same", Path: skill.Presence[0].Path, SkillKey: skill.Key,
+				Reason: "only dangling links exist; restore the skill or delete the dead links",
+			})
 			continue
 		}
 		canonSkill := filepath.Join(canonical, skill.Key)
@@ -138,7 +150,7 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 			}
 		}
 
-		if _, err := os.Lstat(canonSkill); os.IsNotExist(err) {
+		if _, err := os.Lstat(canonSkill); os.IsNotExist(err) || isDanglingLink(canonSkill) {
 			plan.Actions = append(plan.Actions, SyncAction{
 				Kind: "ensure_canonical_copy", From: sourceReal, To: canonSkill, SkillKey: skill.Key,
 			})
@@ -168,6 +180,22 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 							})
 							continue
 						}
+						// A dead link holds no content, so replacing it loses nothing. If it
+						// already points at the canonical path, that path is restored above.
+						if isDanglingLink(link) {
+							if filepath.Clean(resolved) == filepath.Clean(canonSkill) {
+								plan.Actions = append(plan.Actions, SyncAction{
+									Kind: "skip_same", Path: link, SkillKey: skill.Key,
+									Reason: fmt.Sprintf("already linked for %s", t.Agent),
+								})
+							} else {
+								plan.Actions = append(plan.Actions, SyncAction{
+									Kind: "symlink_skill", Link: link, Target: canonSkill,
+									SkillKey: skill.Key, Agent: t.Agent.String(),
+								})
+							}
+							continue
+						}
 					}
 				}
 				plan.Actions = append(plan.Actions, SyncAction{
@@ -185,20 +213,57 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 	return plan, nil
 }
 
+// HashDangling marks a symlink whose target cannot be resolved. It carries no
+// content, so it never counts towards a content mismatch.
+const HashDangling = "dangling"
+
+// isDanglingLink reports whether path is a symlink that cannot be resolved
+// (missing target or a symlink loop).
+func isDanglingLink(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err != nil
+}
+
+// physicalPath resolves symlinks in the parent directory only, so a path can be
+// compared even when the final component is a dangling or looping link.
+func physicalPath(p string) string {
+	dir, base := filepath.Split(filepath.Clean(p))
+	if d, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = d
+	}
+	return filepath.Join(dir, base)
+}
+
+// rootAliasesCanonical reports whether an agent skills root is the canonical
+// skills dir reached through a symlink (e.g. .pi/skills -> ../.agents/skills).
+func rootAliasesCanonical(root, canonical string) bool {
+	a, ea := filepath.EvalSymlinks(root)
+	b, eb := filepath.EvalSymlinks(canonical)
+	return ea == nil && eb == nil && a == b && filepath.Clean(root) != filepath.Clean(canonical)
+}
+
 func canonSame(a, b string) bool {
 	ra, ea := filepath.EvalSymlinks(a)
 	rb, eb := filepath.EvalSymlinks(b)
 	return ea == nil && eb == nil && ra == rb
 }
 
+// pickPresence returns the copy to sync from: the canonical one when it has
+// content, else the first live copy. Dangling links never qualify.
 func pickPresence(p []SkillPresence) *SkillPresence {
 	for i := range p {
-		if p[i].Agent == "agents" {
+		if p[i].Agent == "agents" && p[i].ContentHash != HashDangling {
 			return &p[i]
 		}
 	}
-	if len(p) > 0 {
-		return &p[0]
+	for i := range p {
+		if p[i].ContentHash != HashDangling {
+			return &p[i]
+		}
 	}
 	return nil
 }
@@ -520,7 +585,7 @@ func resolveSkillConflict(scope Scope, cwd string, entry *SkillEntry, policy Con
 		log = append(log, fmt.Sprintf("conflict skill %s: keep %s (already canonical)", entry.Key, winner.Agent))
 	}
 	for _, r := range SkillRoots(scope, cwd) {
-		if r.Agent == AgentAgents {
+		if r.Agent == AgentAgents || rootAliasesCanonical(r.Path, canonical) {
 			continue
 		}
 		link := filepath.Join(r.Path, entry.Key)
@@ -573,6 +638,13 @@ func ForceSymlink(link, target, agent string, log *[]string) error {
 		if err := os.MkdirAll(parent, 0o755); err != nil {
 			return err
 		}
+	}
+	// Never replace the target with a link to itself. This happens when the link's
+	// directory is an alias of the target's directory; removing the "old" link would
+	// delete the real data and leave a self-referencing symlink.
+	if physicalPath(link) == physicalPath(target) {
+		*log = append(*log, fmt.Sprintf("skip symlink for %s: %s is the canonical path itself", agent, link))
+		return nil
 	}
 	linkTarget := target
 	if rel, ok := pathdiffRelative(link, target); ok {
