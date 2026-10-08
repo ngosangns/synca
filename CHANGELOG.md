@@ -3,6 +3,7 @@
 ## 0.2.2 — 2026-10-08
 
 - **Remove Cognition:** dropped the `cognition` agent from skills entirely — the `AgentCognition` enum value, its user (`~/.config/cognition/skills`) and project (`.cognition/skills`) skill roots, and the docs. `--agents cognition` now parses to an empty filter (all agents), same as any other unknown name.
+- **Install name:** `make install` writes `~/.local/share/synca/bin/synca-$(VERSION)`, the same path `synca update` uses. The `-go` suffix existed only so a Rust binary of the same version could stay beside it.
 
 ## 0.2.1 — 2026-10-08
 

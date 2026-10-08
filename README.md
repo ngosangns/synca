@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" alt="synca" width="128"></p>
+
 # synca
 
 Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one CLI, with a native macOS app in [`macos/`](macos/) on top of it.
