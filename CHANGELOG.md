@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-10-08
+
+- **Fix (skill reports "mismatch" even after sync):** when an agent's skills dir is a symlink to the canonical one (`.pi/skills -> ../.agents/skills`), sync linked the canonical skill into that root, which replaced the canonical copy with a symlink to itself. The skill then resolved to nothing, every agent link dangled, and the app kept showing "Agent copies differ". Sync now skips roots that alias the canonical dir, refuses to link a path to itself, and repairs the self-referencing link on the next run.
+- **Fix:** dangling symlinks are no longer counted as differing content, so they cannot cause a false mismatch. Dead links are repaired to point at the canonical copy, and the sync source is never a dead link.
+- **Fix:** `skills remove` and `skills install` no longer act on a skills root that aliases the canonical dir, so unlinking from such an agent cannot delete the canonical skill.
+- **Taskfile:** `task install` builds and installs the CLI and the macOS app; `task --list` shows the rest.
+
 ## 0.2.0 — 2026-10-08
 
 - **Cleanup:** removed the PHP/NativePHP desktop app (`desktop/`) and its workflow, both terminal UIs (Ratatui in Rust, Bubble Tea in Go), the unused `filter_missing` / `agents_present_in_plan` helpers, unused Cargo dependencies, `GROK_TASK.md`, and stale TUI docs. `synca` with no arguments now prints help, and `synca tui` is gone.

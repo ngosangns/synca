@@ -22,7 +22,7 @@ synca mcp remove my-server --scope user
 Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
 
 ```bash
-TAG=v0.2.0
+TAG=v0.2.1
 ASSET=synca-${TAG}-darwin-arm64
 curl -fsSL -o /tmp/$ASSET \
   "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"
