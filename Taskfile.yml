@@ -1,0 +1,79 @@
+version: '3'
+
+# Thin wrapper over go/Makefile and macos/Makefile so there is one source of truth
+# for how things are built. Run `task --list` to see everything.
+
+tasks:
+  default:
+    desc: List tasks
+    cmds:
+      - task --list
+    silent: true
+
+  install:
+    desc: Install everything locally (CLI to ~/.local/bin + synca.app to /Applications)
+    cmds:
+      - task: cli:install
+      - task: app:install
+
+  cli:build:
+    desc: Build the Go CLI to go/bin/synca
+    dir: go
+    cmds:
+      - make build
+
+  cli:install:
+    desc: Install the CLI to ~/.local/share/synca/bin and link ~/.local/bin/synca
+    dir: go
+    cmds:
+      - make install
+
+  cli:test:
+    desc: Vet and test the Go CLI
+    dir: go
+    cmds:
+      - go vet ./...
+      - go test ./...
+
+  app:build:
+    desc: Build macos/synca.app (release, ad-hoc signed)
+    dir: macos
+    cmds:
+      - make
+
+  app:install:
+    desc: Build the macOS app and copy it to /Applications
+    dir: macos
+    cmds:
+      # Replacing a running bundle leaves the old binary in memory.
+      - pkill -x synca || true
+      - make install
+
+  app:test:
+    desc: Test the Swift packages (end-to-end tests use the CLI on PATH or SYNCA_BIN)
+    dir: macos
+    cmds:
+      - swift test
+
+  app:icon:
+    desc: Regenerate macos/Resources/AppIcon.icns from the logo script
+    dir: macos
+    cmds:
+      - make icon
+
+  test:
+    desc: Run every test suite
+    cmds:
+      - task: cli:test
+      - task: app:test
+
+  release:build:
+    desc: Test and build the release asset in dist/ (no publish)
+    cmds:
+      - ./scripts/release-local.sh
+
+  release:publish:
+    desc: Test, build and publish the GitHub release for the Version const
+    prompt: This creates or updates a public GitHub release. Continue?
+    cmds:
+      - ./scripts/release-local.sh --publish
