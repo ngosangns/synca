@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **macOS app:** rewritten in SwiftUI with a layered layout: `SyncaKit` (CLI client, models, log store, file tree; unit-tested) and `synca-app` (`Model`, `Design`, `Features`). Three headed columns: Library, Details, Activity.
+- **Library pane:** the User/Project switcher, project folder picker and action buttons (Sync all, Install, Add MCP, Reload, Updates) sit at the top of the skills pane. Search filters skills and MCP servers.
+- **Skill detail:** shows a file-tree explorer with a file preview, plus a presence table with column headings.
+- **Loading and errors:** every CLI call is async, cancellable and has a timeout. Skeleton rows, per-operation status bar, busy-disabled buttons, toasts and error states with retry. The activity log pages from the file tail instead of decoding the whole file.
+- **Branding:** new app logo and `AppIcon.icns` (`make icon` regenerates it). `make test` runs the Swift tests.
+
 ## 0.1.12 — 2026-10-04
 
 - **Pi skills:** sync repairs frontmatter Pi rejects. Invalid `name` values become the folder slug (`Make Bot UI` → `make-bot-ui`). Plain description values that contain `:` are quoted so Pi's YAML parser accepts them.

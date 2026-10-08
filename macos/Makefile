@@ -8,11 +8,12 @@ all: $(APP)
 release:
 	swift build -c release
 
-$(APP): release Resources/Info.plist
+$(APP): release Resources/Info.plist Resources/AppIcon.icns
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp $(BUILD) $(APP)/Contents/MacOS/synca
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
+	cp Resources/AppIcon.icns $(APP)/Contents/Resources/
 	codesign --force --sign - --identifier com.ngosangns.synca $(APP)
 
 install: $(APP)
@@ -21,4 +22,11 @@ install: $(APP)
 clean:
 	rm -rf $(APP) .build
 
-.PHONY: all install clean
+.PHONY: all install clean icon test
+
+# Regenerate Resources/AppIcon.icns from Tools/make-icon.swift.
+icon:
+	swift Tools/make-icon.swift
+
+test:
+	swift test
