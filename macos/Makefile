@@ -1,5 +1,7 @@
 APP = synca.app
-BUILD = .build/release/synca-app
+# SwiftPM's build system (swift-build vs the legacy driver) chooses the
+# products directory. Ask it instead of assuming .build/release.
+BIN = $(shell swift build -c release --show-bin-path)/synca-app
 
 all: $(APP)
 
@@ -11,7 +13,7 @@ release:
 $(APP): release Resources/Info.plist
 	rm -rf $(APP)
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
-	cp $(BUILD) $(APP)/Contents/MacOS/synca
+	cp $(BIN) $(APP)/Contents/MacOS/synca
 	cp Resources/Info.plist $(APP)/Contents/Info.plist
 	codesign --force --sign - --identifier com.ngosangns.synca $(APP)
 
