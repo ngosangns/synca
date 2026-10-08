@@ -13,7 +13,7 @@ class NativeAppServiceProvider implements ProvidesPhpIni
         Menu::create(
             Menu::app(),
             Menu::make(
-                Menu::route('notes.index', 'All Notes', 'CmdOrCtrl+1'),
+                Menu::route('dashboard', 'Dashboard', 'CmdOrCtrl+1'),
                 Menu::separator(),
                 Menu::close(),
             )->label('File'),
@@ -24,10 +24,12 @@ class NativeAppServiceProvider implements ProvidesPhpIni
 
         Window::open()
             ->title(config('app.name'))
-            ->width(960)
-            ->height(720)
+            ->width(1280)
+            ->height(800)
             ->minWidth(640)
             ->minHeight(480)
+            ->titleBarHiddenInset()
+            ->trafficLightPosition(16, 8)
             ->rememberState();
     }
 
