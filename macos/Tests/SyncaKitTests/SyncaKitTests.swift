@@ -107,3 +107,35 @@ import Testing
         #expect(FileTree.preview(of: root.appendingPathComponent("SKILL.md")) == "x")
     }
 }
+
+@Suite struct ProjectListTests {
+    @Test func addDedupesNormalizesAndActivates() {
+        var l = ProjectList()
+        l.add("/tmp/a/")
+        l.add("/tmp/b")
+        l.add("/tmp/a/../a")
+        #expect(l.paths == ["/tmp/a", "/tmp/b"])
+        #expect(l.active == "/tmp/a")
+    }
+
+    @Test func removingActiveFallsToNeighbourThenNil() {
+        var l = ProjectList(paths: ["/p/1", "/p/2", "/p/3"], active: "/p/2")
+        l.remove("/p/2")
+        #expect(l.paths == ["/p/1", "/p/3"] && l.active == "/p/3")
+        l.remove("/p/3"); l.remove("/p/1")
+        #expect(l.paths.isEmpty && l.active == nil)
+    }
+
+    @Test func removingInactiveKeepsActiveAndSelectIgnoresUnknown() {
+        var l = ProjectList(paths: ["/p/1", "/p/2"], active: "/p/1")
+        l.remove("/p/2")
+        #expect(l.active == "/p/1")
+        l.select("/nope")
+        #expect(l.active == "/p/1")
+    }
+
+    @Test func initIncludesActiveEvenIfMissingFromPaths() {
+        let l = ProjectList(paths: ["/p/1"], active: "/p/legacy")
+        #expect(l.paths == ["/p/1", "/p/legacy"] && l.active == "/p/legacy")
+    }
+}

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Fix (purge/unlink):** `skills remove` looked for `<agent root>/<key>`, but keys come from the SKILL.md `name`, not the folder. A skill in folder `gitbutler` with `name: but` reported "nothing to remove" with exit 0, so Purge/Unlink changed nothing on disk and the skill stayed in the app. It now removes the paths the scan found for that key (Go and Rust). The macOS app also reports "Nothing was removed" instead of success when the CLI removes nothing.
 - **macOS app:** rewritten in SwiftUI with a layered layout: `SyncaKit` (CLI client, models, log store, file tree; unit-tested) and `synca-app` (`Model`, `Design`, `Features`). Three headed columns: Library, Details, Activity.
 - **Library pane:** the User/Project switcher, project folder picker and action buttons (Sync all, Install, Add MCP, Reload, Updates) sit at the top of the skills pane. Search filters skills and MCP servers.
 - **Skill detail:** shows a file-tree explorer with a file preview, plus a presence table with column headings.

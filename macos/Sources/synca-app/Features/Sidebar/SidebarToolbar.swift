@@ -1,5 +1,4 @@
 import SwiftUI
-import AppKit
 import SyncaKit
 
 /// Scope switcher, project folder row and action buttons.
@@ -30,22 +29,41 @@ struct SidebarToolbar: View {
     }
 
     @ViewBuilder private var projectRow: some View {
-        if let dir = model.projectDir {
-            HStack(spacing: Theme.Space.sm) {
-                Image(systemName: Icon.folderFilled).foregroundStyle(.secondary).accessibilityHidden(true)
-                Text(dir).font(.callout).lineLimit(1).truncationMode(.head).help(dir)
-                    .accessibilityLabel("Project folder \(dir)")
-                Spacer(minLength: 0)
-                Button("Choose…", action: chooseProject)
-                    .controlSize(.small)
-                    .help("Choose a different project folder")
-            }
-        } else {
-            Button(action: chooseProject) {
-                Label("Choose project folder", systemImage: Icon.folder).frame(maxWidth: .infinity)
+        if model.projects.paths.isEmpty {
+            Button { ProjectPicker.addProjects(to: model) } label: {
+                Label("Add project folder", systemImage: Icon.folder).frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .help("Choose the project folder to inspect")
+            .help("Add a project folder to inspect")
+        } else {
+            HStack(spacing: Theme.Space.sm) {
+                Menu {
+                    ForEach(model.projects.paths, id: \.self) { path in
+                        Button {
+                            model.selectProject(path)
+                        } label: {
+                            if path == model.projects.active {
+                                Label(ProjectList.name(of: path), systemImage: Icon.check)
+                            } else {
+                                Text(ProjectList.name(of: path))
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Add project…") { ProjectPicker.addProjects(to: model) }
+                    Button("Manage projects…") { model.showProjects = true }
+                } label: {
+                    Label(model.projectDir.map { ProjectList.name(of: $0) } ?? "Select project",
+                          systemImage: Icon.folderFilled)
+                        .lineLimit(1)
+                }
+                .menuStyle(.borderlessButton)
+                .help(model.projectDir ?? "Select a project")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Button("Manage") { model.showProjects = true }
+                    .controlSize(.small)
+                    .help("Add, remove or switch project folders")
+            }
         }
     }
 
@@ -58,8 +76,8 @@ struct SidebarToolbar: View {
             .disabled(actionsDisabled || model.isBusy)
             .help("Preview a sync of all skills and MCP servers")
 
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: Theme.Space.sm),
-                                GridItem(.flexible())], spacing: Theme.Space.sm) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: Theme.Space.sm)],
+                      spacing: Theme.Space.sm) {
                 labeledButton("Install skill", Icon.install, disabled: actionsDisabled) { model.route = .installSkill }
                 labeledButton("Add MCP", Icon.add, disabled: actionsDisabled) { model.route = .addMcp }
                 Button { model.reload() } label: {
@@ -89,16 +107,8 @@ struct SidebarToolbar: View {
             .disabled(disabled)
             .help(help ?? title)
     }
+}
 
-    private func chooseProject() { Self.chooseProjectFolder(model) }
-
-    static func chooseProjectFolder(_ model: AppModel) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Choose"
-        panel.message = "Choose a project folder"
-        if panel.runModal() == .OK, let url = panel.url { model.setProject(url.path) }
-    }
+private extension Icon {
+    static let check = "checkmark"
 }

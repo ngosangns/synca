@@ -69,7 +69,10 @@ final class AppModel {
             reload()
         }
     }
-    private(set) var projectDir: String? = UserDefaults.standard.string(forKey: "synca.projectDir")
+    private(set) var projects: ProjectList
+    var projectDir: String? { projects.active }
+    /// Presents the project manager sheet.
+    var showProjects = false
 
     // MARK: Inventory
     private(set) var skills: [SkillEntry] = []
@@ -116,9 +119,13 @@ final class AppModel {
     private var loadTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
 
-    init(cli: SyncaCLI = .locate(), log: LogStore = .shared) {
+    private let defaults: UserDefaults
+
+    init(cli: SyncaCLI = .locate(), log: LogStore = .shared, defaults: UserDefaults = .standard) {
         self.cli = cli
         self.log = log
+        self.defaults = defaults
+        self.projects = Self.loadProjects(defaults)
     }
 
     // MARK: Lifecycle
@@ -134,28 +141,60 @@ final class AppModel {
 
     // MARK: Project
 
-    func setProject(_ path: String) {
-        projectDir = path
-        UserDefaults.standard.set(path, forKey: "synca.projectDir")
-        if scope == .project { skills = []; mcps = []; selection = nil; reload() }
+    /// Adds folders (the last becomes active).
+    func addProjects(_ paths: [String]) {
+        guard !paths.isEmpty else { return }
+        mutateProjects { list in paths.forEach { list.add($0) } }
+    }
+
+    func selectProject(_ path: String) { mutateProjects { $0.select(path) } }
+    func removeProject(_ path: String) { mutateProjects { $0.remove(path) } }
+
+    private func mutateProjects(_ change: (inout ProjectList) -> Void) {
+        let before = projects.active
+        change(&projects)
+        Self.saveProjects(projects, defaults)
+        if scope == .project, projects.active != before {
+            skills = []; mcps = []; selection = nil; route = .item; reload()
+        }
+    }
+
+    private static let projectsKey = "synca.projects"
+    private static let activeProjectKey = "synca.projectDir" // also the pre-manager single-project key
+
+    private static func loadProjects(_ d: UserDefaults) -> ProjectList {
+        return ProjectList(paths: d.stringArray(forKey: projectsKey) ?? [],
+                           active: d.string(forKey: activeProjectKey))
+    }
+
+    private static func saveProjects(_ list: ProjectList, _ d: UserDefaults) {
+        d.set(list.paths, forKey: projectsKey)
+        if let a = list.active { d.set(a, forKey: activeProjectKey) } else { d.removeObject(forKey: activeProjectKey) }
     }
 
     // MARK: Inventory
 
-    func reload() {
+    /// Starts a (re)load, cancelling any load in flight. The operation is
+    /// registered synchronously so the UI is busy the instant this returns.
+    /// The returned task finishes when the inventory is up to date.
+    @discardableResult
+    func reload() -> Task<Void, Never> {
         loadTask?.cancel()
-        loadTask = Task { await loadInventory() }
+        let op = begin("Loading \(scope.title.lowercased()) inventory")
+        let task = Task { await loadInventory(op: op) }
+        loadTask = task
+        return task
     }
 
-    private func loadInventory() async {
+    private func loadInventory(op: UUID) async {
         let s = scope, dir = projectDir
+        defer { end(op) }
         if s == .project, (dir ?? "").isEmpty {
-            skills = []; mcps = []; inventory = .needsProject; return
+            skills = []; mcps = []; inventory = .needsProject; isRefreshing = false; return
         }
         if skills.isEmpty && mcps.isEmpty { inventory = .loading }
         isRefreshing = true
-        let op = begin("Loading \(s.title.lowercased()) inventory")
-        defer { end(op); if !Task.isCancelled { isRefreshing = false } }
+        defer { if !Task.isCancelled { isRefreshing = false } }
         do {
             async let sk = cli.skills(s, projectDir: dir)
             async let mc = cli.mcps(s, projectDir: dir)
@@ -228,8 +267,9 @@ final class AppModel {
         let title = "sync \(target.rawValue)" + (key.map { " · \($0)" } ?? "")
         route = .working("Planning \(title)…")
         let (s, dir) = (scope, projectDir)
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin("Planning \(title)")
         Task {
-            let op = begin("Planning \(title)")
             defer { end(op) }
             do {
                 let r = try await runLogged(cli.syncPlanArgs(s, dir: dir, target: target, key: key), kind: "dry-run")
@@ -242,8 +282,9 @@ final class AppModel {
     func previewInstallSkill(source: String) {
         let (s, dir) = (scope, projectDir)
         route = .working("Previewing install…")
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin("Previewing install")
         Task {
-            let op = begin("Previewing install")
             defer { end(op) }
             do {
                 let r = try await runLogged(cli.installArgs(s, dir: dir, source: source, dryRun: true), kind: "dry-run")
@@ -257,8 +298,9 @@ final class AppModel {
     func previewAddMcp(_ payload: AddMcpPayload) {
         let (s, dir) = (scope, projectDir)
         route = .working("Previewing add…")
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin("Previewing add")
         Task {
-            let op = begin("Previewing add")
             defer { end(op) }
             do {
                 let r = try await runLogged(cli.addMcpArgs(s, dir: dir, payload: payload, dryRun: true), kind: "dry-run")
@@ -275,8 +317,9 @@ final class AppModel {
         let (s, dir) = (scope, projectDir)
         let previous = route
         route = .working("Applying \(plan.title)…")
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin("Applying \(plan.title)")
         Task {
-            let op = begin("Applying \(plan.title)")
             defer { end(op) }
             do {
                 var failures = 0
@@ -325,14 +368,21 @@ final class AppModel {
 
     private func removeSkill(_ key: String, purge: Bool) {
         let (s, dir) = (scope, projectDir)
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin(purge ? "Purging \(key)" : "Unlinking \(key)")
         Task {
-            let op = begin(purge ? "Purging \(key)" : "Unlinking \(key)")
             defer { end(op) }
             do {
                 let r = try await runLogged(cli.removeSkillArgs(s, dir: dir, key: key, purge: purge), kind: "ok")
-                notify(r.ok ? (purge ? "Purged “\(key)”" : "Unlinked “\(key)”") : "Remove failed — see Activity",
-                       r.ok ? .success : .error)
-                if r.ok, selection == .skill(key) { selection = nil }
+                // The CLI exits 0 with "nothing to remove" when it found no paths; never report that as success.
+                let removedNothing = r.ok && r.output.contains("nothing to remove")
+                if removedNothing {
+                    notify("Nothing was removed for “\(key)” — see Activity", .error)
+                } else {
+                    notify(r.ok ? (purge ? "Purged “\(key)”" : "Unlinked “\(key)”") : "Remove failed — see Activity",
+                           r.ok ? .success : .error)
+                }
+                if r.ok, !removedNothing, selection == .skill(key) { selection = nil }
                 reload()
             } catch is CancellationError {
             } catch { fail(error) }
@@ -341,13 +391,19 @@ final class AppModel {
 
     private func removeMcp(_ key: String) {
         let (s, dir) = (scope, projectDir)
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin("Removing \(key)")
         Task {
-            let op = begin("Removing \(key)")
             defer { end(op) }
             do {
                 let r = try await runLogged(cli.removeMcpArgs(s, dir: dir, key: key), kind: "ok")
-                notify(r.ok ? "Removed “\(key)”" : "Remove failed — see Activity", r.ok ? .success : .error)
-                if r.ok, selection == .mcp(key) { selection = nil }
+                let removedNothing = r.ok && r.output.contains("nothing to remove")
+                if removedNothing {
+                    notify("Nothing was removed for “\(key)” — see Activity", .error)
+                } else {
+                    notify(r.ok ? "Removed “\(key)”" : "Remove failed — see Activity", r.ok ? .success : .error)
+                }
+                if r.ok, !removedNothing, selection == .mcp(key) { selection = nil }
                 reload()
             } catch is CancellationError {
             } catch { fail(error) }
@@ -358,8 +414,9 @@ final class AppModel {
 
     func checkUpdate() {
         route = .update(.checking)
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin("Checking for updates")
         Task {
-            let op = begin("Checking for updates")
             defer { end(op) }
             do {
                 let r = try await runLogged(["update", "--check", "--json"], kind: "ok", timeout: .seconds(60))
@@ -374,8 +431,9 @@ final class AppModel {
 
     func installUpdate() {
         route = .update(.installing)
+        // Register synchronously so the UI is busy (buttons disabled) before the task starts.
+        let op = begin("Installing update")
         Task {
-            let op = begin("Installing update")
             defer { end(op) }
             do {
                 let r = try await runLogged(["update", "--json"], kind: "ok", timeout: .seconds(300))

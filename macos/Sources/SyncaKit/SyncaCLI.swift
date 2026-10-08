@@ -52,10 +52,18 @@ private final class ProcessBox: @unchecked Sendable {
 public struct SyncaCLI: Sendable {
     public let executable: URL
     public let baseArgs: [String]
+    /// Extra variables for the child process (e.g. `HOME` to sandbox it).
+    public let environment: [String: String]
 
-    public init(executable: URL, baseArgs: [String] = []) {
+    public init(executable: URL, baseArgs: [String] = [], environment: [String: String] = [:]) {
         self.executable = executable
         self.baseArgs = baseArgs
+        self.environment = environment
+    }
+
+    /// Same CLI, with `extra` merged into the child environment.
+    public func with(environment extra: [String: String]) -> SyncaCLI {
+        SyncaCLI(executable: executable, baseArgs: baseArgs, environment: environment.merging(extra) { $1 })
     }
 
     /// `SYNCA_BIN` → `~/.local/bin/synca` → `synca` on PATH via /usr/bin/env.
@@ -96,7 +104,7 @@ public struct SyncaCLI: Sendable {
         let p = box.process
         p.executableURL = executable
         p.arguments = baseArgs + args
-        p.environment = Self.childEnvironment
+        p.environment = Self.childEnvironment.merging(environment) { $1 }
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err

@@ -14,6 +14,12 @@ let package = Package(
             dependencies: ["SyncaKit"],
             path: "Sources/synca-app"
         ),
+        // Drives AppModel end to end against the real CLI in a sandboxed HOME.
+        .testTarget(
+            name: "SyncaAppTests",
+            dependencies: ["synca-app", "SyncaKit"],
+            path: "Tests/SyncaAppTests"
+        ),
         .testTarget(
             name: "SyncaKitTests",
             dependencies: ["SyncaKit"],

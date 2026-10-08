@@ -1,10 +1,19 @@
 import SwiftUI
 import SyncaKit
 
-/// File explorer for a skill directory: outline on top, preview below.
+/// How the explorer arranges the outline and the preview.
+enum ExplorerLayout: Sendable {
+    /// Outline on the left, preview on the right.
+    case sideBySide
+    /// Outline on top, preview below.
+    case stacked
+}
+
+/// File explorer for a skill directory: outline + preview in the given layout.
 struct SkillFileTree: View {
     let skillID: String
     let path: String?
+    var layout: ExplorerLayout = .sideBySide
 
     private enum Phase {
         case loading
@@ -25,14 +34,21 @@ struct SkillFileTree: View {
                 StateView(systemImage: Icon.folder, title: "No files",
                           message: path.map { "\($0) is missing or empty." } ?? "This skill has no path on disk.")
             case .ready(let nodes, let files):
-                VSplitView {
-                    List(nodes, children: \.children, selection: $selection) { node in
-                        row(node)
+                switch layout {
+                case .sideBySide:
+                    HSplitView {
+                        tree(nodes)
+                            .frame(minWidth: 160, idealWidth: 220)
+                        preview(files)
+                            .frame(minWidth: 200, maxWidth: .infinity)
                     }
-                    .listStyle(.inset)
-                    .frame(minHeight: 100)
-                    FilePreview(node: selection.flatMap { files[$0] })
-                        .frame(minHeight: 100)
+                case .stacked:
+                    VSplitView {
+                        tree(nodes)
+                            .frame(minHeight: 100)
+                        preview(files)
+                            .frame(minHeight: 100)
+                    }
                 }
             }
         }
@@ -40,6 +56,17 @@ struct SkillFileTree: View {
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm).strokeBorder(.separator))
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
         .task(id: skillID + "|" + (path ?? "")) { await load() }
+    }
+
+    private func tree(_ nodes: [TreeItem]) -> some View {
+        List(nodes, children: \.children, selection: $selection) { node in
+            row(node)
+        }
+        .listStyle(.inset)
+    }
+
+    private func preview(_ files: [String: FileNode]) -> some View {
+        FilePreview(node: selection.flatMap { files[$0] })
     }
 
     private func load() async {

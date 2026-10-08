@@ -19,13 +19,22 @@ struct FilePreview: View {
         Group {
             if let node {
                 VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Text(node.name).font(.caption.weight(.semibold)).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        Button { Finder.copy(node.url.path) } label: { Label("Copy path", systemImage: Icon.copy) }
-                            .buttonStyle(.borderless).help("Copy path to clipboard")
-                        RevealButton(path: node.url.path)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: Theme.Space.sm) {
+                            fileName(node)
+                            Spacer(minLength: Theme.Space.sm)
+                            copyButton(node)
+                            RevealButton(path: node.url.path)
+                        }
+                        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                            fileName(node)
+                            HStack(spacing: Theme.Space.sm) {
+                                copyButton(node)
+                                RevealButton(path: node.url.path)
+                            }
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Theme.Space.sm).padding(.vertical, Theme.Space.xs)
                     Divider()
                     body(for: node)
@@ -50,6 +59,7 @@ struct FilePreview: View {
                 if truncated {
                     Label("Too large (showing first 64 KB)", systemImage: Icon.info)
                         .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, Theme.Space.sm).padding(.vertical, Theme.Space.xs)
                 }
                 ScrollView([.vertical, .horizontal]) {
@@ -60,6 +70,15 @@ struct FilePreview: View {
                 }
             }
         }
+    }
+
+    private func fileName(_ node: FileNode) -> some View {
+        Text(node.name).font(.caption.weight(.semibold)).lineLimit(1).truncationMode(.middle)
+    }
+
+    private func copyButton(_ node: FileNode) -> some View {
+        Button { Finder.copy(node.url.path) } label: { Label("Copy path", systemImage: Icon.copy) }
+            .buttonStyle(.borderless).help("Copy path to clipboard")
     }
 
     private func note(_ text: String, system: String) -> some View {

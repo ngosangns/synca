@@ -29,6 +29,7 @@ struct RootView: View {
             }
         }
         .animation(.snappy(duration: 0.25), value: model.toast)
+        .sheet(isPresented: $model.showProjects) { ProjectManagerSheet() }
         .confirmationDialog(
             model.confirmation?.title ?? "",
             isPresented: Binding(get: { model.confirmation != nil }, set: { if !$0 { model.confirmation = nil } }),

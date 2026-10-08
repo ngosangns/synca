@@ -5,7 +5,11 @@ struct McpDetailView: View {
     @Environment(AppModel.self) private var model
     let mcp: McpEntry
 
+    /// Width of the scrolling content (padding excluded).
+    @State private var contentSize: CGSize = .zero
+
     private var cfg: McpNormalized? { mcp.presence.first?.normalized }
+    private var isCompact: Bool { contentSize.width > 0 && contentSize.width < DetailBreakpoint.compactTable }
 
     var body: some View {
         ScrollView {
@@ -20,40 +24,39 @@ struct McpDetailView: View {
                     presenceTable
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .measureSize(into: $contentSize)
             .padding(Theme.Space.lg)
         }
     }
 
+    private var hasTags: Bool { cfg?.transport != nil || mcp.mismatch || cfg?.enabled != nil }
+
     private var hero: some View {
         Card {
             VStack(alignment: .leading, spacing: Theme.Space.md) {
-                HStack(alignment: .top, spacing: Theme.Space.md) {
-                    HeroBadge(systemImage: Icon.mcp)
-                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                        Text(mcp.key).font(.title3.weight(.semibold)).textSelection(.enabled)
-                        HStack(spacing: Theme.Space.xs) {
-                            if let t = cfg?.transport { Tag(text: t, tint: .blue) }
-                            if mcp.mismatch { Tag(text: "mismatch", tint: .orange, systemImage: Icon.warning) }
-                            if let e = cfg?.enabled {
-                                Tag(text: e ? "enabled" : "disabled", tint: e ? .green : .secondary)
-                            }
-                        }
+                HeroHeader(systemImage: Icon.mcp, title: mcp.key, showTags: hasTags) {
+                    if let t = cfg?.transport { Tag(text: t, tint: .blue) }
+                    if mcp.mismatch { Tag(text: "mismatch", tint: .orange, systemImage: Icon.warning) }
+                    if let e = cfg?.enabled {
+                        Tag(text: e ? "enabled" : "disabled", tint: e ? .green : .secondary)
                     }
-                    Spacer(minLength: 0)
                 }
                 if mcp.mismatch {
                     Label("Agent configs differ — sync to unify them", systemImage: Icon.warning)
                         .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                HStack(spacing: Theme.Space.sm) {
+                ActionBar(isBusy: model.isBusy) {
                     Button { model.planSync(target: .mcp, key: mcp.key) } label: {
                         Label("Sync this", systemImage: Icon.sync)
                     }
                     .buttonStyle(.borderedProminent)
+                    .help("Plan a sync of this MCP server across agents")
                     Button(role: .destructive) { model.confirmRemoveMcp(mcp.key) } label: {
                         Label("Remove", systemImage: Icon.remove)
                     }
-                    if model.isBusy { ProgressView().controlSize(.small) }
+                    .help("Remove this MCP server from all agents")
                 }
                 .disabled(model.isBusy)
             }
@@ -76,12 +79,16 @@ struct McpDetailView: View {
             if rows.isEmpty {
                 Text("No configuration details available.").font(.callout).foregroundStyle(.secondary)
             } else {
+                // Label column sizes to its widest label; value column takes the rest and wraps.
                 Grid(alignment: .topLeading, horizontalSpacing: Theme.Space.lg, verticalSpacing: Theme.Space.sm) {
                     ForEach(rows, id: \.0) { k, v in
                         GridRow {
                             Text(k).font(.callout).foregroundStyle(.secondary)
+                                .lineLimit(1).fixedSize()
+                                .gridColumnAlignment(.leading)
                             Text(v).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
@@ -89,22 +96,44 @@ struct McpDetailView: View {
         }
     }
 
-    private var presenceTable: some View {
-        Table(mcp.presence) {
-            TableColumn("Agent") { p in Text(p.agent).fontWeight(.semibold) }
-                .width(min: 70, ideal: 100)
-            TableColumn("Path") { p in
-                Text(p.path).font(.system(.caption, design: .monospaced))
-                    .lineLimit(1).truncationMode(.middle).help(p.path).textSelection(.enabled)
+    @ViewBuilder private var presenceTable: some View {
+        Group {
+            if isCompact {
+                Table(mcp.presence) {
+                    TableColumn("Agent") { p in Text(p.agent).fontWeight(.semibold) }
+                        .width(min: 60, ideal: 80, max: 140)
+                    pathColumn
+                    actionsColumn
+                }
+            } else {
+                Table(mcp.presence) {
+                    TableColumn("Agent") { p in Text(p.agent).fontWeight(.semibold) }
+                        .width(min: 70, ideal: 100, max: 180)
+                    pathColumn
+                    TableColumn("Fingerprint") { p in
+                        Text(shortHash(p.fingerprint)).font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    .width(min: 80, ideal: 100, max: 140)
+                    actionsColumn
+                }
             }
-            TableColumn("Fingerprint") { p in
-                Text(shortHash(p.fingerprint)).font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 80, ideal: 100)
-            TableColumn("Actions") { p in RevealButton(path: p.path) }.width(80)
         }
         .frame(height: tableHeight(rows: mcp.presence.count))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm).strokeBorder(.separator))
+    }
+
+    /// Unbounded: takes whatever width the other columns leave.
+    private var pathColumn: some TableColumnContent<McpPresence, Never> {
+        TableColumn("Path") { (p: McpPresence) in
+            Text(p.path).font(.system(.caption, design: .monospaced))
+                .lineLimit(1).truncationMode(.middle).help(p.path).textSelection(.enabled)
+        }
+        .width(min: 100, ideal: 240)
+    }
+
+    private var actionsColumn: some TableColumnContent<McpPresence, Never> {
+        TableColumn("Actions") { (p: McpPresence) in RevealButton(path: p.path) }
+            .width(min: 80, ideal: 90, max: 110)
     }
 }

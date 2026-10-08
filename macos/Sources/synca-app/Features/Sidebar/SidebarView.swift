@@ -43,7 +43,7 @@ struct SidebarView: View {
         .padding(.horizontal, Theme.Space.sm).padding(.vertical, 6)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.sm).strokeBorder(.separator))
-        .padding(.horizontal, Theme.Space.md).padding(.bottom, Theme.Space.sm)
+        .padding(.horizontal, Theme.Space.md).padding(.top, Theme.Space.md).padding(.bottom, Theme.Space.sm)
     }
 
     @ViewBuilder private var content: some View {
@@ -55,11 +55,17 @@ struct SidebarView: View {
         case .needsProject:
             StateView(systemImage: Icon.project, title: "Choose a project folder",
                       message: "Project scope needs a folder to read skills and MCP servers from.") {
-                Button { SidebarToolbar.chooseProjectFolder(model) } label: {
+                Button { ProjectPicker.addProjects(to: model) } label: {
                     Label("Choose project folder", systemImage: Icon.folder)
                 }
                 .buttonStyle(.borderedProminent)
                 .help("Choose the project folder to inspect")
+                if !model.projects.paths.isEmpty {
+                    Button { model.showProjects = true } label: {
+                        Label("Manage projects", systemImage: Icon.project)
+                    }
+                    .help("Open the project manager")
+                }
             }
         case .failed(let message):
             StateView(systemImage: Icon.error, title: "Couldn’t load inventory", message: message, tint: .red) {
@@ -87,6 +93,7 @@ struct SidebarView: View {
         return List(selection: $model.selection) {
             if !model.filteredSkills.isEmpty {
                 Section {
+                    ColumnHeaderRow(name: "Name")
                     ForEach(model.filteredSkills) { skill in
                         SkillRow(skill: skill)
                             .tag(Selection.skill(skill.key))
@@ -96,6 +103,7 @@ struct SidebarView: View {
             }
             if !model.filteredMcps.isEmpty {
                 Section {
+                    ColumnHeaderRow(name: "Server", showsTransport: true)
                     ForEach(model.filteredMcps) { mcp in
                         McpRow(mcp: mcp)
                             .tag(Selection.mcp(mcp.key))
