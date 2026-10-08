@@ -19,10 +19,16 @@ final class DetailViewController: NSViewController {
     weak var actions: DetailActions?
 
     private let scroll = NSScrollView()
-    private let stack = NSStackView()
+    /// Flipped so arranged subviews lay out top-to-bottom and the scroll
+    /// view's initial position is the top of the document.
+    private final class FlippedStack: NSStackView {
+        override var isFlipped: Bool { true }
+    }
+
+    private let stack = FlippedStack()
+    private let centerHost = NSView()
     private var currentPlan: Plan?
     private var conflicts: [PlanConflict] = []
-    private var conflictRows: [(conflict: PlanConflict, popup: NSPopUpButton)] = []
 
     // form state
     private let installField = NSTextField()
@@ -34,37 +40,64 @@ final class DetailViewController: NSViewController {
 
     override func loadView() {
         view = NSView()
+
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
+        scroll.automaticallyAdjustsContentInsets = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 24, right: 20)
+        stack.spacing = Theme.gap
+        stack.edgeInsets = NSEdgeInsets(top: Theme.pad, left: Theme.pad,
+                                       bottom: Theme.pad, right: Theme.pad)
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = stack
+
+        centerHost.isHidden = true
+        centerHost.translatesAutoresizingMaskIntoConstraints = false
+
         view.addSubview(scroll)
+        view.addSubview(centerHost)
         NSLayoutConstraint.activate([
             scroll.topAnchor.constraint(equalTo: view.topAnchor),
             scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             stack.widthAnchor.constraint(equalTo: scroll.widthAnchor),
+            // Keep the document at least as tall as the clip so content
+            // stays top-anchored instead of bottom-aligning.
+            stack.heightAnchor.constraint(greaterThanOrEqualTo: scroll.heightAnchor),
+            centerHost.topAnchor.constraint(equalTo: view.topAnchor),
+            centerHost.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            centerHost.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            centerHost.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
         showEmpty()
     }
 
     private func reset() {
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        centerHost.subviews.forEach { $0.removeFromSuperview() }
+        centerHost.isHidden = true
+        scroll.isHidden = false
         currentPlan = nil
-        conflictRows = []
     }
 
-    private func fadeIn() {
-        stack.alphaValue = 0
+    /// Appends a stretchy spacer so the stack fills the scroll view when
+    /// content is short, keeping real content top-anchored.
+    private func endStack() {
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .vertical)
+        stack.addArrangedSubview(spacer)
+        fadeIn(stack)
+    }
+
+    private func fadeIn(_ v: NSView) {
+        v.alphaValue = 0
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.18
-            stack.animator().alphaValue = 1
+            ctx.duration = 0.2
+            ctx.allowsImplicitAnimation = true
+            v.animator().alphaValue = 1
         }
     }
 
@@ -72,17 +105,36 @@ final class DetailViewController: NSViewController {
 
     func showEmpty() {
         reset()
+        scroll.isHidden = true
+        centerHost.isHidden = false
+
+        let icon = Theme.icon("square.grid.2x2", size: 44, color: .quaternaryLabelColor)
         let label = NSTextField(labelWithString: "Select a skill or MCP server")
         label.font = .systemFont(ofSize: 15, weight: .medium)
         label.textColor = .secondaryLabelColor
         let hint = NSTextField(wrappingLabelWithString:
-            "j/k to move · 1/2 switch scope · s sync all · r reload · u update · ? help")
-        hint.font = .systemFont(ofSize: 12)
+            "j/k to move · 1/2 switch scope · s sync all\nr reload · u update · ? help")
+        hint.font = Theme.captionFont
         hint.textColor = .tertiaryLabelColor
-        stack.addArrangedSubview(NSView())
-        stack.addArrangedSubview(label)
-        stack.addArrangedSubview(hint)
-        fadeIn()
+        hint.alignment = .center
+
+        let col = NSStackView(views: [icon, label, hint])
+        col.orientation = .vertical
+        col.alignment = .centerX
+        col.spacing = 10
+        col.translatesAutoresizingMaskIntoConstraints = false
+        centerHost.addSubview(col)
+        // Required center constraints would make this column's intrinsic
+        // height the window's fitting size — keep them non-required.
+        let cx = col.centerXAnchor.constraint(equalTo: centerHost.centerXAnchor)
+        let cy = col.centerYAnchor.constraint(equalTo: centerHost.centerYAnchor)
+        cx.priority = .defaultLow
+        cy.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            cx, cy,
+            col.widthAnchor.constraint(lessThanOrEqualTo: centerHost.widthAnchor, constant: -40),
+        ])
+        fadeIn(centerHost)
     }
 
     func show(selection: Selection) {
@@ -91,7 +143,7 @@ final class DetailViewController: NSViewController {
         case .skill(let s): buildSkillDetail(s)
         case .mcp(let m): buildMcpDetail(m)
         }
-        fadeIn()
+        endStack()
     }
 
     // MARK: - Skill detail
@@ -99,39 +151,37 @@ final class DetailViewController: NSViewController {
     private func buildSkillDetail(_ s: SkillEntry) {
         stack.addArrangedSubview(header(s.display_name ?? s.key, warning: s.mismatch))
         if s.mismatch {
-            stack.addArrangedSubview(caption("Agent copies differ — sync to unify them.", color: .systemOrange))
+            stack.addArrangedSubview(Theme.caption("Agent copies differ — sync to unify them.",
+                                                 color: .systemOrange))
         }
         if let desc = s.description, !desc.isEmpty {
-            stack.addArrangedSubview(body(desc))
+            stack.addArrangedSubview(Theme.body(desc))
         }
-        stack.addArrangedSubview(caption("Present on \(s.presence.count) agent\(s.presence.count == 1 ? "" : "s")"))
-        stack.addArrangedSubview(sep())
+        stack.addArrangedSubview(Theme.caption("Present on \(s.presence.count) agent\(s.presence.count == 1 ? "" : "s")"))
 
         let rows = s.presence.map {
             ["agent": $0.agent, "path": $0.path,
              "target": $0.symlink_target ?? ($0.is_symlink ? "(symlink)" : "—"),
              "hash": String(($0.content_hash ?? "—").prefix(10))]
         }
-        stack.addArrangedSubview(table(columns: ["agent", "path", "target", "hash"], rows: rows, height: min(180, CGFloat(rows.count) * 24 + 6)))
+        stack.addArrangedSubview(cardTable(columns: ["agent", "path", "target", "hash"],
+                                           rows: rows))
 
-        stack.addArrangedSubview(sep())
         let buttons = NSStackView()
-        buttons.orientation = .horizontal
         buttons.spacing = 8
-        let sync = pushButton("Sync this", "arrow.triangle.2.circlepath")
+        let sync = Theme.button("Sync this", symbol: "arrow.triangle.2.circlepath", style: .primary)
         sync.target = self; sync.action = #selector(syncThisSkill)
-        sync.tag = 0
         sync.identifier = NSUserInterfaceItemIdentifier(s.key)
-        let unlink = pushButton("Unlink", "link.badge.minus")
+        let unlink = Theme.button("Unlink", symbol: "link.circle")
         unlink.target = self; unlink.action = #selector(unlinkSkill)
         unlink.identifier = NSUserInterfaceItemIdentifier(s.key)
-        let purge = pushButton("Purge", "trash")
+        let purge = Theme.button("Purge", symbol: "trash", style: .destructive)
         purge.target = self; purge.action = #selector(purgeSkill)
         purge.identifier = NSUserInterfaceItemIdentifier(s.key)
-        purge.contentTintColor = .systemRed
         buttons.addArrangedSubview(sync)
         buttons.addArrangedSubview(unlink)
         buttons.addArrangedSubview(purge)
+        buttons.addArrangedSubview(NSView())
         stack.addArrangedSubview(buttons)
     }
 
@@ -140,12 +190,11 @@ final class DetailViewController: NSViewController {
     private func buildMcpDetail(_ m: McpEntry) {
         stack.addArrangedSubview(header(m.key, warning: m.mismatch))
         if m.mismatch {
-            stack.addArrangedSubview(caption("Agent configurations differ — sync to unify them.", color: .systemOrange))
+            stack.addArrangedSubview(Theme.caption("Agent configurations differ — sync to unify them.",
+                                                 color: .systemOrange))
         }
         let first = m.presence.first?.normalized
-        var facts: [(String, String)] = [
-            ("agents", "\(m.presence.count)"),
-        ]
+        var facts: [(String, String)] = [("agents", "\(m.presence.count)")]
         if let n = first {
             facts.append(("transport", n.transport ?? "—"))
             if let cmd = n.command { facts.append(("command", cmd.joined(separator: " "))) }
@@ -155,32 +204,31 @@ final class DetailViewController: NSViewController {
             if let env = n.env_keys, !env.isEmpty { facts.append(("env keys", env.joined(separator: ", "))) }
         }
         let grid = NSGridView(views: facts.map { (k, v) in
-            [caption(k), body(v)]
+            [Theme.caption(k), Theme.body(v)]
         })
         grid.column(at: 0).xPlacement = .trailing
         grid.columnSpacing = 10
-        grid.rowSpacing = 4
+        grid.rowSpacing = 5
         stack.addArrangedSubview(grid)
-        stack.addArrangedSubview(sep())
 
         let rows = m.presence.map {
             ["agent": $0.agent, "path": $0.path,
              "fingerprint": String(($0.fingerprint ?? "—").prefix(12))]
         }
-        stack.addArrangedSubview(table(columns: ["agent", "path", "fingerprint"], rows: rows, height: min(160, CGFloat(rows.count) * 24 + 6)))
+        stack.addArrangedSubview(cardTable(columns: ["agent", "path", "fingerprint"],
+                                           rows: rows))
 
-        stack.addArrangedSubview(sep())
         let buttons = NSStackView()
         buttons.spacing = 8
-        let sync = pushButton("Sync this", "arrow.triangle.2.circlepath")
+        let sync = Theme.button("Sync this", symbol: "arrow.triangle.2.circlepath", style: .primary)
         sync.target = self; sync.action = #selector(syncThisMcp)
         sync.identifier = NSUserInterfaceItemIdentifier(m.key)
-        let remove = pushButton("Remove", "trash")
+        let remove = Theme.button("Remove", symbol: "trash", style: .destructive)
         remove.target = self; remove.action = #selector(removeMcp)
         remove.identifier = NSUserInterfaceItemIdentifier(m.key)
-        remove.contentTintColor = .systemRed
         buttons.addArrangedSubview(sync)
         buttons.addArrangedSubview(remove)
+        buttons.addArrangedSubview(NSView())
         stack.addArrangedSubview(buttons)
     }
 
@@ -188,89 +236,93 @@ final class DetailViewController: NSViewController {
 
     func showInstallSkill() {
         reset()
-        stack.addArrangedSubview(header("Install skill"))
-        stack.addArrangedSubview(caption("From a directory path or a Git URL — previewed as a dry run first."))
+        stack.addArrangedSubview(Theme.title("Install skill"))
+        stack.addArrangedSubview(Theme.caption("From a directory path or a Git URL — previewed as a dry run first."))
         installField.placeholderString = "~/path/to/skill  or  https://github.com/org/repo"
-        installField.frame = NSRect(x: 0, y: 0, width: 420, height: 24)
-        installField.widthAnchor.constraint(equalToConstant: 420).isActive = true
-        stack.addArrangedSubview(installField)
-        let b = pushButton("Preview install", "play")
+        installField.widthAnchor.constraint(equalToConstant: 380).isActive = true
+        let form = Theme.card(installField)
+        form.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        stack.addArrangedSubview(form)
+        let b = Theme.button("Preview install", symbol: "play", style: .primary)
         b.target = self; b.action = #selector(previewInstall)
         stack.addArrangedSubview(b)
-        fadeIn()
+        endStack()
     }
 
     func showAddMcp() {
         reset()
-        stack.addArrangedSubview(header("Add MCP server"))
+        stack.addArrangedSubview(Theme.title("Add MCP server"))
         mcpName.placeholderString = "server name"
-        mcpName.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        mcpName.widthAnchor.constraint(equalToConstant: 240).isActive = true
         mcpTransport.removeAllItems()
         mcpTransport.addItems(withTitles: ["stdio", "local", "http", "sse"])
         mcpCommand.placeholderString = "command (e.g. npx -y pkg)"
-        mcpCommand.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        mcpCommand.widthAnchor.constraint(equalToConstant: 340).isActive = true
         mcpUrl.placeholderString = "url (for http/sse)"
-        mcpUrl.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        mcpUrl.widthAnchor.constraint(equalToConstant: 340).isActive = true
         mcpEnabled.state = .on
         let grid = NSGridView(views: [
-            [caption("name"), mcpName],
-            [caption("transport"), mcpTransport],
-            [caption("command"), mcpCommand],
-            [caption("url"), mcpUrl],
+            [Theme.caption("name"), mcpName],
+            [Theme.caption("transport"), mcpTransport],
+            [Theme.caption("command"), mcpCommand],
+            [Theme.caption("url"), mcpUrl],
             [NSView(), mcpEnabled],
         ])
         grid.column(at: 0).xPlacement = .trailing
         grid.columnSpacing = 10
         grid.rowSpacing = 8
-        stack.addArrangedSubview(grid)
-        let b = pushButton("Preview add", "play")
+        let form = Theme.card(grid)
+        stack.addArrangedSubview(form)
+        let b = Theme.button("Preview add", symbol: "play", style: .primary)
         b.target = self; b.action = #selector(previewMcp)
         stack.addArrangedSubview(b)
-        fadeIn()
+        endStack()
     }
 
     // MARK: - Update
 
     func showUpdate() {
         reset()
-        stack.addArrangedSubview(header("Update synca"))
-        stack.addArrangedSubview(caption("Check the latest release and install it."))
-        let b = pushButton("Check for updates", "arrow.down.circle")
-        b.target = self; b.action = #selector(updateCheck)
-        stack.addArrangedSubview(b)
-        fadeIn()
+        stack.addArrangedSubview(Theme.title("Update synca"))
+        stack.addArrangedSubview(Theme.caption("Check the latest release and install it."))
+        endStack()
         actions?.runUpdateCheck()
     }
 
     func show(updateResult info: UpdateInfo) {
         reset()
-        stack.addArrangedSubview(header("Update synca"))
+        stack.addArrangedSubview(Theme.title("Update synca"))
         let grid = NSGridView(views: [
-            [caption("current"), body(info.current ?? "unknown")],
-            [caption("latest"), body(info.latest ?? "unknown")],
+            [Theme.caption("current"), Theme.body(info.current ?? "unknown")],
+            [Theme.caption("latest"), Theme.body(info.latest ?? "unknown")],
         ])
         grid.column(at: 0).xPlacement = .trailing
         grid.columnSpacing = 10
-        grid.rowSpacing = 4
-        stack.addArrangedSubview(grid)
+        grid.rowSpacing = 5
+        stack.addArrangedSubview(Theme.card(grid))
         if info.update_available == true {
-            stack.addArrangedSubview(caption("An update is available.", color: .systemGreen))
-            let b = pushButton("Install update", "arrow.down.circle.fill")
+            stack.addArrangedSubview(Theme.caption("An update is available.", color: .systemGreen))
+            let b = Theme.button("Install update", symbol: "arrow.down.circle.fill", style: .primary)
             b.target = self; b.action = #selector(updateInstall)
             stack.addArrangedSubview(b)
         } else if info.ok == true {
-            stack.addArrangedSubview(caption("You're on the latest version.", color: .secondaryLabelColor))
+            let row = NSStackView()
+            row.spacing = 8
+            row.addArrangedSubview(Theme.icon("checkmark.circle.fill", size: 14, color: .systemGreen))
+            row.addArrangedSubview(Theme.caption("You're on the latest version."))
+            stack.addArrangedSubview(row)
         } else {
-            stack.addArrangedSubview(body(info.message ?? "Update check failed — see log."))
+            stack.addArrangedSubview(Theme.body(info.message ?? "Update check failed — see log."))
         }
         if let url = info.url, let link = URL(string: url) {
-            let b = NSButton(title: "Open release page", target: self, action: #selector(openLink(_:)))
+            let b = Theme.button("Open release page")
             b.isBordered = false
-            b.contentTintColor = .systemBlue
+            b.contentTintColor = .controlAccentColor
+            b.target = self; b.action = #selector(openLink(_:))
             b.identifier = NSUserInterfaceItemIdentifier(link.absoluteString)
             stack.addArrangedSubview(b)
         }
-        fadeIn()
+        endStack()
     }
 
     // MARK: - Plan (dry run + conflicts)
@@ -285,61 +337,61 @@ final class DetailViewController: NSViewController {
             let chips = NSStackView()
             chips.spacing = 6
             for (kind, count) in plan.summary {
-                let chip = NSTextField(labelWithString: "\(kind) ×\(count)")
-                chip.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-                chip.textColor = .secondaryLabelColor
-                chip.wantsLayer = true
-                chip.layer?.cornerRadius = 4
-                chip.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-                chips.addArrangedSubview(chip)
+                chips.addArrangedSubview(Theme.pill("\(kind) ×\(count)"))
             }
+            chips.addArrangedSubview(NSView())
             stack.addArrangedSubview(chips)
         }
 
         if !plan.output.isEmpty {
-            stack.addArrangedSubview(outputView(plan.output, maxHeight: 200))
+            stack.addArrangedSubview(consoleView(plan.output, maxHeight: 200))
         }
 
         if !conflicts.isEmpty {
-            stack.addArrangedSubview(sep())
-            stack.addArrangedSubview(caption("Conflicts — choose how each resolves:", color: .systemOrange))
+            stack.addArrangedSubview(Theme.caption("Conflicts — choose how each resolves:",
+                                                 color: .systemOrange))
+            let col = NSStackView()
+            col.orientation = .vertical
+            col.spacing = 8
             for (i, c) in conflicts.enumerated() {
                 let row = NSStackView()
                 row.spacing = 8
-                let icon = NSImageView(image: NSImage(systemSymbolName:
-                    c.kind == .skill ? "shippingbox" : "terminal", accessibilityDescription: nil)!)
-                icon.contentTintColor = .secondaryLabelColor
+                row.alignment = .centerY
+                row.addArrangedSubview(Theme.icon(c.kind == .skill ? "shippingbox" : "terminal",
+                                                  size: 13))
                 let label = NSTextField(labelWithString: c.key)
                 label.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+                row.addArrangedSubview(label)
+                row.addArrangedSubview(NSView())
                 let popup = NSPopUpButton()
                 popup.addItems(withTitles: ["skip", "keep source", "keep target"])
+                popup.font = Theme.captionFont
                 popup.tag = i
                 popup.target = self
                 popup.action = #selector(conflictChanged(_:))
-                row.addArrangedSubview(icon)
-                row.addArrangedSubview(label)
-                row.addArrangedSubview(NSView())
                 row.addArrangedSubview(popup)
-                stack.addArrangedSubview(row)
-                conflictRows.append((c, popup))
+                col.addArrangedSubview(row)
             }
+            stack.addArrangedSubview(Theme.card(col))
         }
 
-        stack.addArrangedSubview(sep())
         let buttons = NSStackView()
         buttons.spacing = 8
         if plan.ok {
-            let apply = pushButton(plan.apply.map { applyTitle($0) } ?? "Apply", "checkmark.circle")
+            let apply = Theme.button(plan.apply.map(applyTitle) ?? "Apply",
+                                     symbol: "checkmark.circle", style: .primary)
             apply.target = self; apply.action = #selector(applyPlan)
             buttons.addArrangedSubview(apply)
         } else {
-            stack.addArrangedSubview(caption("Command failed — see log for details.", color: .systemRed))
+            stack.addArrangedSubview(Theme.caption("Command failed — see log for details.",
+                                                 color: .systemRed))
         }
-        let cancel = pushButton("Dismiss", "xmark")
+        let cancel = Theme.button("Dismiss", symbol: "xmark")
         cancel.target = self; cancel.action = #selector(dismissPlan)
         buttons.addArrangedSubview(cancel)
+        buttons.addArrangedSubview(NSView())
         stack.addArrangedSubview(buttons)
-        fadeIn()
+        endStack()
     }
 
     private func applyTitle(_ apply: Plan.Apply) -> String {
@@ -418,84 +470,64 @@ final class DetailViewController: NSViewController {
     private func header(_ text: String, warning: Bool = false) -> NSView {
         let row = NSStackView()
         row.spacing = 8
-        let t = NSTextField(labelWithString: text)
-        t.font = .systemFont(ofSize: 18, weight: .semibold)
-        row.addArrangedSubview(t)
+        row.alignment = .centerY
+        row.addArrangedSubview(Theme.title(text))
         if warning {
-            let w = NSImageView(image: NSImage(systemSymbolName: "exclamationmark.triangle.fill",
-                                               accessibilityDescription: "mismatch")!)
-            w.contentTintColor = .systemOrange
-            row.addArrangedSubview(w)
+            row.addArrangedSubview(Theme.icon("exclamationmark.triangle.fill",
+                                              size: 14, color: .systemOrange))
         }
+        row.addArrangedSubview(NSView())
         return row
     }
 
-    private func body(_ text: String) -> NSTextField {
-        let f = NSTextField(wrappingLabelWithString: text)
-        f.font = .systemFont(ofSize: 13)
-        return f
-    }
-
-    private func caption(_ text: String, color: NSColor = .secondaryLabelColor) -> NSTextField {
-        let f = NSTextField(labelWithString: text)
-        f.font = .systemFont(ofSize: 12)
-        f.textColor = color
-        return f
-    }
-
-    private func sep() -> NSBox {
-        let b = NSBox()
-        b.boxType = .separator
-        return b
-    }
-
-    private func pushButton(_ title: String, _ symbol: String) -> NSButton {
-        let b = NSButton(title: title,
-                         image: NSImage(systemSymbolName: symbol, accessibilityDescription: title)!,
-                         target: nil, action: nil)
-        b.bezelStyle = .toolbar
-        return b
-    }
-
-    private func outputView(_ text: String, maxHeight: CGFloat) -> NSView {
+    /// Rounded console-style output area.
+    private func consoleView(_ text: String, maxHeight: CGFloat) -> NSView {
         let tv = NSTextView()
         tv.isEditable = false
-        tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        tv.textContainerInset = NSSize(width: 6, height: 6)
+        tv.font = Theme.monoFont
+        tv.textColor = .labelColor
+        tv.backgroundColor = .clear
+        tv.drawsBackground = false
+        tv.textContainerInset = NSSize(width: 4, height: 4)
         tv.string = text
         let sv = NSScrollView()
         sv.documentView = tv
         sv.hasVerticalScroller = true
-        sv.borderType = .lineBorder
+        sv.drawsBackground = false
         sv.translatesAutoresizingMaskIntoConstraints = false
-        sv.widthAnchor.constraint(equalToConstant: 480).isActive = true
+        sv.widthAnchor.constraint(equalToConstant: 460).isActive = true
         sv.heightAnchor.constraint(lessThanOrEqualToConstant: maxHeight).isActive = true
         sv.heightAnchor.constraint(greaterThanOrEqualToConstant: 80).isActive = true
-        return sv
+        return Theme.card(sv, padding: 8)
     }
 
-    private func table(columns: [String], rows: [[String: String]], height: CGFloat) -> NSView {
+    /// Table inside a rounded card (Settings-style grouped list).
+    private func cardTable(columns: [String], rows: [[String: String]]) -> NSView {
         let tv = NSTableView()
-        tv.rowHeight = 22
+        tv.rowHeight = 24
         tv.intercellSpacing = NSSize(width: 8, height: 4)
+        tv.style = .inset
+        tv.backgroundColor = .clear
         for c in columns {
             let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(c))
             col.title = c
-            col.width = c == "path" || c == "target" ? 200 : 80
+            col.width = c == "path" ? 150 : (c == "target" ? 130 : 80)
             tv.addTableColumn(col)
         }
         let ds = SimpleTable(columns: columns, rows: rows)
         tv.dataSource = ds
         tv.delegate = ds
         objc_setAssociatedObject(tv, "ds", ds, .OBJC_ASSOCIATION_RETAIN)
+
         let sv = NSScrollView()
         sv.documentView = tv
         sv.hasVerticalScroller = true
-        sv.borderType = .lineBorder
+        sv.drawsBackground = false
         sv.translatesAutoresizingMaskIntoConstraints = false
-        sv.widthAnchor.constraint(equalToConstant: 480).isActive = true
-        sv.heightAnchor.constraint(equalToConstant: height).isActive = true
-        return sv
+        sv.widthAnchor.constraint(equalToConstant: 460).isActive = true
+        sv.heightAnchor.constraint(equalToConstant:
+            min(180, CGFloat(rows.count) * 28 + 30)).isActive = true
+        return Theme.card(sv, padding: 4)
     }
 }
 
@@ -510,7 +542,7 @@ final class SimpleTable: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         let key = tableColumn?.identifier.rawValue ?? ""
         let f = NSTextField(labelWithString: rows[row][key] ?? "")
         f.font = key == "path" || key == "target" || key == "hash" || key == "fingerprint"
-            ? .monospacedSystemFont(ofSize: 11, weight: .regular)
+            ? Theme.monoFont
             : .systemFont(ofSize: 12)
         f.lineBreakMode = .byTruncatingMiddle
         return f

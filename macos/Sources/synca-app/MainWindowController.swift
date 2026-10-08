@@ -1,11 +1,5 @@
 import AppKit
 
-extension Notification.Name {
-    static let reloadInventory = Notification.Name("synca.reloadInventory")
-    static let busyChanged = Notification.Name("synca.busyChanged")
-    static let flashStatus = Notification.Name("synca.flashStatus")
-}
-
 @MainActor enum Busy {
     static var count = 0 {
         didSet { NotificationCenter.default.post(name: .busyChanged, object: count > 0) }

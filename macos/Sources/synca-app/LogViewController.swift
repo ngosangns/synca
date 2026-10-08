@@ -10,28 +10,27 @@ final class LogViewController: NSViewController {
     private let output = NSTextView()
     private let loadMoreButton = NSButton(title: "Load older entries", target: nil, action: nil)
     private let emptyLabel = NSTextField(labelWithString: "No commands yet")
+    private var outputCard: NSView!
 
     override func loadView() {
         view = NSView()
 
         // header
-        let title = NSTextField(labelWithString: "LOG")
-        title.font = .systemFont(ofSize: 11, weight: .semibold)
+        let title = NSTextField(labelWithString: "Log")
+        title.font = .systemFont(ofSize: 12, weight: .semibold)
         title.textColor = .secondaryLabelColor
-        let clear = NSButton(image: NSImage(systemSymbolName: "trash", accessibilityDescription: "Clear log")!,
-                             target: self, action: #selector(clearClicked))
-        clear.bezelStyle = .accessoryBarAction
-        clear.isBordered = false
-        clear.toolTip = "Clear log"
-        clear.setAccessibilityLabel("Clear log")
+        let clear = Theme.iconButton("trash", tip: "Clear log")
+        clear.target = self
+        clear.action = #selector(clearClicked)
         let header = NSStackView(views: [title, NSView(), clear])
-        header.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 6, right: 8)
+        header.alignment = .centerY
+        header.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 8, right: 10)
 
         // table
         table.headerView = nil
-        table.rowHeight = 34
+        table.rowHeight = 38
         table.style = .plain
-        table.intercellSpacing = NSSize(width: 0, height: 3)
+        table.intercellSpacing = NSSize(width: 0, height: 4)
         table.addTableColumn(NSTableColumn(identifier: NSUserInterfaceItemIdentifier("main")))
         table.dataSource = self
         table.delegate = self
@@ -44,33 +43,39 @@ final class LogViewController: NSViewController {
 
         // lazy-load button sits at the bottom of the list
         loadMoreButton.bezelStyle = .inline
+        loadMoreButton.font = Theme.captionFont
         loadMoreButton.target = self
         loadMoreButton.action = #selector(loadOlder)
         loadMoreButton.isHidden = true
+        loadMoreButton.contentTintColor = .secondaryLabelColor
 
-        // output detail for the selected entry
+        // output detail for the selected entry, as a rounded console card
         output.isEditable = false
-        output.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        output.textContainerInset = NSSize(width: 8, height: 8)
-        output.isHidden = true
+        output.font = Theme.monoFont
+        output.textColor = .labelColor
+        output.backgroundColor = .clear
+        output.drawsBackground = false
+        output.textContainerInset = NSSize(width: 6, height: 6)
         let outputScroll = NSScrollView()
         outputScroll.documentView = output
         outputScroll.hasVerticalScroller = true
-        outputScroll.borderType = .lineBorder
-        outputScroll.isHidden = true
-        self.outputScroll = outputScroll
+        outputScroll.drawsBackground = false
+        outputScroll.translatesAutoresizingMaskIntoConstraints = false
+        let card = Theme.card(outputScroll, padding: 4)
+        card.isHidden = true
+        outputCard = card
 
-        emptyLabel.font = .systemFont(ofSize: 12)
+        emptyLabel.font = Theme.captionFont
         emptyLabel.textColor = .tertiaryLabelColor
         emptyLabel.alignment = .center
-        emptyLabel.isHidden = false
 
-        let stack = NSStackView(views: [header, scroll, loadMoreButton, outputScroll])
+        let stack = NSStackView(views: [header, scroll, loadMoreButton, card])
         stack.orientation = .vertical
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
         scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        card.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
         view.addSubview(emptyLabel)
         NSLayoutConstraint.activate([
@@ -78,7 +83,9 @@ final class LogViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            outputScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 180),
+            outputScroll.heightAnchor.constraint(lessThanOrEqualToConstant: 160),
+            card.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 10),
+            card.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -10),
         ])
         // Required center constraints would make the label's intrinsic height
         // the window's fitting size (constraint-driven window resize).
@@ -93,8 +100,6 @@ final class LogViewController: NSViewController {
         NotificationCenter.default.addObserver(self, selector: #selector(logChanged),
                                                name: LogStore.changed, object: nil)
     }
-
-    private var outputScroll: NSScrollView!
 
     deinit { NotificationCenter.default.removeObserver(self) }
 
@@ -151,11 +156,11 @@ extension LogViewController: NSTableViewDataSource, NSTableViewDelegate {
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = table.selectedRow
         guard entries.indices.contains(row), !entries[row].output.isEmpty else {
-            outputScroll.isHidden = true
+            outputCard.isHidden = true
             return
         }
         output.string = entries[row].output
-        outputScroll.isHidden = false
+        outputCard.isHidden = false
     }
 
     /// Scrolled to the oldest visible rows → prefetch the next page (lazy load).
@@ -176,21 +181,21 @@ final class LogCell: NSView {
         icon.translatesAutoresizingMaskIntoConstraints = false
         command.translatesAutoresizingMaskIntoConstraints = false
         meta.translatesAutoresizingMaskIntoConstraints = false
-        command.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        command.font = Theme.monoFont
         command.lineBreakMode = .byTruncatingTail
-        meta.font = .systemFont(ofSize: 10)
+        meta.font = Theme.metaFont
         meta.textColor = .tertiaryLabelColor
         addSubview(icon); addSubview(command); addSubview(meta)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            icon.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            icon.widthAnchor.constraint(equalToConstant: 12),
-            icon.heightAnchor.constraint(equalToConstant: 12),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            icon.topAnchor.constraint(equalTo: topAnchor, constant: 9),
+            icon.widthAnchor.constraint(equalToConstant: 11),
+            icon.heightAnchor.constraint(equalToConstant: 11),
             command.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
             command.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             command.centerYAnchor.constraint(equalTo: icon.centerYAnchor),
             meta.leadingAnchor.constraint(equalTo: command.leadingAnchor),
-            meta.topAnchor.constraint(equalTo: command.bottomAnchor, constant: 1),
+            meta.topAnchor.constraint(equalTo: command.bottomAnchor, constant: 2),
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -198,10 +203,10 @@ final class LogCell: NSView {
     func configure(_ e: LogEntry) {
         let (symbol, color): (String, NSColor) = switch e.status {
         case "ok": ("checkmark.circle.fill", .systemGreen)
-        case "dry-run": ("eye.fill", .systemBlue)
+        case "dry-run": ("eye.fill", .controlAccentColor)
         default: ("xmark.circle.fill", .systemRed)
         }
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: e.status)
+        icon.image = Theme.icon(symbol, size: 11, color: color).image
         icon.contentTintColor = color
         command.stringValue = e.command
         meta.stringValue = "\(e.scope) · \(e.timeString) · exit \(e.exit)"
