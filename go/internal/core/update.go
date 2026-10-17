@@ -15,7 +15,7 @@ import (
 
 const (
 	GithubRepo = "ngosangns/synca"
-	Version    = "0.2.3"
+	Version    = "0.2.4"
 )
 
 func ReleaseAPIURL() string {

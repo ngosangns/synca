@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.4 — 2026-10-17
+
+- **macOS app, right column:** Activity and Settings share one column. A persistent rail keeps the Activity trigger at the top and the Settings gear at the bottom, so a hidden panel can be opened again. Opening one closes the other. Settings is also in the View menu (⌘,).
+- **Providers:** each coding agent can be turned off. The choice is remembered, that agent is left out of sync, install, add, and remove, and skills or MCP servers that exist only there disappear from the library. The canonical hub is not a provider.
+- **Delete provider data:** `synca provider clear <name>` removes that agent's skill copies and MCP server entries in the current scope. It refuses without `--yes` (unless `--dry-run`) and never deletes the hub or other keys in the agent's config. The app asks before it runs the command.
+- **Library:** column headers sort skills and MCP servers, and a row that matches across agents shows an in-sync mark.
+- **Skill detail:** the file outline width fits its contents.
+- **Dev:** `task dev` builds the debug app and launches it.
+
 ## 0.2.3 — 2026-10-09
 
 - **Install name:** `make install` writes `~/.local/share/synca/bin/synca-$(VERSION)`, the same path `synca update` uses. The `-go` suffix existed only so a Rust binary of the same version could stay beside it.
