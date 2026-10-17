@@ -34,6 +34,9 @@ struct AppCommands: Commands {
             Button(model.showActivity ? "Hide Activity" : "Show Activity") {
                 model.showActivity.toggle()
             }.keyboardShortcut("l", modifiers: [.command, .option])
+            Button(model.showSettings ? "Hide Settings" : "Settings") {
+                model.showSettings.toggle()
+            }.keyboardShortcut(",", modifiers: .command)
         }
         CommandMenu("Sync") {
             Button("Sync Everything…") { model.planSync(target: .all) }.keyboardShortcut("s", modifiers: [.command, .shift])

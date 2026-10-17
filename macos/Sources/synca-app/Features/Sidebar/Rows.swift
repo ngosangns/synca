@@ -9,18 +9,71 @@ enum Col {
     static let agents: CGFloat = 52
 }
 
-/// Non-selectable column-heading row shown under a section heading.
+/// One clickable column heading: selects the sort key on first click, flips
+/// the direction when it's already active. Shows a direction chevron while
+/// active; inactive headers render like static labels.
+struct SortHeader: View {
+    let title: String
+    let key: String
+    @Binding var sortKey: String
+    @Binding var ascending: Bool
+    /// nil = flexible column that fills the space the fixed columns leave.
+    var width: CGFloat? = nil
+    var alignment: Alignment = .leading
+
+    private var active: Bool { sortKey == key }
+
+    var body: some View {
+        Button {
+            if active { ascending.toggle() } else { sortKey = key; ascending = true }
+        } label: {
+            Group {
+                if let width {
+                    label.frame(width: width, alignment: alignment)
+                } else {
+                    label.frame(maxWidth: .infinity, alignment: alignment)
+                }
+            }
+            .foregroundStyle(active ? HierarchicalShapeStyle.secondary : .tertiary)
+        }
+        .buttonStyle(.plain)
+        .help("Sort by \(title)")
+        .accessibilityLabel("Sort by \(title)")
+        .accessibilityValue(active ? (ascending ? "ascending" : "descending") : "not sorted")
+    }
+
+    private var label: some View {
+        HStack(spacing: 2) {
+            Text(title).lineLimit(1).minimumScaleFactor(0.5)
+            if active {
+                Image(systemName: ascending ? Icon.sortAsc : Icon.sortDesc)
+                    .font(.system(size: 7, weight: .bold))
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+}
+
+/// Non-selectable column-heading row shown under a section heading; every
+/// title sorts the rows below it.
 struct ColumnHeaderRow: View {
     let name: String
     var showsTransport = false
+    @Binding var sortKey: String
+    @Binding var ascending: Bool
+
     var body: some View {
         HStack(spacing: Theme.Space.sm) {
             Color.clear.frame(width: Col.icon, height: 1)
-            Text(name).frame(maxWidth: .infinity, alignment: .leading)
-            if showsTransport { Text("Transport").frame(width: Col.transport, alignment: .leading) }
-            Text("Status").frame(width: Col.status, alignment: .center)
-                .lineLimit(1).minimumScaleFactor(0.5)
-            Text("Agents").frame(width: Col.agents, alignment: .trailing)
+            SortHeader(title: name, key: "name", sortKey: $sortKey, ascending: $ascending)
+            if showsTransport {
+                SortHeader(title: "Transport", key: "transport", sortKey: $sortKey,
+                           ascending: $ascending, width: Col.transport)
+            }
+            SortHeader(title: "Status", key: "status", sortKey: $sortKey,
+                       ascending: $ascending, width: Col.status, alignment: .center)
+            SortHeader(title: "Agents", key: "agents", sortKey: $sortKey,
+                       ascending: $ascending, width: Col.agents, alignment: .trailing)
         }
         .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
         .accessibilityElement(children: .combine)
@@ -39,7 +92,8 @@ private struct StatusSlot: View {
                 Image(systemName: Icon.warning).foregroundStyle(.orange)
                     .help(message).accessibilityLabel(message)
             } else {
-                Color.clear.accessibilityHidden(true)
+                Image(systemName: Icon.success).foregroundStyle(.green)
+                    .help("Identical across agents").accessibilityLabel("In sync")
             }
         }
         .frame(width: Col.status)

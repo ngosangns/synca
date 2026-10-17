@@ -576,3 +576,157 @@ func McpFromCLI(transport string, command, url *string, enabled *bool) (*McpNorm
 	}
 	return norm, nil
 }
+
+// lookupProvider resolves a coding-agent provider. The canonical hub
+// ("agents") is not a provider and is rejected.
+func lookupProvider(name string) (AgentKind, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || name == AgentAgents.String() {
+		return 0, false
+	}
+	for _, a := range AllAgents() {
+		if a != AgentAgents && a.String() == name {
+			return a, true
+		}
+	}
+	return 0, false
+}
+
+// ClearProvider deletes one provider's skill copies and MCP entries for a scope.
+// The canonical hub is never touched. A skills root that is a symlink is removed
+// as a link only. MCP files keep every key that is not the server table, so a
+// Grok config or Claude settings file is not wiped.
+func ClearProvider(scope Scope, cwd, name string, dryRun bool) ([]string, error) {
+	agent, ok := lookupProvider(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown provider %q", name)
+	}
+	canonical := CanonicalSkillsDir(scope, cwd)
+	if scope == ScopeProject && canonical == "" {
+		return nil, fmt.Errorf("no project root for project scope")
+	}
+	var log []string
+	for _, r := range SkillRoots(scope, cwd) {
+		if r.Agent != agent {
+			continue
+		}
+		line, err := clearSkillsRoot(r.Path, canonical, dryRun)
+		if err != nil {
+			return log, err
+		}
+		log = append(log, line)
+	}
+	for _, r := range McpConfigPaths(scope, cwd) {
+		if r.Agent != agent {
+			continue
+		}
+		line, err := clearAgentMcp(r.Path, agent, dryRun)
+		if err != nil {
+			return log, err
+		}
+		log = append(log, line)
+	}
+	if len(log) == 0 {
+		log = append(log, "nothing to remove")
+	}
+	return log, nil
+}
+
+func clearSkillsRoot(root, canonical string, dryRun bool) (string, error) {
+	info, err := os.Lstat(root)
+	if err != nil {
+		return "skills: nothing at " + root, nil
+	}
+	if rootAliasesCanonical(root, canonical) && info.Mode()&os.ModeSymlink == 0 {
+		return "", fmt.Errorf("refusing to delete %s: it is the canonical skills directory", root)
+	}
+	verb := "removed"
+	if dryRun {
+		verb = "would remove"
+	}
+	kind := "skills root"
+	if info.Mode()&os.ModeSymlink != 0 {
+		kind = "skills symlink"
+	}
+	if !dryRun {
+		if err := RemovePath(root); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("%s %s %s", verb, kind, root), nil
+}
+
+func clearAgentMcp(path string, agent AgentKind, dryRun bool) (string, error) {
+	if _, err := os.Lstat(path); err != nil {
+		return "mcp: nothing at " + path, nil
+	}
+	switch agent {
+	case AgentGrok:
+		return clearGrokMcpTable(path, dryRun)
+	case AgentOpenCode:
+		return clearJSONKey(path, "mcp", dryRun)
+	default:
+		return clearJSONKey(path, "mcpServers", dryRun)
+	}
+}
+
+func clearJSONKey(path, key string, dryRun bool) (string, error) {
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	root := map[string]any{}
+	if strings.TrimSpace(string(text)) != "" {
+		if err := json.Unmarshal(text, &root); err != nil {
+			return "", fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	servers, _ := root[key].(map[string]any)
+	if len(servers) == 0 {
+		return "mcp: no servers in " + path, nil
+	}
+	if !dryRun {
+		delete(root, key)
+		if err := writeJSONPretty(path, root); err != nil {
+			return "", err
+		}
+	}
+	verb := "removed"
+	if dryRun {
+		verb = "would remove"
+	}
+	return fmt.Sprintf("%s %d mcp server(s) from %s", verb, len(servers), path), nil
+}
+
+func clearGrokMcpTable(path string, dryRun bool) (string, error) {
+	text, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(string(text)) == "" {
+		return "mcp: no servers in " + path, nil
+	}
+	var root map[string]any
+	if _, err := toml.Decode(string(text), &root); err != nil {
+		return "", fmt.Errorf("%s: %w", path, err)
+	}
+	servers, _ := root["mcp_servers"].(map[string]any)
+	if len(servers) == 0 {
+		return "mcp: no servers in " + path, nil
+	}
+	if !dryRun {
+		delete(root, "mcp_servers")
+		var sb strings.Builder
+		if err := toml.NewEncoder(&sb).Encode(root); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+			return "", err
+		}
+	}
+	verb := "removed"
+	if dryRun {
+		verb = "would remove"
+	}
+	return fmt.Sprintf("%s %d mcp server(s) from %s", verb, len(servers), path), nil
+}

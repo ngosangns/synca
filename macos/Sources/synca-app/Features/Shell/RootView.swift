@@ -1,24 +1,33 @@
 import SwiftUI
 import SyncaKit
 
-/// Three columns, each with its own heading: Library | Detail | Activity.
+/// Library | Detail, plus Activity or Settings when expanded. The right
+/// column of buttons stays put so either panel can be opened again.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         @Bindable var model = model
         VStack(spacing: 0) {
             if model.cliMissing { CLIMissingBanner() }
-            HSplitView {
-                SidebarView()
-                    .frame(minWidth: 260, idealWidth: 300, maxWidth: 420)
-                DetailView()
-                    .frame(minWidth: 420, maxWidth: .infinity)
-                if model.showActivity {
-                    ActivityView()
-                        .frame(minWidth: 240, idealWidth: 300, maxWidth: 460)
+            HStack(spacing: 0) {
+                HSplitView {
+                    SidebarView()
+                        .frame(minWidth: 260, idealWidth: 300, maxWidth: 420)
+                    DetailView()
+                        .frame(minWidth: 420, maxWidth: .infinity)
+                    if model.showSettings || model.showActivity {
+                        Group {
+                            if model.showSettings { SettingsView() } else { ActivityView() }
+                        }
+                        .frame(minWidth: 260, idealWidth: 320, maxWidth: 460)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
                 }
+                RightColumnButtons()
             }
+            .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: model.rightPanelID)
             StatusBar()
         }
         .overlay(alignment: .bottom) {

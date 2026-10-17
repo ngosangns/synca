@@ -22,6 +22,7 @@ enum Icon {
     static let info = "info.circle.fill"
     static let update = "arrow.down.circle"
     static let activity = "list.bullet.rectangle"
+    static let settings = "gearshape"
     static let user = "person.crop.circle"
     static let project = "folder.badge.gearshape"
     static let search = "magnifyingglass"
@@ -32,4 +33,6 @@ enum Icon {
     static let help = "questionmark.circle"
     static let sidebar = "sidebar.left"
     static let sparkles = "square.grid.2x2"
+    static let sortAsc = "chevron.up"
+    static let sortDesc = "chevron.down"
 }

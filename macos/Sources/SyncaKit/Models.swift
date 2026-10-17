@@ -1,5 +1,24 @@
 import Foundation
 
+/// A coding agent Synca can sync to. The canonical hub (`agents`) is not a provider.
+public struct Provider: Identifiable, Sendable, Hashable {
+    public let id: String
+    public let title: String
+
+    public static let all: [Provider] = [
+        Provider(id: "grok", title: "Grok"),
+        Provider(id: "devin", title: "Devin"),
+        Provider(id: "omp", title: "OMP"),
+        Provider(id: "pi", title: "Pi"),
+        Provider(id: "kiro", title: "Kiro"),
+        Provider(id: "opencode", title: "OpenCode"),
+        Provider(id: "claude", title: "Claude"),
+        Provider(id: "cursor", title: "Cursor"),
+    ]
+
+    public static func named(_ id: String) -> Provider? { all.first { $0.id == id } }
+}
+
 public enum SyncaScope: String, CaseIterable, Sendable, Identifiable {
     case user, project
     public var id: String { rawValue }
@@ -35,6 +54,16 @@ public struct SkillEntry: Decodable, Sendable, Hashable, Identifiable {
     public var primaryPath: String? {
         (presence.first { !$0.isSymlink } ?? presence.first)?.path
     }
+
+    /// Drops presence for disabled providers. Nil when nothing remains.
+    public func excludingAgents(_ disabled: Set<String>) -> SkillEntry? {
+        if disabled.isEmpty { return self }
+        let kept = presence.filter { !disabled.contains($0.agent) }
+        guard !kept.isEmpty else { return nil }
+        let hashes = Set(kept.compactMap(\.contentHash))
+        return SkillEntry(key: key, displayName: displayName, description: description,
+                          scope: scope, presence: kept, mismatch: hashes.count > 1)
+    }
 }
 
 public struct McpNormalized: Decodable, Sendable, Hashable {
@@ -60,6 +89,15 @@ public struct McpEntry: Decodable, Sendable, Hashable, Identifiable {
     public let presence: [McpPresence]
     public let mismatch: Bool
     public var id: String { key }
+
+    /// Drops presence for disabled providers. Nil when nothing remains.
+    public func excludingAgents(_ disabled: Set<String>) -> McpEntry? {
+        if disabled.isEmpty { return self }
+        let kept = presence.filter { !disabled.contains($0.agent) }
+        guard !kept.isEmpty else { return nil }
+        let fingerprints = Set(kept.compactMap(\.fingerprint))
+        return McpEntry(key: key, scope: scope, presence: kept, mismatch: fingerprints.count > 1)
+    }
 }
 
 public struct UpdateInfo: Decodable, Sendable, Equatable {

@@ -1,10 +1,13 @@
 package core
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func logHas(log []string, sub string) bool {
@@ -132,5 +135,113 @@ func TestMcpFromCLIURL(t *testing.T) {
 	}
 	if n.URL == nil || *n.URL != "https://example.com/mcp" {
 		t.Errorf("url %v", n.URL)
+	}
+}
+
+func TestClearProviderKeepsHubAndOtherConfig(t *testing.T) {
+	home := realTempHome(t)
+	src := filepath.Join(home, "src-skill")
+	writeSkill(t, src, "fresh-skill", "# fresh")
+	if _, _, err := InstallSkill(ScopeUser, home, filepath.Join(src, "fresh-skill"), nil, false); err != nil {
+		t.Fatal(err)
+	}
+	cmd := "npx -y demo-mcp"
+	norm, err := McpFromCLI("stdio", &cmd, nil, bp(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := AddMcp(ScopeUser, home, "demo-mcp", norm, nil, false); err != nil {
+		t.Fatal(err)
+	}
+
+	grokToml := filepath.Join(home, ".grok/config.toml")
+	text, err := os.ReadFile(grokToml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var grok map[string]any
+	if _, err := toml.Decode(string(text), &grok); err != nil {
+		t.Fatal(err)
+	}
+	grok["theme"] = "dark"
+	var sb strings.Builder
+	if err := toml.NewEncoder(&sb).Encode(grok); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(grokToml, []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cursorPath := filepath.Join(home, ".cursor/mcp.json")
+	cursor := readJSON(t, cursorPath)
+	cursor["editorFont"] = "menlo"
+	raw, err := json.MarshalIndent(cursor, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cursorPath, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ClearProvider(ScopeUser, home, "agents", false); err == nil {
+		t.Fatal("canonical hub must be refused")
+	}
+	if _, err := ClearProvider(ScopeUser, home, "nope", false); err == nil {
+		t.Fatal("unknown provider must be refused")
+	}
+
+	preview, err := ClearProvider(ScopeUser, home, "grok", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !logHas(preview, "would remove") {
+		t.Fatalf("dry-run log=%v", preview)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".grok/skills")); err != nil {
+		t.Fatal("dry-run removed the skills root")
+	}
+
+	log, err := ClearProvider(ScopeUser, home, "grok", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !logHas(log, "removed skills root") || !logHas(log, "mcp server") {
+		t.Fatalf("log=%v", log)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".grok/skills")); err == nil {
+		t.Fatal("grok skills root should be gone")
+	}
+	canon := filepath.Join(home, ".agents/skills/fresh-skill/SKILL.md")
+	if _, err := os.Stat(canon); err != nil {
+		t.Fatal("canonical skill must remain")
+	}
+	kept := map[string]any{}
+	rest, err := os.ReadFile(grokToml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toml.Decode(string(rest), &kept); err != nil {
+		t.Fatal(err)
+	}
+	if kept["theme"] != "dark" {
+		t.Fatalf("grok theme lost: %v", kept)
+	}
+	if servers, ok := kept["mcp_servers"].(map[string]any); ok && len(servers) > 0 {
+		t.Fatalf("grok mcp servers remain: %v", servers)
+	}
+	hubServers, _ := readJSON(t, filepath.Join(home, ".agents/mcp.json"))["mcpServers"].(map[string]any)
+	if _, ok := hubServers["demo-mcp"]; !ok {
+		t.Fatal("hub mcp entry must remain")
+	}
+
+	if _, err := ClearProvider(ScopeUser, home, "cursor", false); err != nil {
+		t.Fatal(err)
+	}
+	after := readJSON(t, cursorPath)
+	if after["editorFont"] != "menlo" {
+		t.Fatalf("cursor setting lost: %v", after)
+	}
+	if servers, ok := after["mcpServers"].(map[string]any); ok && len(servers) > 0 {
+		t.Fatalf("cursor mcp servers remain: %v", servers)
 	}
 }

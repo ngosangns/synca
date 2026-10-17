@@ -5,6 +5,14 @@ struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var searchFocused: Bool
 
+    // Column sort, persisted per section. `ascending` selects the column's
+    // natural order — name/transport A→Z, status problems-first, agents
+    // most-first; the chevron flips it. Ties fall back to the item's key.
+    @AppStorage("sidebar.skills.sortKey") private var skillSortKey = "name"
+    @AppStorage("sidebar.skills.ascending") private var skillSortAsc = true
+    @AppStorage("sidebar.mcps.sortKey") private var mcpSortKey = "name"
+    @AppStorage("sidebar.mcps.ascending") private var mcpSortAsc = true
+
     var body: some View {
         VStack(spacing: 0) {
             PaneHeader(title: "Library", systemImage: nil) {
@@ -49,7 +57,7 @@ struct SidebarView: View {
     @ViewBuilder private var content: some View {
         switch model.inventory {
         case .idle, .loading:
-            if model.skills.isEmpty && model.mcps.isEmpty {
+            if model.visibleSkills.isEmpty && model.visibleMcps.isEmpty {
                 SkeletonList().frame(maxHeight: .infinity, alignment: .top)
             } else { list }
         case .needsProject:
@@ -73,7 +81,7 @@ struct SidebarView: View {
                     .buttonStyle(.borderedProminent).help("Try loading again")
             }
         case .ready:
-            if model.skills.isEmpty && model.mcps.isEmpty {
+            if model.visibleSkills.isEmpty && model.visibleMcps.isEmpty {
                 StateView(systemImage: Icon.skill, title: "No skills or MCP servers",
                           message: "Install a skill or add an MCP server to get started.") {
                     Button { model.route = .installSkill } label: {
@@ -88,13 +96,58 @@ struct SidebarView: View {
         }
     }
 
+    private var sortedSkills: [SkillEntry] {
+        model.filteredSkills.sorted { a, b in
+            var r: ComparisonResult
+            switch skillSortKey {
+            case "status":
+                r = a.mismatch == b.mismatch ? .orderedSame
+                    : (a.mismatch ? .orderedAscending : .orderedDescending)
+            case "agents":
+                r = a.presence.count == b.presence.count ? .orderedSame
+                    : (a.presence.count > b.presence.count ? .orderedAscending : .orderedDescending)
+            default:
+                r = a.title.localizedStandardCompare(b.title)
+            }
+            if r == .orderedSame { r = a.key.localizedStandardCompare(b.key) }
+            return skillSortAsc ? r != .orderedDescending : r == .orderedDescending
+        }
+    }
+
+    private var sortedMcps: [McpEntry] {
+        model.filteredMcps.sorted { a, b in
+            var r: ComparisonResult
+            switch mcpSortKey {
+            case "status":
+                r = a.mismatch == b.mismatch ? .orderedSame
+                    : (a.mismatch ? .orderedAscending : .orderedDescending)
+            case "agents":
+                r = a.presence.count == b.presence.count ? .orderedSame
+                    : (a.presence.count > b.presence.count ? .orderedAscending : .orderedDescending)
+            case "transport":
+                let ta = a.presence.first?.normalized?.transport
+                let tb = b.presence.first?.normalized?.transport
+                // No transport sorts last regardless of direction.
+                if ta == nil || tb == nil {
+                    if (ta == nil) == (tb == nil) { return a.key.localizedStandardCompare(b.key) == .orderedAscending }
+                    return ta == nil ? false : true
+                }
+                r = ta!.localizedStandardCompare(tb!)
+            default:
+                r = a.key.localizedStandardCompare(b.key)
+            }
+            if r == .orderedSame { r = a.key.localizedStandardCompare(b.key) }
+            return mcpSortAsc ? r != .orderedDescending : r == .orderedDescending
+        }
+    }
+
     private var list: some View {
         @Bindable var model = model
         return List(selection: $model.selection) {
             if !model.filteredSkills.isEmpty {
                 Section {
-                    ColumnHeaderRow(name: "Name")
-                    ForEach(model.filteredSkills) { skill in
+                    ColumnHeaderRow(name: "Name", sortKey: $skillSortKey, ascending: $skillSortAsc)
+                    ForEach(sortedSkills) { skill in
                         SkillRow(skill: skill)
                             .tag(Selection.skill(skill.key))
                             .contextMenu { skillMenu(skill) }
@@ -103,8 +156,9 @@ struct SidebarView: View {
             }
             if !model.filteredMcps.isEmpty {
                 Section {
-                    ColumnHeaderRow(name: "Server", showsTransport: true)
-                    ForEach(model.filteredMcps) { mcp in
+                    ColumnHeaderRow(name: "Server", showsTransport: true,
+                                    sortKey: $mcpSortKey, ascending: $mcpSortAsc)
+                    ForEach(sortedMcps) { mcp in
                         McpRow(mcp: mcp)
                             .tag(Selection.mcp(mcp.key))
                             .contextMenu { mcpMenu(mcp) }

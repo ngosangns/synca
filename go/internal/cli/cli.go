@@ -130,6 +130,8 @@ func Run(args []string) error {
 		return runMcp(rest)
 	case "sync":
 		return runSync(rest)
+	case "provider":
+		return runProvider(rest)
 	case "update":
 		f := parseFlags(rest, commonBool)
 		return runUpdate(f.bools["check"], f.bools["json"], f.bools["force"])
@@ -145,6 +147,7 @@ USAGE:
   synca skills <list|install|remove> [flags]
   synca mcp <list|add|remove> [flags]
   synca sync <skills|mcp|all> [flags]
+  synca provider clear <name> [--scope --cwd --yes --dry-run]
   synca update [--check] [--json] [--force]
 
 COMMON FLAGS:
@@ -447,6 +450,32 @@ func confirmPurge(name string) (bool, error) {
 	}
 	t := strings.TrimSpace(line)
 	return t == name || t == core.NormalizeKey(name), nil
+}
+
+func runProvider(args []string) error {
+	if len(args) == 0 || args[0] != "clear" {
+		return fmt.Errorf("usage: synca provider clear <name> [--scope --cwd --yes --dry-run]")
+	}
+	f := parseFlags(args[1:], commonBool)
+	if len(f.pos) < 1 {
+		return fmt.Errorf("usage: synca provider clear <name> [--scope --cwd --yes --dry-run]")
+	}
+	scope, err := scopeOf(f)
+	if err != nil {
+		return err
+	}
+	dry, yes := f.bools["dry-run"], f.bools["yes"]
+	if !dry && !yes {
+		return fmt.Errorf("refusing to delete provider data without --yes")
+	}
+	log, err := core.ClearProvider(scope, cwdOf(f), f.pos[0], dry)
+	if err != nil {
+		return err
+	}
+	for _, line := range log {
+		fmt.Println(line)
+	}
+	return nil
 }
 
 func runUpdate(checkOnly, jsonOut, force bool) error {

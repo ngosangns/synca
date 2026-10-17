@@ -256,4 +256,9 @@ public struct SyncaCLI: Sendable {
     public func removeMcpArgs(_ s: SyncaScope, dir: String?, key: String) throws -> [String] {
         ["mcp", "remove", key] + (try scopeArgs(s, projectDir: dir))
     }
+
+    /// Deletes one provider's skills and MCP entries. Requires the caller to have confirmed.
+    public func clearProviderArgs(_ s: SyncaScope, dir: String?, provider: String) throws -> [String] {
+        ["provider", "clear", provider] + (try scopeArgs(s, projectDir: dir)) + ["--yes"]
+    }
 }

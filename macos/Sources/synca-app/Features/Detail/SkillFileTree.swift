@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import SyncaKit
 
 /// How the explorer arranges the outline and the preview.
@@ -23,6 +24,9 @@ struct SkillFileTree: View {
 
     @State private var phase: Phase = .loading
     @State private var selection: String?
+    /// Width the outline needs to show its rows untruncated; capped so a long
+    /// name can't starve the preview.
+    @State private var treeFitWidth: CGFloat = 220
 
     var body: some View {
         Group {
@@ -38,7 +42,8 @@ struct SkillFileTree: View {
                 case .sideBySide:
                     HSplitView {
                         tree(nodes)
-                            .frame(minWidth: 160, idealWidth: 220)
+                            .frame(minWidth: 140, idealWidth: treeFitWidth,
+                                   maxWidth: max(treeFitWidth, 320))
                         preview(files)
                             .frame(minWidth: 200, maxWidth: .infinity)
                     }
@@ -73,14 +78,15 @@ struct SkillFileTree: View {
         phase = .loading
         selection = nil
         guard let path else { phase = .missing; return }
-        let result = await Task.detached(priority: .userInitiated) { () -> ([TreeItem], [String: FileNode]) in
+        let result = await Task.detached(priority: .userInitiated) { () -> ([TreeItem], [String: FileNode], CGFloat) in
             let raw = FileTree.load(root: URL(fileURLWithPath: path))
             var files: [String: FileNode] = [:]
             let nodes = Self.prepare(raw, files: &files)
-            return (nodes, files)
+            return (nodes, files, Self.fitWidth(nodes))
         }.value
         if Task.isCancelled { return }
         if result.0.isEmpty { phase = .missing; return }
+        treeFitWidth = result.2
         phase = .ready(nodes: result.0, files: result.1)
         selection = result.1.values.first { $0.name.caseInsensitiveCompare("SKILL.md") == .orderedSame
             && $0.url.deletingLastPathComponent().path == URL(fileURLWithPath: path).resolvingSymlinksInPath().path }?.id
@@ -98,6 +104,50 @@ struct SkillFileTree: View {
             files[n.id] = n
             return TreeItem(id: n.id, node: n, children: nil)
         }
+    }
+
+    /// Widest row's natural width: indent per depth, disclosure, icon, name,
+    /// and the trailing size label — plus the list's own insets. Clamped so the
+    /// outline hugs its content without ever outgrowing the preview's share.
+    private nonisolated static func fitWidth(_ items: [TreeItem]) -> CGFloat {
+        min(max(widestRow(items, depth: 0) + Outline.padding, 160), 400)
+    }
+
+    private nonisolated static func widestRow(_ items: [TreeItem], depth: Int) -> CGFloat {
+        var w: CGFloat = 0
+        for item in items {
+            var row = Outline.indent * CGFloat(depth) + Outline.icon + Theme.Space.sm
+            if let node = item.node {
+                row += textWidth(node.name, size: 13)
+                if node.isDirectory {
+                    row += Outline.disclosure
+                } else {
+                    row += Theme.Space.sm + textWidth(
+                        ByteCountFormatter.string(fromByteCount: node.size, countStyle: .file), size: 12)
+                }
+            } else {
+                row += textWidth("Empty folder", size: 13)
+            }
+            w = max(w, row)
+            if let kids = item.children { w = max(w, widestRow(kids, depth: depth + 1)) }
+        }
+        return w
+    }
+
+    private nonisolated static func textWidth(_ s: String, size: CGFloat) -> CGFloat {
+        (s as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: size)]).width
+    }
+
+    /// Point measurements matching how `List` lays out an outline row.
+    private enum Outline {
+        /// Extra leading space per expanded depth level.
+        static let indent: CGFloat = 14
+        /// Chevron and its trailing gap on folders.
+        static let disclosure: CGFloat = 14
+        /// SF Symbol column.
+        static let icon: CGFloat = 16
+        /// `.inset` row padding plus room for the scroller.
+        static let padding: CGFloat = 36
     }
 
     @ViewBuilder private func row(_ item: TreeItem) -> some View {

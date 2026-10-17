@@ -86,20 +86,26 @@ final class AppModel {
     var filter = ""
 
     var selectedSkill: SkillEntry? {
-        if case .skill(let k) = selection { return skills.first { $0.key == k } }
+        if case .skill(let k) = selection { return visibleSkills.first { $0.key == k } }
         return nil
     }
     var selectedMcp: McpEntry? {
-        if case .mcp(let k) = selection { return mcps.first { $0.key == k } }
+        if case .mcp(let k) = selection { return visibleMcps.first { $0.key == k } }
         return nil
     }
+    /// Inventory with disabled providers removed. An item that exists only on
+    /// disabled providers disappears; the canonical hub stays.
+    var visibleSkills: [SkillEntry] { skills.compactMap { $0.excludingAgents(disabledProviders) } }
+    var visibleMcps: [McpEntry] { mcps.compactMap { $0.excludingAgents(disabledProviders) } }
     var filteredSkills: [SkillEntry] {
-        filter.isEmpty ? skills : skills.filter {
+        let base = visibleSkills
+        return filter.isEmpty ? base : base.filter {
             $0.key.localizedCaseInsensitiveContains(filter) || ($0.description ?? "").localizedCaseInsensitiveContains(filter)
         }
     }
     var filteredMcps: [McpEntry] {
-        filter.isEmpty ? mcps : mcps.filter { $0.key.localizedCaseInsensitiveContains(filter) }
+        let base = visibleMcps
+        return filter.isEmpty ? base : base.filter { $0.key.localizedCaseInsensitiveContains(filter) }
     }
 
     // MARK: Detail / feedback
@@ -108,7 +114,49 @@ final class AppModel {
     var isBusy: Bool { !operations.isEmpty }
     var toast: Toast?
     var confirmation: Confirmation?
-    var showActivity = true
+    /// Right-hand column. Activity and Settings share it; opening one closes the other.
+    /// Hidden until the user turns a panel on. Remembered.
+    var showActivity = false {
+        didSet {
+            guard showActivity != oldValue else { return }
+            if showActivity, showSettings { showSettings = false }
+            defaults.set(showActivity, forKey: Self.showActivityKey)
+        }
+    }
+    var showSettings = false {
+        didSet {
+            guard showSettings != oldValue else { return }
+            if showSettings, showActivity { showActivity = false }
+            defaults.set(showSettings, forKey: Self.showSettingsKey)
+        }
+    }
+    /// Identity for the open/close animation of the right column.
+    var rightPanelID: String {
+        if showSettings { return "settings" }
+        if showActivity { return "activity" }
+        return "closed"
+    }
+
+    /// Provider ids the user turned off. Missing means every provider is on.
+    private(set) var disabledProviders: Set<String> = [] {
+        didSet {
+            guard disabledProviders != oldValue else { return }
+            defaults.set(disabledProviders.sorted(), forKey: Self.disabledProvidersKey)
+        }
+    }
+    func isProviderEnabled(_ id: String) -> Bool { !disabledProviders.contains(id) }
+    func setProviderEnabled(_ id: String, _ enabled: Bool) {
+        guard Provider.named(id) != nil else { return }
+        var next = disabledProviders
+        if enabled { next.remove(id) } else { next.insert(id) }
+        guard next != disabledProviders else { return }
+        disabledProviders = next
+        if let sel = selection, !contains(sel) { selection = nil }
+    }
+    func providerUsage(_ id: String) -> (skills: Int, mcps: Int) {
+        (skills.filter { $0.presence.contains { $0.agent == id } }.count,
+         mcps.filter { $0.presence.contains { $0.agent == id } }.count)
+    }
 
     // MARK: Activity log
     private(set) var activity: [LogEntry] = []
@@ -126,6 +174,22 @@ final class AppModel {
         self.log = log
         self.defaults = defaults
         self.projects = Self.loadProjects(defaults)
+        // Missing key stays hidden. didSet does not run during init, so a
+        // fresh install does not write the preference until the user changes it.
+        if defaults.object(forKey: Self.showActivityKey) != nil {
+            showActivity = defaults.bool(forKey: Self.showActivityKey)
+        }
+        if defaults.object(forKey: Self.showSettingsKey) != nil {
+            showSettings = defaults.bool(forKey: Self.showSettingsKey)
+        }
+        // didSet does not run during init. One panel at a time; Activity wins a tie.
+        if showActivity && showSettings {
+            showSettings = false
+            defaults.set(false, forKey: Self.showSettingsKey)
+        }
+        if let ids = defaults.stringArray(forKey: Self.disabledProvidersKey) {
+            disabledProviders = Set(ids)
+        }
     }
 
     // MARK: Lifecycle
@@ -161,6 +225,9 @@ final class AppModel {
 
     private static let projectsKey = "synca.projects"
     private static let activeProjectKey = "synca.projectDir" // also the pre-manager single-project key
+    private static let showActivityKey = "synca.showActivity"
+    private static let showSettingsKey = "synca.showSettings"
+    private static let disabledProvidersKey = "synca.disabledProviders"
 
     private static func loadProjects(_ d: UserDefaults) -> ProjectList {
         return ProjectList(paths: d.stringArray(forKey: projectsKey) ?? [],
@@ -211,9 +278,17 @@ final class AppModel {
 
     private func contains(_ sel: Selection) -> Bool {
         switch sel {
-        case .skill(let k): skills.contains { $0.key == k }
-        case .mcp(let k): mcps.contains { $0.key == k }
+        case .skill(let k): visibleSkills.contains { $0.key == k }
+        case .mcp(let k): visibleMcps.contains { $0.key == k }
         }
+    }
+
+    /// `--agents` for the enabled set. Omitted when every provider is on, so
+    /// commands stay identical to a fresh install.
+    private func withAgents(_ args: [String]) -> [String] {
+        let enabled = Provider.all.map(\.id).filter { !disabledProviders.contains($0) }
+        guard enabled.count != Provider.all.count else { return args }
+        return args + ["--agents", enabled.isEmpty ? "none" : enabled.joined(separator: ",")]
     }
 
     // MARK: Operations & feedback
@@ -272,7 +347,7 @@ final class AppModel {
         Task {
             defer { end(op) }
             do {
-                let r = try await runLogged(cli.syncPlanArgs(s, dir: dir, target: target, key: key), kind: "dry-run")
+                let r = try await runLogged(withAgents(try cli.syncPlanArgs(s, dir: dir, target: target, key: key)), kind: "dry-run")
                 route = .plan(Plan(title: title, output: r.trimmed, ok: r.ok, apply: .sync(target: target, key: key)))
             } catch is CancellationError {
             } catch { route = .item; fail(error) }
@@ -287,7 +362,7 @@ final class AppModel {
         Task {
             defer { end(op) }
             do {
-                let r = try await runLogged(cli.installArgs(s, dir: dir, source: source, dryRun: true), kind: "dry-run")
+                let r = try await runLogged(withAgents(try cli.installArgs(s, dir: dir, source: source, dryRun: true)), kind: "dry-run")
                 route = .plan(Plan(title: "install skill · \(source)", output: r.trimmed, ok: r.ok,
                                    apply: .installSkill(source: source)))
             } catch is CancellationError {
@@ -303,7 +378,7 @@ final class AppModel {
         Task {
             defer { end(op) }
             do {
-                let r = try await runLogged(cli.addMcpArgs(s, dir: dir, payload: payload, dryRun: true), kind: "dry-run")
+                let r = try await runLogged(withAgents(try cli.addMcpArgs(s, dir: dir, payload: payload, dryRun: true)), kind: "dry-run")
                 route = .plan(Plan(title: "add mcp · \(payload.name)", output: r.trimmed, ok: r.ok,
                                    apply: .addMcp(payload)))
             } catch is CancellationError {
@@ -326,16 +401,16 @@ final class AppModel {
                 switch plan.apply {
                 case .sync(let target, let key):
                     for c in plan.conflicts where c.policy != .skip {
-                        let r = try await runLogged(cli.resolveArgs(s, dir: dir, conflict: c), kind: "ok")
+                        let r = try await runLogged(withAgents(try cli.resolveArgs(s, dir: dir, conflict: c)), kind: "ok")
                         if !r.ok { failures += 1 }
                     }
-                    let r = try await runLogged(cli.syncApplyArgs(s, dir: dir, target: target, key: key), kind: "ok")
+                    let r = try await runLogged(withAgents(try cli.syncApplyArgs(s, dir: dir, target: target, key: key)), kind: "ok")
                     if !r.ok { failures += 1 }
                 case .installSkill(let source):
-                    let r = try await runLogged(cli.installArgs(s, dir: dir, source: source, dryRun: false), kind: "ok")
+                    let r = try await runLogged(withAgents(try cli.installArgs(s, dir: dir, source: source, dryRun: false)), kind: "ok")
                     if !r.ok { failures += 1 }
                 case .addMcp(let payload):
-                    let r = try await runLogged(cli.addMcpArgs(s, dir: dir, payload: payload, dryRun: false), kind: "ok")
+                    let r = try await runLogged(withAgents(try cli.addMcpArgs(s, dir: dir, payload: payload, dryRun: false)), kind: "ok")
                     if !r.ok { failures += 1 }
                 }
                 route = .item
@@ -373,7 +448,7 @@ final class AppModel {
         Task {
             defer { end(op) }
             do {
-                let r = try await runLogged(cli.removeSkillArgs(s, dir: dir, key: key, purge: purge), kind: "ok")
+                let r = try await runLogged(withAgents(try cli.removeSkillArgs(s, dir: dir, key: key, purge: purge)), kind: "ok")
                 // The CLI exits 0 with "nothing to remove" when it found no paths; never report that as success.
                 let removedNothing = r.ok && r.output.contains("nothing to remove")
                 if removedNothing {
@@ -396,7 +471,7 @@ final class AppModel {
         Task {
             defer { end(op) }
             do {
-                let r = try await runLogged(cli.removeMcpArgs(s, dir: dir, key: key), kind: "ok")
+                let r = try await runLogged(withAgents(try cli.removeMcpArgs(s, dir: dir, key: key)), kind: "ok")
                 let removedNothing = r.ok && r.output.contains("nothing to remove")
                 if removedNothing {
                     notify("Nothing was removed for “\(key)” — see Activity", .error)
@@ -404,6 +479,44 @@ final class AppModel {
                     notify(r.ok ? "Removed “\(key)”" : "Remove failed — see Activity", r.ok ? .success : .error)
                 }
                 if r.ok, !removedNothing, selection == .mcp(key) { selection = nil }
+                reload()
+            } catch is CancellationError {
+            } catch { fail(error) }
+        }
+    }
+
+    // MARK: Providers
+
+    func confirmClearProvider(_ id: String) {
+        guard let provider = Provider.named(id) else { return }
+        guard !cliMissing else { return notify(CLIError.notFound.localizedDescription, .error) }
+        if scope == .project, projectDir == nil {
+            return notify("Choose a project folder before deleting project data.", .error)
+        }
+        let whereText = scope == .project ? "this project" : "your user folder"
+        confirmation = Confirmation(
+            title: "Delete \(provider.title) data?",
+            message: "Removes \(provider.title)’s skills and MCP entries in \(whereText). The canonical hub stays, and other settings in that provider’s config stay. This cannot be undone.",
+            confirmTitle: "Delete data",
+            destructive: true
+        ) { [weak self] in self?.clearProvider(id) }
+    }
+
+    private func clearProvider(_ id: String) {
+        guard let provider = Provider.named(id) else { return }
+        let (s, dir) = (scope, projectDir)
+        let op = begin("Deleting \(provider.title) data")
+        Task {
+            defer { end(op) }
+            do {
+                let r = try await runLogged(try cli.clearProviderArgs(s, dir: dir, provider: id), kind: "ok")
+                let removedNothing = r.ok && !r.output.contains("removed ")
+                if removedNothing {
+                    notify("\(provider.title) had no data in this scope", .info)
+                } else {
+                    notify(r.ok ? "Deleted \(provider.title) data" : "Delete failed — see Activity",
+                           r.ok ? .success : .error)
+                }
                 reload()
             } catch is CancellationError {
             } catch { fail(error) }

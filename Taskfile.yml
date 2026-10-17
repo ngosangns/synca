@@ -61,6 +61,14 @@ tasks:
     cmds:
       - make icon
 
+  dev:
+    desc: Build the macOS app in debug and launch it
+    dir: macos
+    cmds:
+      # Only the debug binary. The installed app's executable is named synca.
+      - pkill -x synca-app || true
+      - swift run synca-app
+
   test:
     desc: Run every test suite
     cmds:

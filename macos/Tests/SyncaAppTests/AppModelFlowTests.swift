@@ -478,6 +478,49 @@ private func link(_ sbx: Sandbox, _ rel: String) -> String? {
         #expect(m.toast?.message == "b" && m.toast?.id != first)
     }
 
+    @Test func activityColumnStartsHiddenAndTheChoicePersists() throws {
+        let sbx = try Sandbox()
+        let m = sbx.makeModel()
+        #expect(!m.showActivity)
+
+        m.showActivity = true
+        #expect(sbx.makeModel().showActivity)
+
+        m.showActivity = false
+        #expect(!sbx.makeModel().showActivity)
+        // Setting the same value again must not be required to keep it hidden.
+        m.showActivity = false
+        #expect(!sbx.makeModel().showActivity)
+    }
+
+    @Test func settingsAndActivityShareTheRightColumn() throws {
+        let sbx = try Sandbox()
+        let m = sbx.makeModel()
+        #expect(!m.showSettings && m.rightPanelID == "closed")
+        m.showSettings = true
+        #expect(m.showSettings && !m.showActivity && m.rightPanelID == "settings")
+        #expect(sbx.makeModel().showSettings)
+        m.showActivity = true
+        #expect(m.showActivity && !m.showSettings)
+        #expect(!sbx.makeModel().showSettings && sbx.makeModel().showActivity)
+    }
+
+    @Test func disabledProviderIsRememberedAndSkippedBySync() async throws {
+        let sbx = try Sandbox()
+        try sbx.skill("alpha")
+        let m = sbx.makeModel()
+        m.setProviderEnabled("grok", false)
+        #expect(!sbx.makeModel().isProviderEnabled("grok"))
+        #expect(m.isProviderEnabled("cursor"))
+        #expect(await loaded(m))
+        m.planSync(target: .all)
+        #expect(await eventually { plan(m) != nil })
+        let cmd = try #require(m.activity.first?.command)
+        #expect(cmd.contains("--agents"))
+        #expect(!cmd.contains("grok"))
+        #expect(cmd.contains("cursor"))
+    }
+
     @Test func activityLogsEveryCommandNewestFirstAndPages() async throws {
         let sbx = try Sandbox()
         try sbx.skill("alpha")

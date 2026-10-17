@@ -38,6 +38,28 @@ import Testing
         #expect(a.suffix(2) == ["--purge", "--yes"])
     }
 
+    @Test func clearProviderRequiresConfirmation() throws {
+        let a = try cli.clearProviderArgs(.user, dir: nil, provider: "cursor")
+        #expect(a == ["provider", "clear", "cursor", "--scope", "user", "--yes"])
+    }
+
+    @Test func excludingAgentsDropsDisabledPresence() {
+        let skill = SkillEntry(key: "k", displayName: "K", description: nil, scope: "user", presence: [
+            SkillPresence(agent: "agents", path: "/hub", isSymlink: false, symlinkTarget: nil, contentHash: "a"),
+            SkillPresence(agent: "grok", path: "/grok", isSymlink: true, symlinkTarget: "/hub", contentHash: "b"),
+        ], mismatch: true)
+        let kept = skill.excludingAgents(["grok"])
+        #expect(kept?.presence.map(\.agent) == ["agents"])
+        #expect(kept?.mismatch == false)
+        #expect(skill.excludingAgents(["agents", "grok"]) == nil)
+
+        let mcp = McpEntry(key: "srv", scope: "user", presence: [
+            McpPresence(agent: "cursor", path: "/c", normalized: nil, fingerprint: "1"),
+        ], mismatch: false)
+        #expect(mcp.excludingAgents(["cursor"]) == nil)
+        #expect(mcp.excludingAgents([]).map(\.key) == "srv")
+    }
+
     @Test func decodesSnakeCaseInventory() throws {
         let json = #"[{"key":"k","display_name":"K","description":null,"scope":"user","mismatch":true,"presence":[{"agent":"grok","path":"/x","is_symlink":true,"symlink_target":"/y","content_hash":"h"}]}]"#
         let s = try SyncaCLI.decode([SkillEntry].self, from: json)

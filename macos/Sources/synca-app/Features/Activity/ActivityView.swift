@@ -12,10 +12,6 @@ struct ActivityView: View {
                 Button("Clear") { model.clearActivity(); expanded = [] }
                     .disabled(model.activity.isEmpty)
                     .help("Clear activity log")
-                Button { model.showActivity = false } label: {
-                    Label("Hide", systemImage: Icon.close)
-                }
-                .help("Hide Activity")
             }
             content
         }
