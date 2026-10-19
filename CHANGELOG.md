@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.5 — 2026-10-19
+
+- **macOS window:** chrome, tokens, and confirmation come from the shared `ns-shell` package. Layering is in `ARCHITECTURE.md`.
+- **CI:** the macOS job clones `ns-shell` beside the workspace before `swift test`.
+
 ## 0.2.4 — 2026-10-17
 
 - **macOS app, right column:** Activity and Settings share one column. A persistent rail keeps the Activity trigger at the top and the Settings gear at the bottom, so a hidden panel can be opened again. Opening one closes the other. Settings is also in the View menu (⌘,).
