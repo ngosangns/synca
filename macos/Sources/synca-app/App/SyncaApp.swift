@@ -1,10 +1,11 @@
 import SwiftUI
 import AppKit
+import NSShell
 
 @main
 struct SyncaApp: App {
     @State private var model = AppModel()
-    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @NSApplicationDelegateAdaptor(ShellAppDelegate.self) private var delegate
 
     var body: some Scene {
         Window("synca", id: "main") {
@@ -18,35 +19,33 @@ struct SyncaApp: App {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
-}
-
 struct AppCommands: Commands {
     let model: AppModel
     var body: some Commands {
         CommandGroup(after: .sidebar) {
-            Button("Reload Inventory") { model.reload() }.keyboardShortcut("r")
-            Button(model.showActivity ? "Hide Activity" : "Show Activity") {
-                model.showActivity.toggle()
-            }.keyboardShortcut("l", modifiers: [.command, .option])
-            Button(model.showSettings ? "Hide Settings" : "Settings") {
-                model.showSettings.toggle()
-            }.keyboardShortcut(",", modifiers: .command)
+            command(.reload)
+            command(.toggleActivity)
+            command(.toggleSettings)
         }
         CommandMenu("Sync") {
-            Button("Sync Everything…") { model.planSync(target: .all) }.keyboardShortcut("s", modifiers: [.command, .shift])
-            Button("Install Skill…") { model.route = .installSkill }.keyboardShortcut("i")
-            Button("Add MCP Server…") { model.route = .addMcp }.keyboardShortcut("n")
+            command(.syncAll)
+            command(.installSkill)
+            command(.addMcp)
             Divider()
-            Button("Check for Updates…") { model.checkUpdate() }
+            command(.checkUpdate)
             Divider()
-            Button("User Scope") { model.scope = .user }.keyboardShortcut("1")
-            Button("Project Scope") { model.scope = .project }.keyboardShortcut("2")
+            command(.userScope)
+            command(.projectScope)
+        }
+    }
+
+    @ViewBuilder
+    private func command(_ id: SyncaCommand) -> some View {
+        if let shortcut = id.shortcut {
+            Button(id.title(model)) { id.run(model) }
+                .keyboardShortcut(shortcut, modifiers: id.modifiers)
+        } else {
+            Button(id.title(model)) { id.run(model) }
         }
     }
 }

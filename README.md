@@ -91,6 +91,8 @@ Never silent overwrite.
 
 ## macOS app
 
+The window is a client of this CLI. Layering is in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ```bash
 cd macos
 make            # build synca.app (needs the synca CLI on PATH or SYNCA_BIN)

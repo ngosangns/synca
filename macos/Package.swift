@@ -4,14 +4,18 @@ import PackageDescription
 let package = Package(
     name: "synca-app",
     platforms: [.macOS(.v14)],
+    dependencies: [
+        .package(path: "../../ns-shell"),
+    ],
     targets: [
-        // Pure logic: CLI client, models, plan parser, log store, file tree.
-        // No UI imports, so it is unit-testable and reusable.
+        // Client of the synca CLI. No UI imports.
+        // Zed: crates/client. The Go module is crates/project.
         .target(name: "SyncaKit", path: "Sources/SyncaKit"),
-        // SwiftUI app: state (Model), design system (Design), feature views.
+        // Composition root. App binds SyncaCommand. WindowShell is the
+        // workspace chrome. Design is the component crate. See ../ARCHITECTURE.md.
         .executableTarget(
             name: "synca-app",
-            dependencies: ["SyncaKit"],
+            dependencies: ["SyncaKit", .product(name: "NSShell", package: "ns-shell")],
             path: "Sources/synca-app"
         ),
         // Drives AppModel end to end against the real CLI in a sandboxed HOME.

@@ -1,4 +1,5 @@
 import SwiftUI
+import NSShell
 
 /// synca logo: two opposing sync arrows orbiting a central hub, on a
 /// brand-gradient squircle tile. Geometry mirrors `Tools/make-icon.swift`

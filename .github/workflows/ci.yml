@@ -40,6 +40,17 @@ jobs:
         with:
           name: synca-cli
           path: ${{ runner.temp }}/cli
+      - name: Fetch ns-shell
+        env:
+          NS_SHELL_DEPLOY_KEY: ${{ secrets.NS_SHELL_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$NS_SHELL_DEPLOY_KEY" > ~/.ssh/ns_shell
+          chmod 600 ~/.ssh/ns_shell
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/ns_shell -o IdentitiesOnly=yes" \
+            git clone --depth 1 git@github.com:ngosangns/ns-shell.git "$GITHUB_WORKSPACE/../ns-shell"
       - name: Test (SyncaKit + end-to-end app tests against the real CLI, sandboxed HOME)
         working-directory: macos
         env:

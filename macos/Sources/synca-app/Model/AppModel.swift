@@ -1,6 +1,7 @@
 import SwiftUI
 import Observation
 import SyncaKit
+import NSShell
 
 enum InventoryState: Equatable {
     case idle, loading, ready, needsProject
@@ -32,22 +33,6 @@ enum DetailRoute {
 struct Operation: Identifiable {
     let id = UUID()
     var title: String
-}
-
-struct Toast: Identifiable, Equatable {
-    enum Style { case success, error, info }
-    let id = UUID()
-    let message: String
-    let style: Style
-}
-
-struct Confirmation: Identifiable {
-    let id = UUID()
-    let title: String
-    let message: String
-    let confirmTitle: String
-    let destructive: Bool
-    let action: @MainActor () -> Void
 }
 
 /// Single source of truth for UI state. Views read; user intents call the

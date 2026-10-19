@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 /// Second column: heading + content for the current `DetailRoute`.
 struct DetailView: View {

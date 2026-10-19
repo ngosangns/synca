@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 private extension Icon {
     static let source = "tray.full"

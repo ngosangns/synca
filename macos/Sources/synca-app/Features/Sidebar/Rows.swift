@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 /// Shared column widths so headers and rows align exactly.
 enum Col {

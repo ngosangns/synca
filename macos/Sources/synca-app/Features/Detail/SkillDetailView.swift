@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 struct SkillDetailView: View {
     @Environment(AppModel.self) private var model

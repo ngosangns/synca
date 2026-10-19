@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 /// Right-column settings: which providers Synca talks to, and wiping one provider's copies.
 struct SettingsView: View {

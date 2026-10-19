@@ -1,4 +1,5 @@
 import AppKit
+import NSShell
 
 /// Folder chooser shared by every "add project" entry point.
 @MainActor enum ProjectPicker {

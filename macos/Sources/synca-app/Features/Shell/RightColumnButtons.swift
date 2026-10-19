@@ -1,4 +1,5 @@
 import SwiftUI
+import NSShell
 
 /// Trailing rail that stays visible when a column is collapsed.
 /// Panel triggers live here so Activity can be opened again from the window.

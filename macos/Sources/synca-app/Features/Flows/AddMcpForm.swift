@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 struct AddMcpForm: View {
     @Environment(AppModel.self) private var model

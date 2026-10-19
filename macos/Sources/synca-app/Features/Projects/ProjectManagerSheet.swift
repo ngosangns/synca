@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import SyncaKit
+import NSShell
 
 private extension Icon {
     static let drop = "square.and.arrow.down.on.square"

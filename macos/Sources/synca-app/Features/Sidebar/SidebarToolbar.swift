@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 /// Scope switcher, project folder row and action buttons.
 struct SidebarToolbar: View {

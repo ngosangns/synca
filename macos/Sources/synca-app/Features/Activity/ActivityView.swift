@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 struct ActivityView: View {
     @Environment(AppModel.self) private var model

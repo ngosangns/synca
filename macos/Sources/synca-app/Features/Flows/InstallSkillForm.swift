@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import NSShell
 
 struct InstallSkillForm: View {
     @Environment(AppModel.self) private var model

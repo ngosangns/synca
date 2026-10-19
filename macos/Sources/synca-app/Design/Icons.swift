@@ -1,3 +1,4 @@
+import NSShell
 /// Central SF Symbols registry — the app's icon library. Views NEVER hard-code
 /// symbol names; add a case here instead so icons stay consistent.
 enum Icon {

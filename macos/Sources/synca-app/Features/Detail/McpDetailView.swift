@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 struct McpDetailView: View {
     @Environment(AppModel.self) private var model

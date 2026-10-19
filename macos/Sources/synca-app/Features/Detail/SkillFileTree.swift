@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import SyncaKit
+import NSShell
 
 /// How the explorer arranges the outline and the preview.
 enum ExplorerLayout: Sendable {

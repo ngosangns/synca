@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import SyncaKit
+import NSShell
 
 struct ActivityRow: View {
     let entry: LogEntry

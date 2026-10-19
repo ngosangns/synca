@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import SyncaKit
+import NSShell
 
 struct UpdateView: View {
     let state: UpdateState

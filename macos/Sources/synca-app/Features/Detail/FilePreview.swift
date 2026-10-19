@@ -1,5 +1,6 @@
 import SwiftUI
 import SyncaKit
+import NSShell
 
 /// Monospaced, selectable preview of a file; loaded off the main thread.
 struct FilePreview: View {
