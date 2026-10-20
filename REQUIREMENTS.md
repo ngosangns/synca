@@ -1,11 +1,10 @@
 # synca — Requirements (locked 2026-10-02)
 
 ## Goal
-CLI + native macOS app (macOS arm64 first) to **browse and sync skills + MCP configs** across coding agents.
+CLI (macOS arm64 first) to **browse and sync skills + MCP configs** across coding agents. The window is `synca-gpui` in the sibling repo `ns-gpui`.
 
 ## Stack
 - CLI: Go (`go/`: `internal/core` scan/sync/manage/update, `internal/cli` commands, `cmd/synca`)
-- macOS app: SwiftUI (`macos/`), shells out to the CLI
 - Binary name: `synca`
 
 ## Agents in scope (v1)
@@ -58,7 +57,7 @@ synca update [--check] [--json] [--force]
 ```
 
 ## Update
-GitHub Releases `ngosangns/synca`, install under `~/.local/share/synca/bin/` + symlink `~/.local/bin/synca`. Asset naming TBD (`synca-vX.Y.Z-darwin-arm64` + sha256).
+GitHub Releases `ngosangns/synca`, install under `~/.local/share/synca/bin/synca-X.Y.Z` + symlink `~/.local/bin/synca`. Asset: `synca-vX.Y.Z-darwin-arm64`. The updater requires the GitHub sha256 digest, does not downgrade, and does not replace any other path.
 
 ## Non-goals v1
 In-app skill editor; running MCP servers; session tokens; background auto-sync; Windows/Linux (phase 2); crush/goose.

@@ -60,5 +60,6 @@ synca update [--check]
 
 ## Updating synca
 
-`synca update` checks GitHub Releases and installs to `~/.local/share/synca/bin/` with a symlink
-at `~/.local/bin/synca`.
+`synca update` checks GitHub Releases and installs to `~/.local/share/synca/bin/synca-X.Y.Z`,
+then points `~/.local/bin/synca` at it. It verifies the asset's GitHub sha256 digest, refuses a
+downgrade, and will not replace a binary that is not that install.

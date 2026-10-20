@@ -39,24 +39,28 @@ jobs:
           else
             TAG="${GITHUB_REF_NAME}"
           fi
-          VER="${TAG#v}"
-          # The updater compares against this const; refuse to publish a mismatched tag.
-          SRC_VER="$(sed -n 's/.*Version *= *"\(.*\)"/\1/p' go/internal/core/update.go)"
-          if [ "$SRC_VER" != "$VER" ]; then
-            echo "tag $TAG does not match Version=$SRC_VER in go/internal/core/update.go" >&2
+          VER="$(tr -d '[:space:]' < VERSION)"
+          SRC_VER="$(sed -n 's/.*Version *= *"\(.*\)"/\1/p' go/internal/core/models.go)"
+          if [ "$TAG" != "v${VER}" ] || [ "$SRC_VER" != "$VER" ]; then
+            echo "tag $TAG does not match VERSION=$VER core.Version=$SRC_VER" >&2
             exit 1
           fi
           ASSET="synca-v${VER}-darwin-arm64"
           (cd go && go build -trimpath -ldflags "-s -w" -o "../${ASSET}" ./cmd/synca)
           chmod +x "$ASSET"
-          shasum -a 256 "$ASSET" | awk '{print $1}' > "${ASSET}.sha256"
+          printed="$(./"$ASSET" --version)"
+          if [ "$printed" != "synca ${VER}" ]; then
+            echo "binary printed '$printed', expected 'synca ${VER}'" >&2
+            exit 1
+          fi
+          shasum -a 256 "$ASSET" > SHA256SUMS
           {
             echo "tag=${TAG}"
             echo "asset=${ASSET}"
-            echo "sha_file=${ASSET}.sha256"
             echo "version=${VER}"
           } >> "$GITHUB_OUTPUT"
-          echo "Packed ${ASSET} (sha256=$(cat "${ASSET}.sha256"))"
+          echo "Packed ${ASSET}"
+          cat SHA256SUMS
 
       - name: Create / upload GitHub Release
         env:
@@ -65,7 +69,6 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.pkg.outputs.tag }}"
           ASSET="${{ steps.pkg.outputs.asset }}"
-          SHA="${{ steps.pkg.outputs.sha_file }}"
           VER="${{ steps.pkg.outputs.version }}"
           NOTES_FILE="$(mktemp)"
           cat > "$NOTES_FILE" <<NOTES
@@ -73,9 +76,8 @@ jobs:
 
           ## Install
 
-          After first install:
-
-              synca update
+          After the first install, \`synca update\` replaces \`~/.local/bin/synca\`.
+          It verifies the GitHub asset digest before swapping the symlink.
 
           Manual:
 
@@ -83,20 +85,20 @@ jobs:
               chmod +x synca
               mkdir -p ~/.local/share/synca/bin ~/.local/bin
               cp synca ~/.local/share/synca/bin/synca-${VER}
-              ln -sf ~/.local/share/synca/bin/synca-${VER} ~/.local/bin/synca
+              ln -sfn ../share/synca/bin/synca-${VER} ~/.local/bin/synca
 
           ## Assets
 
-          - Binary: synca-vX.Y.Z-darwin-arm64
-          - Checksum: synca-vX.Y.Z-darwin-arm64.sha256
+          - Binary: ${ASSET}
+          - Checksum: SHA256SUMS
           NOTES
           # Strip the leading indentation introduced by the workflow indent.
           sed -i.bak 's/^          //' "$NOTES_FILE" && rm -f "${NOTES_FILE}.bak"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET" "$SHA" --clobber
+            gh release upload "$TAG" "$ASSET" SHA256SUMS --clobber
             gh release edit "$TAG" --notes-file "$NOTES_FILE" || true
           else
-            gh release create "$TAG" "$ASSET" "$SHA" \
+            gh release create "$TAG" "$ASSET" SHA256SUMS \
               --title "synca ${TAG}" \
               --notes-file "$NOTES_FILE"
           fi

@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/ngosangns/synca/go/internal/core"
+	"github.com/ngosangns/synca/go/internal/updater"
 )
 
 // flags is a minimal clap-style flag parser: --long value, --long=value, --bool.
@@ -133,8 +135,19 @@ func Run(args []string) error {
 	case "provider":
 		return runProvider(rest)
 	case "update":
-		f := parseFlags(rest, commonBool)
-		return runUpdate(f.bools["check"], f.bools["json"], f.bools["force"])
+		err := updater.Run(context.Background(), updater.Options{
+			Args:    rest,
+			Version: core.Version,
+			Stdout:  os.Stdout,
+			Stderr:  os.Stderr,
+		})
+		if err == nil {
+			return nil
+		}
+		if _, ok := err.(*updater.ExitError); ok {
+			os.Exit(updater.ExitCode(err))
+		}
+		return err
 	default:
 		return fmt.Errorf("unknown command '%s' (see: synca help)", cmd)
 	}
@@ -474,73 +487,6 @@ func runProvider(args []string) error {
 	}
 	for _, line := range log {
 		fmt.Println(line)
-	}
-	return nil
-}
-
-func runUpdate(checkOnly, jsonOut, force bool) error {
-	if checkOnly {
-		info, err := core.CheckUpdate()
-		if err != nil {
-			return err
-		}
-		if jsonOut {
-			fmt.Println(jsonCompact(struct {
-				OK              bool    `json:"ok"`
-				Current         string  `json:"current"`
-				Latest          *string `json:"latest"`
-				UpdateAvailable bool    `json:"update_available"`
-				URL             *string `json:"url"`
-				AssetName       *string `json:"asset_name"`
-				Message         string  `json:"message"`
-			}{true, info.Current, info.Latest, info.UpdateAvailable, info.ReleaseURL, info.AssetName, info.Message}))
-		} else {
-			fmt.Println("Current:", info.Current)
-			if info.Latest != nil {
-				fmt.Println("Latest: ", *info.Latest)
-			}
-			if info.ReleaseURL != nil {
-				fmt.Println("Release:", *info.ReleaseURL)
-			}
-			fmt.Println(info.Message)
-			if info.UpdateAvailable {
-				fmt.Println("Run: synca update")
-			}
-		}
-		return nil
-	}
-
-	var info *core.UpdateInfo
-	var err error
-	if force {
-		info, err = core.InstallUpdate(true)
-	} else {
-		var chk *core.UpdateInfo
-		chk, err = core.CheckUpdate()
-		if err == nil && chk.UpdateAvailable {
-			info, err = core.InstallUpdate(false)
-		} else {
-			info = chk
-		}
-	}
-	if err != nil {
-		return err
-	}
-	if jsonOut {
-		fmt.Println(jsonCompact(struct {
-			OK              bool    `json:"ok"`
-			Current         string  `json:"current"`
-			Latest          *string `json:"latest"`
-			UpdateAvailable bool    `json:"update_available"`
-			Message         string  `json:"message"`
-			Path            string  `json:"path"`
-		}{true, info.Current, info.Latest, info.UpdateAvailable, info.Message, core.SymlinkPath()}))
-	} else {
-		fmt.Println("Current:", info.Current)
-		if info.Latest != nil {
-			fmt.Println("Latest: ", *info.Latest)
-		}
-		fmt.Println(info.Message)
 	}
 	return nil
 }

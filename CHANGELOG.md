@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.6 — 2026-10-20
+
+- **Self-update:** `synca update` now requires the GitHub asset digest, compares versions as X.Y.Z, and installs by renaming a new file into `~/.local/share/synca/bin/`. It refuses a downgrade, a binary that is not the installed symlink, and a binary inside an app bundle. A sidecar `.sha256` file is no longer accepted as proof.
+- **Window:** the SwiftUI app is gone from this repo. The window is `synca-gpui` in `ns-gpui`. CI tests the Go CLI only.
+
 ## 0.2.5 — 2026-10-19
 
 - **macOS window:** chrome, tokens, and confirmation come from the shared `ns-shell` package. Layering is in `ARCHITECTURE.md`.

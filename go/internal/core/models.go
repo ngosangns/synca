@@ -1,5 +1,5 @@
 // Package core scans, syncs and manages skills + MCP configs across coding agents:
-// models, paths, agents, discover, scan, sync, pi skills, manage, update.
+// models, paths, agents, discover, scan, sync, pi skills, manage.
 package core
 
 import (
@@ -11,6 +11,10 @@ import (
 	"sort"
 	"strings"
 )
+
+// Version is the release the updater compares with GitHub tags. It matches the
+// repo-root VERSION file; release tooling refuses a tag that does not.
+const Version = "0.2.6"
 
 // ---------- Scope ----------
 

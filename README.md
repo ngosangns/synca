@@ -2,9 +2,9 @@
 
 # synca
 
-Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one CLI, with a native macOS app in [`macos/`](macos/) on top of it.
+Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one CLI.
 
-The CLI is the source of truth; the app only runs it. Skills/MCP sync only — no daemon or services.
+The CLI is the source of truth. The window is `synca-gpui` in the sibling repo `ns-gpui`. Skills/MCP sync only — no daemon or services.
 
 ## Manage skills / MCP
 
@@ -21,18 +21,17 @@ synca mcp remove my-server --scope user
 
 ### From GitHub Release (recommended)
 
-Asset name: `synca-vX.Y.Z-darwin-arm64` (+ `.sha256`).
+Asset name: `synca-vX.Y.Z-darwin-arm64`. `SHA256SUMS` is for a manual check. `synca update` verifies the GitHub asset digest instead.
 
 ```bash
-TAG=v0.2.1
+TAG=v0.2.5
 ASSET=synca-${TAG}-darwin-arm64
-curl -fsSL -o /tmp/$ASSET \
-  "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"
-chmod +x /tmp/$ASSET
-mkdir -p ~/.local/share/synca/bin ~/.local/bin
 VER=${TAG#v}
-cp /tmp/$ASSET ~/.local/share/synca/bin/synca-$VER
-ln -sf ~/.local/share/synca/bin/synca-$VER ~/.local/bin/synca
+mkdir -p ~/.local/share/synca/bin ~/.local/bin
+curl -fsSL -o ~/.local/share/synca/bin/synca-$VER \
+  "https://github.com/ngosangns/synca/releases/download/${TAG}/${ASSET}"
+chmod 755 ~/.local/share/synca/bin/synca-$VER
+ln -sfn ../share/synca/bin/synca-$VER ~/.local/bin/synca
 ```
 
 Then self-update later:
@@ -88,19 +87,6 @@ synca sync all --scope user --on-conflict keep-source
 | `keep-target` | Prefer non-canonical agent copy; promote it to hub and sync out |
 
 Never silent overwrite.
-
-## macOS app
-
-The window is a client of this CLI. Layering is in [ARCHITECTURE.md](ARCHITECTURE.md).
-
-```bash
-cd macos
-make            # build synca.app (needs the synca CLI on PATH or SYNCA_BIN)
-make install    # copy to /Applications
-make test       # SyncaKit + end-to-end app tests (sandboxed HOME)
-```
-
-Three columns: Library (user/project switcher, project manager, actions, skills + MCP lists), Details (file tree, presence, conflict diffs) and Activity (command log).
 
 ## Canonical paths
 
