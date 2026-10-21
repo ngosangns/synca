@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.7 — 2026-10-21
+
+- **Language:** the repo is English only. The bundled `synca` skill no longer lists a Vietnamese trigger phrase.
+
 ## 0.2.6 — 2026-10-20
 
 - **Self-update:** `synca update` now requires the GitHub asset digest, compares versions as X.Y.Z, and installs by renaming a new file into `~/.local/share/synca/bin/`. It refuses a downgrade, a binary that is not the installed symlink, and a binary inside an app bundle. A sidecar `.sha256` file is no longer accepted as proof.

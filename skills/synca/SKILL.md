@@ -1,6 +1,6 @@
 ---
 name: synca
-description: "Browse, install, and sync skills + MCP configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) via the `synca` CLI. Use when installing a skill or MCP server so every agent sees it, checking drift between canonical ~/.agents and per-agent dirs, resolving skill/MCP conflicts, or updating synca itself. Triggers: synca, sync skills, sync mcp, install skill for all agents, đồng bộ skills."
+description: "Browse, install, and sync skills + MCP configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) via the `synca` CLI. Use when installing a skill or MCP server so every agent sees it, checking drift between canonical ~/.agents and per-agent dirs, resolving skill/MCP conflicts, or updating synca itself. Triggers: synca, sync skills, sync mcp, install skill for all agents."
 ---
 
 # synca
