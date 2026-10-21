@@ -75,43 +75,36 @@ type ManagePlan struct {
 	Notes   []string       `json:"notes"`
 }
 
-// ResolveSkillSource resolves a local path or git URL to a skill dir.
-// Returns (skillDir, cleanup func or nil).
+// ResolveSkillSource resolves a local path, owner/repo shorthand, Git URL,
+// or skills.sh URL to one skill directory. Remote sources are cloned into a
+// temporary directory and cleaned up by the caller.
 func ResolveSkillSource(src string) (string, func(), error) {
 	trimmed := strings.TrimSpace(src)
 	if trimmed == "" {
 		return "", nil, fmt.Errorf("empty skill source")
 	}
-	looksGit := strings.HasPrefix(trimmed, "git@") ||
-		strings.HasPrefix(trimmed, "http://") ||
-		strings.HasPrefix(trimmed, "https://") ||
-		strings.HasSuffix(trimmed, ".git") ||
-		strings.Contains(trimmed, "github.com/") ||
-		strings.Contains(trimmed, "gitlab.com/")
-
+	remote, requested := normalizeSkillSource(trimmed)
 	st, statErr := os.Stat(trimmed)
 	isDir := statErr == nil && st.IsDir()
-
-	if looksGit && !isDir {
+	if remote != "" && !isDir {
 		tmp, err := os.MkdirTemp("", "synca-*")
 		if err != nil {
 			return "", nil, err
 		}
 		cleanup := func() { os.RemoveAll(tmp) }
 		dest := filepath.Join(tmp, "repo")
-		cmd := exec.Command("git", "clone", "--depth", "1", trimmed, dest)
+		cmd := exec.Command("git", "clone", "--depth", "1", remote, dest)
 		if err := cmd.Run(); err != nil {
 			cleanup()
 			return "", nil, fmt.Errorf("git clone failed for %s", trimmed)
 		}
-		dir, err := findSkillDir(dest)
+		dir, err := findSkillDirAt(dest, requested)
 		if err != nil {
 			cleanup()
 			return "", nil, err
 		}
 		return dir, cleanup, nil
 	}
-
 	path := trimmed
 	if !filepath.IsAbs(path) {
 		cwd, err := os.Getwd()
@@ -128,6 +121,37 @@ func ResolveSkillSource(src string) (string, func(), error) {
 		return "", nil, err
 	}
 	return dir, nil, nil
+}
+
+func normalizeSkillSource(src string) (string, string) {
+	if strings.HasPrefix(src, "https://skills.sh/") || strings.HasPrefix(src, "http://skills.sh/") {
+		parts := strings.Split(strings.Trim(src, "/"), "/")
+		if len(parts) >= 6 && parts[2] != "p" {
+			return "https://github.com/" + parts[3] + "/" + parts[4] + ".git", parts[5]
+		}
+		return "", ""
+	}
+	if strings.HasPrefix(src, "git@") || strings.HasSuffix(src, ".git") || strings.Contains(src, "github.com/") || strings.Contains(src, "gitlab.com/") {
+		return src, ""
+	}
+	parts := strings.Split(strings.Trim(src, "/"), "/")
+	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+		return "https://github.com/" + parts[0] + "/" + parts[1] + ".git", ""
+	}
+	return "", ""
+}
+
+func findSkillDirAt(root, requested string) (string, error) {
+	if requested != "" {
+		candidates := []string{filepath.Join(root, requested), filepath.Join(root, "skills", requested), filepath.Join(root, ".agents", "skills", requested)}
+		for _, candidate := range candidates {
+			if st, err := os.Stat(filepath.Join(candidate, "SKILL.md")); err == nil && !st.IsDir() {
+				return candidate, nil
+			}
+		}
+		return "", fmt.Errorf("skill %s not found in remote repository", requested)
+	}
+	return findSkillDir(root)
 }
 
 func findSkillDir(path string) (string, error) {

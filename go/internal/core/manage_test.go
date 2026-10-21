@@ -124,6 +124,19 @@ func TestMcpFromCLIMapsRemoteAndLocalAliases(t *testing.T) {
 		t.Error("expected error for bogus transport")
 	}
 }
+func TestNormalizeSkillSource(t *testing.T) {
+	cases := map[string]struct{ remote, requested string }{
+		"vercel-labs/agent-skills":                               {"https://github.com/vercel-labs/agent-skills.git", ""},
+		"https://skills.sh/vercel-labs/agent-skills/find-skills": {"https://github.com/vercel-labs/agent-skills.git", "find-skills"},
+		"https://github.com/vercel-labs/agent-skills.git":        {"https://github.com/vercel-labs/agent-skills.git", ""},
+	}
+	for input, want := range cases {
+		remote, requested := normalizeSkillSource(input)
+		if remote != want.remote || requested != want.requested {
+			t.Errorf("normalizeSkillSource(%q) = %q, %q; want %q, %q", input, remote, requested, want.remote, want.requested)
+		}
+	}
+}
 
 func TestMcpFromCLIURL(t *testing.T) {
 	n, err := McpFromCLI("sse", nil, sp("https://example.com/mcp"), nil)

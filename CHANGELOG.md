@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.8 — 2026-10-22
+
+- **Remote skills:** `synca skills install` accepts `owner/repo` shorthand and skills.sh repository URLs, resolves requested skills inside cloned repositories, and preserves local/Git source behavior.
+- **MCP aliases:** existing `local`/`remote` transport aliases continue to normalize to stdio/HTTP while SSE remains supported.
+
 ## 0.2.7 — 2026-10-21
 
 - **Language:** the repo is English only. The bundled `synca` skill no longer lists a Vietnamese trigger phrase.

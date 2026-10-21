@@ -10,10 +10,14 @@ The CLI is the source of truth. The window is `synca-gpui` in the sibling repo `
 
 ```bash
 synca skills install ./my-skill --scope user
+synca skills install vercel-labs/agent-skills --scope user
+synca skills install https://skills.sh/vercel-labs/agent-skills/find-skills --dry-run
 synca skills install https://github.com/org/skill-repo.git --dry-run
 synca skills remove my-skill            # unlink agents (canonical kept)
 synca skills remove my-skill --purge --yes
 synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
+synca mcp add hosted-server --transport http --url https://example.com/mcp
+synca mcp add stream-server --transport sse --url https://example.com/sse
 synca mcp remove my-server --scope user
 ```
 
