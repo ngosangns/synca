@@ -19,10 +19,7 @@ func TestNormalizeKey(t *testing.T) {
 		}
 	}
 }
-
 func TestPiSkillNameOK(t *testing.T) {
-	ok := []string{"abc", "a-b-c", "a1", "x" + string(make([]byte, 0))}
-	_ = ok
 	for _, n := range []string{"skill", "my-skill-2", "a"} {
 		if !PiSkillNameOK(n) {
 			t.Errorf("expected ok: %q", n)
