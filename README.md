@@ -4,31 +4,36 @@
 
 Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one CLI.
 
-The CLI is the source of truth. The window is `synca-gpui` in the sibling repo `ns-gpui`. Skills/MCP sync only — no daemon or services.
+The CLI is the source of truth and the only writer. The window is `synca-gpui` in the sibling repo [`ns-gpui`](#window). There is no daemon or background service.
 
-## Manage skills / MCP
+## Screenshots
 
-```bash
-synca skills install ./my-skill --scope user
-synca skills install vercel-labs/agent-skills --scope user
-synca skills install https://skills.sh/vercel-labs/agent-skills/find-skills --dry-run
-synca skills install https://github.com/org/skill-repo.git --dry-run
-synca skills remove my-skill            # unlink agents (canonical kept)
-synca skills remove my-skill --purge --yes
-synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
-synca mcp add hosted-server --transport http --url https://example.com/mcp
-synca mcp add stream-server --transport sse --url https://example.com/sse
-synca mcp remove my-server --scope user
-```
+The window, driven by the CLI (`synca-gpui`, dark theme).
+
+![Library and a skill detail in the main window](docs/screenshots/synca-main-1440.png)
+
+Main view (1440×900): skills and MCP servers on the left, the selected entry on the right.
+
+![Install dialog, Skill tab](docs/screenshots/synca-install-dialog.png)
+
+The Install dialog, Skill tab: pick a local folder, remote Git source, skills.sh link or JSON, then preview the dry-run before anything is written.
+
+![Install dialog, MCP server tab](docs/screenshots/synca-install-mcp.png)
+
+The MCP server tab of the same dialog: name the server, choose a local process, HTTP, SSE or a JSON config, then preview the normalized config.
+
+<img src="docs/screenshots/synca-mobile-390.png" alt="The list screen in a 390 pt wide window" width="320">
+
+The list screen in a narrow (390 pt) window: the list and the detail become separate screens, and the Install dialog fills the window.
 
 ## Install
 
 ### From GitHub Release (recommended)
 
-Asset name: `synca-vX.Y.Z-darwin-arm64`. `SHA256SUMS` is for a manual check. `synca update` verifies the GitHub asset digest instead.
+macOS arm64 only. Asset name: `synca-vX.Y.Z-darwin-arm64`. `SHA256SUMS` is for a manual check. `synca update` verifies the GitHub asset digest instead.
 
 ```bash
-TAG=v0.2.5
+TAG=v0.2.9
 ASSET=synca-${TAG}-darwin-arm64
 VER=${TAG#v}
 mkdir -p ~/.local/share/synca/bin ~/.local/bin
@@ -38,7 +43,7 @@ chmod 755 ~/.local/share/synca/bin/synca-$VER
 ln -sfn ../share/synca/bin/synca-$VER ~/.local/bin/synca
 ```
 
-Then self-update later:
+Make sure `~/.local/bin` is on `PATH`. Then self-update later:
 
 ```bash
 synca update --check
@@ -47,61 +52,223 @@ synca update
 
 ### From source
 
+Needs Go (version in `go/go.mod`) and, for the `task` commands, [go-task](https://taskfile.dev).
+
 ```bash
 git clone https://github.com/ngosangns/synca.git
-cd synca/go
-make install    # builds, copies to ~/.local/share/synca/bin, links ~/.local/bin/synca
+cd synca
+task install        # builds, copies to ~/.local/share/synca/bin/synca-<VERSION>, links ~/.local/bin/synca
 ```
 
-Needs Go (version in `go/go.mod`).
+`task install` runs `make install` in `go/`, so `cd go && make install` does the same without `task`.
 
-Local release packaging:
+| Task | What it does |
+| --- | --- |
+| `task install` | Same as `task cli:install` |
+| `task cli:build` | Build `go/bin/synca` only |
+| `task cli:install` | Build, install to `~/.local/share/synca/bin`, link `~/.local/bin/synca` |
+| `task test` / `task cli:test` | `go vet ./...` and `go test ./...` |
+| `task release:build` | Test and build `dist/synca-vX.Y.Z-darwin-arm64` plus `SHA256SUMS`. No publish |
+| `task release:publish` | Same, then `gh release create` or upload for the `VERSION` file. Asks first |
+| `task dev:install` | Build the window from `../ns-gpui` and install `Synca Dev.app` into `~/Applications` |
+| `task dev:install:all` | `task install`, then `task dev:install` |
 
-```bash
-./scripts/release-local.sh            # test + build dist/ asset + sha256
-./scripts/release-local.sh --publish  # also gh release create/upload
-```
-
-CI builds the same asset on tag push (`v*`) via `.github/workflows/release.yml`.
+The version lives in the root `VERSION` file and must match `Version` in `go/internal/core/models.go`; the release script and CI refuse a tag that does not match. CI (`.github/workflows/ci.yml`) vets, tests and builds the CLI. `release.yml` builds the asset on a `v*` tag push.
 
 ## Usage
 
 ```bash
-synca                 # print help
+synca                 # print help (same as synca help)
+synca --version       # synca 0.2.9
+```
 
+```text
+synca skills <list|install|remove> [flags]
+synca mcp <list|add|remove> [flags]
+synca sync <skills|mcp|all> [flags]
+synca provider clear <name> [--scope --cwd --yes --dry-run]
+synca update [--check] [--json] [--force]
+```
+
+### Common flags
+
+| Flag | Meaning |
+| --- | --- |
+| `--scope user\|project` | Default `user`. `project` needs a git repo (see [Scope](#scope)) |
+| `--cwd <dir>` | Where to look for the project root. Default `.` |
+| `--agents a,b,c` | Restrict to these agents. Unknown names are ignored; an empty result means all agents |
+| `--dry-run` | Print the plan and change nothing |
+| `--json` | JSON output. Only `skills list`, `mcp list` and `update` honor it |
+| `--on-conflict skip\|keep-source\|keep-target` | `sync` only. Default `skip` |
+| `--key <name>` | `sync skills` and `sync mcp` only. Plan just one entry (used by the window; not in `--help`) |
+
+Flags take `--flag value` or `--flag=value`.
+
+### List
+
+```bash
 synca skills list --scope user
 synca skills list --scope project --json
 synca mcp list --scope user
+```
 
+Text output is one line per entry with the agents that have it, and `MISMATCH` when copies differ.
+
+### Skills
+
+```bash
+synca skills install ./my-skill --scope user
+synca skills install vercel-labs/agent-skills --scope user
+synca skills install https://skills.sh/vercel-labs/agent-skills/find-skills --dry-run
+synca skills install https://github.com/org/skill-repo.git --dry-run
+synca skills remove my-skill                  # unlink agents, keep the canonical copy
+synca skills remove my-skill --purge          # also delete canonical; asks you to retype the name
+synca skills remove my-skill --purge --yes
+```
+
+`install` takes a source and copies the skill into the canonical dir, then links it into each agent dir:
+
+- a local folder with `SKILL.md`, or a folder that holds exactly one skill folder (it also looks in `.agents/skills`);
+- `owner/repo` shorthand (GitHub);
+- a Git URL (`https://github.com/...`, `gitlab.com`, `git@...`, anything ending in `.git`);
+- a `https://skills.sh/<owner>/<repo>/<skill>` URL.
+
+Remote sources are cloned with `git clone --depth 1` into a temp dir that is removed afterwards. `git` must be installed. A skill's key is its `SKILL.md` `name`, not the folder name; `remove` works on that key.
+
+### MCP servers
+
+```bash
+synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
+synca mcp add hosted-server --transport http --url https://example.com/mcp
+synca mcp add stream-server --transport sse --url https://example.com/sse
+synca mcp remove my-server --scope user
+```
+
+`mcp add` flags: `--transport stdio|http|sse` (default `stdio`; `local` means stdio, `remote` means http), `--command` (required for stdio, split like a shell line), `--url` (required for http and sse), `--enabled true|false`. `sse` is kept only when the URL ends in `/sse`; otherwise the server is stored as `http`.
+
+### Sync
+
+```bash
 synca sync skills --scope user --dry-run
 synca sync mcp --scope user --dry-run
 synca sync all --scope user --dry-run
 synca sync skills --scope user --on-conflict skip
-synca sync skills --scope user --on-conflict keep-source
-synca sync mcp --scope user --on-conflict keep-target
 synca sync all --scope user --on-conflict keep-source
+synca sync mcp --scope user --on-conflict keep-target
 ```
 
-### Conflict flags
+Run with `--dry-run` first. The plan lists every action as JSON: `ensure_canonical_copy`, `symlink_skill`, `ensure_mcp_hub`, `write_mcp_server`, `skip_same`, `skip_mcp_same`, `conflict_skill`, `conflict_mcp`, and for skills also `repair_skill_frontmatter` and `collapse_skill_alias` (see below). `ensure_mcp_hub` is an idempotent upsert and shows up even when the hub is already correct.
 
 | `--on-conflict` | Behavior |
 |-----------------|----------|
-| `skip` (default) | Leave conflicting entries untouched (on a TTY, CLI prompts once if conflicts exist) |
+| `skip` (default) | Leave conflicting entries untouched. On a TTY, a non-dry run with conflicts asks once for `skip`, `keep-source` or `keep-target` |
 | `keep-source` | Prefer canonical / Agents (or first) content; overwrite others + symlink/write |
-| `keep-target` | Prefer non-canonical agent copy; promote it to hub and sync out |
+| `keep-target` | Prefer the first agent copy whose content differs from the source; promote it to the hub and sync out |
 
 Never silent overwrite.
 
-## Canonical paths
+Skill sync also keeps skills loadable by Pi: it plans a `repair_skill_frontmatter` for canonical `SKILL.md` files whose `name` is not lowercase letters, digits and single hyphens (max 64), or whose plain values contain `:`. It plans `collapse_skill_alias` for byte-identical duplicate folders of one skill in the canonical dir. In user scope it also collapses a project `.agents/skills` copy identical to a user one.
 
-- Skills user: `~/.agents/skills/<name>/`
-- Skills project: `<git-root>/.agents/skills/<name>/`
-- MCP user hub: `~/.agents/mcp.json`
-- MCP project: `<git-root>/.mcp.json`
+### Providers
 
-Sync prefers **symlinks** into per-agent skill dirs pointing at canonical `.agents/skills`. MCP writers preserve existing **env secrets** on the target when the source lacks a key.
+```bash
+synca provider clear kiro --dry-run
+synca provider clear kiro --scope user --yes
+```
 
-## Agents (v1)
+Deletes one agent's skill copies and MCP server entries in the scope. It refuses without `--yes` (unless `--dry-run`). It never touches the canonical hub, and only removes the MCP server table or key from the agent's config, not the rest of the file. `agents` is not a valid provider.
+
+### Update
+
+```bash
+synca update --check          # report only
+synca update --check --json
+synca update                  # install the latest release
+synca update --force          # reinstall the current version
+```
+
+Details:
+
+- darwin-arm64 only.
+- Replaces only a binary installed as `~/.local/share/synca/bin/synca-<ver>` (or the regular file `~/.local/bin/synca`). It refuses other binaries and anything inside an `.app` bundle.
+- The release asset must carry a GitHub SHA-256 digest; a sidecar checksum file is not accepted. It refuses a downgrade.
+- Uses `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token` when available, to avoid API rate limits.
+- Exit status: 1 for a failed update, 2 for bad arguments.
+
+## Where things live
+
+### Scope
+
+- `user` (default): `~/.agents/...` plus per-agent home dirs.
+- `project`: `<git-root>/.agents/...` plus repo-local agent dirs. The git root is the nearest parent of `--cwd` that contains `.git`. Outside a repo, `list` shows nothing and `install`, `add` and `remove` fail with "no project root".
+
+### Canonical paths
+
+| | User | Project |
+| --- | --- | --- |
+| Skills | `~/.agents/skills/<name>/` | `<git-root>/.agents/skills/<name>/` |
+| MCP hub | `~/.agents/mcp.json` | `<git-root>/.mcp.json` |
+
+Sync prefers **symlinks** from each agent's skills dir to the canonical dir. An agent dir that is itself a symlink to the canonical dir is left alone. MCP writers translate to each agent's format (JSON, Grok TOML, OpenCode `mcp` key) and preserve existing **env secrets** on the target when the source lacks a key.
+
+### Agent paths
+
+Skills dirs (`<root>` is `~` for user scope, `<git-root>` for project scope):
+
+| Agent | User | Project |
+| --- | --- | --- |
+| Grok | `~/.grok/skills` | `.grok/skills` |
+| Devin | `~/.config/devin/skills` | `.devin/skills` |
+| OMP | `~/.omp/agent/skills` | `.omp/skills` |
+| Pi | `~/.pi/agent/skills` | `.pi/skills` |
+| Kiro | `~/.kiro/skills` | `.kiro/skills` |
+| OpenCode | `~/.config/opencode/skills` | `.opencode/skills` |
+| Claude | `~/.claude/skills` | `.claude/skills` |
+| Cursor | `~/.cursor/skills` | `.cursor/skills` |
+
+MCP config files:
+
+| Agent | User | Project |
+| --- | --- | --- |
+| Grok | `~/.grok/config.toml` | `.grok/config.toml` |
+| Devin | `~/.config/devin/mcp_config.json` | none |
+| OMP | `~/.omp/agent/mcp.json` | `.omp/mcp.json` |
+| Pi | `~/.pi/agent/mcp.json` | `.pi/mcp.json` |
+| Kiro | `~/.kiro/settings/mcp.json` | `.kiro/settings/mcp.json` |
+| OpenCode | `~/.config/opencode/opencode.json` | `opencode.json` |
+| Claude | `~/.claude.json` | none |
+| Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
+
+## Window
+
+The window is the `synca-gpui` crate in the sibling repo `ns-gpui` (clone it next to this repo). It shells out to `~/.local/bin/synca` (or `synca` on `PATH`), so install the CLI first.
+
+```bash
+task dev:install      # builds ../ns-gpui and installs ~/Applications/Synca Dev.app
+# or, from ns-gpui:
+cargo run --release -p synca-gpui
+```
+
+What it does, all through the CLI:
+
+- User scope or a project (workspace) scope; a project folder list is remembered.
+- Library of skills and MCP servers with search, sync state per entry, and agent chips.
+- Skill detail with a file tree and Markdown preview; Sync this, Unlink, Purge.
+- One **Install…** button opens one dialog with two tabs: **Skill** (local folder, remote Git source, skills.sh, JSON) and **MCP server** (local process, HTTP, SSE, JSON). Each tab keeps what you typed when you switch; ⌘1 and ⌘2 switch tabs, Left and Right move between them when the tab row has focus, and Escape closes the dialog.
+- Sync runs a `--dry-run` first and shows the plan; conflicts can be skipped or resolved per entry.
+- Activity panel (command log) and Settings panel: turn agents on or off, delete one agent's data (`provider clear`), check for updates.
+
+Window state is stored in the macOS defaults domain `com.ngosangns.synca` (`synca.projects`, `synca.projectDir`, `synca.disabledProviders`). The activity log is `~/Library/Application Support/synca/command-log.jsonl`. A disabled agent is excluded by passing `--agents` to every command. The CLI itself reads no config file.
+
+## Agent skill
+
+`skills/synca/SKILL.md` is a skill that teaches coding agents to use this CLI instead of hand-editing agent dirs. Install it with:
+
+```bash
+synca skills install ./skills/synca --scope user
+```
+
+## Agents
 
 Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor (+ canonical `agents`).
 
