@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -197,37 +198,16 @@ func releaseJSON(tag, asset string, size uint64, digest string, draft, prereleas
 	}
 	return `{
 		"tag_name": "` + tag + `",
-		"draft": ` + boolText(draft) + `,
-		"prerelease": ` + boolText(prerelease) + `,
+		"draft": ` + strconv.FormatBool(draft) + `,
+		"prerelease": ` + strconv.FormatBool(prerelease) + `,
 		"assets": [{
 			"name": "` + asset + `",
 			"state": "uploaded",
-			"size": ` + itoa(size) + `,
+			"size": ` + strconv.FormatUint(size, 10) + `,
 			"digest": ` + digestJSON + `,
 			"browser_download_url": "` + url + `"
 		}]
 	}`
-}
-
-func boolText(v bool) string {
-	if v {
-		return "true"
-	}
-	return "false"
-}
-
-func itoa(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	for v > 0 {
-		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(buf[i:])
 }
 
 func boolPtr(v bool) *bool { return &v }

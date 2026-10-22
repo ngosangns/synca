@@ -253,18 +253,30 @@ func HashSkillDir(dir string) (string, error) {
 	if st, err := os.Stat(md); err == nil && !st.IsDir() {
 		return HashFile(md)
 	}
+	return hashTree(dir, false), nil
+}
+
+// hashTree hashes every regular file under dir (plus symlink targets when
+// withLinks), keyed by slash-separated relative path and sorted by it.
+func hashTree(dir string, withLinks bool) string {
 	var parts [][2]any // [rel, bytes]
 	if st, err := os.Stat(dir); err == nil && st.IsDir() {
 		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
-			if err != nil || !info.Mode().IsRegular() {
+			if err != nil {
 				return nil
 			}
 			rel, e := filepath.Rel(dir, p)
 			if e != nil {
 				rel = p
 			}
-			if data, err := os.ReadFile(p); err == nil {
-				parts = append(parts, [2]any{filepath.ToSlash(rel), data})
+			rel = filepath.ToSlash(rel)
+			if withLinks && info.Mode()&os.ModeSymlink != 0 {
+				target, _ := os.Readlink(p)
+				parts = append(parts, [2]any{rel, []byte(target)})
+			} else if info.Mode().IsRegular() {
+				if data, err := os.ReadFile(p); err == nil {
+					parts = append(parts, [2]any{rel, data})
+				}
 			}
 			return nil
 		})
@@ -277,5 +289,5 @@ func HashSkillDir(dir string) (string, error) {
 		buf = append(buf, p[1].([]byte)...)
 		buf = append(buf, 0)
 	}
-	return HashBytes(buf), nil
+	return HashBytes(buf)
 }

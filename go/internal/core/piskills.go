@@ -184,37 +184,7 @@ func effectiveName(text, folderName string) string {
 
 // TreeHash hashes a skill tree (files + symlink targets), sorted by rel path.
 func TreeHash(dir string) (string, error) {
-	var parts [][2]any
-	if st, err := os.Stat(dir); err == nil && st.IsDir() {
-		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			rel, e := filepath.Rel(dir, p)
-			if e != nil {
-				rel = p
-			}
-			rel = filepath.ToSlash(rel)
-			if info.Mode()&os.ModeSymlink != 0 {
-				target, _ := os.Readlink(p)
-				parts = append(parts, [2]any{rel, []byte(target)})
-			} else if info.Mode().IsRegular() {
-				if data, err := os.ReadFile(p); err == nil {
-					parts = append(parts, [2]any{rel, data})
-				}
-			}
-			return nil
-		})
-	}
-	sort.Slice(parts, func(i, j int) bool { return parts[i][0].(string) < parts[j][0].(string) })
-	var buf []byte
-	for _, p := range parts {
-		buf = append(buf, p[0].(string)...)
-		buf = append(buf, 0)
-		buf = append(buf, p[1].([]byte)...)
-		buf = append(buf, 0)
-	}
-	return HashBytes(buf), nil
+	return hashTree(dir, true), nil
 }
 
 type skillDir struct {
