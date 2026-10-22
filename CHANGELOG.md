@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.10 — 2026-10-22
+
+- **Internals:** skill and Pi tree hashing share one walker; duplicate test helpers removed. No behavior change.
+- **Docs:** README rewritten against the current CLI, with screenshots of the Synca window (install dialog, MCP tab, narrow layout).
+
 ## 0.2.9 — 2026-10-22
 
 - Maintenance release: remove obsolete test scaffolding.
