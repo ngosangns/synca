@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["key", "display_name", "description", "scope", "presence", "mismatch"],
+    "properties": {
+      "key": {"type": "string"},
+      "display_name": {"type": "string"},
+      "description": {"type": ["string", "null"]},
+      "scope": {"enum": ["user", "project"]},
+      "presence": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["agent", "path", "is_symlink", "symlink_target", "content_hash"],
+          "properties": {
+            "agent": {
+              "enum": ["agents", "grok", "devin", "kiro", "opencode", "claude", "cursor"]
+            },
+            "path": {"type": "string"},
+            "is_symlink": {"type": "boolean"},
+            "symlink_target": {"type": ["string", "null"]},
+            "content_hash": {"type": "string"}
+          }
+        }
+      },
+      "mismatch": {"type": "boolean"}
+    }
+  }
+}

@@ -1,5 +1,7 @@
 # synca — Requirements (locked 2026-10-02)
 
+The agent list below was amended when Pi and OMP were dropped. Existing Pi and OMP directories are ignored and never deleted.
+
 ## Goal
 CLI (macOS arm64 first) to **browse and sync skills + MCP configs** across coding agents. The window is `synca-gpui` in the sibling repo `ns-gpui`.
 
@@ -8,8 +10,8 @@ CLI (macOS arm64 first) to **browse and sync skills + MCP configs** across codin
 - Binary name: `synca`
 
 ## Agents in scope (v1)
-Grok Build, Devin, OMP, Pi, Kiro CLI, OpenCode, Claude Code (compat paths), Cursor (compat paths).
-Out of scope v1: crush, goose.
+Grok Build, Devin, Kiro CLI, OpenCode, Claude Code (compat paths), Cursor (compat paths), plus the canonical `agents` hub.
+Out of scope: crush, goose, omp, pi.
 
 ## Canonical paths
 - Skills user: `~/.agents/skills/<name>/SKILL.md`
@@ -18,12 +20,12 @@ Out of scope v1: crush, goose.
 - MCP project canonical: `<git-root>/.mcp.json`
 
 ### Per-agent skill roots (read; write via symlink to canonical when syncing)
-**User:** `~/.grok/skills`, `~/.config/devin/skills`, `~/.pi/agent/skills`, `~/.kiro/skills`, `~/.config/opencode/skills`, `~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`
-**Project:** `.grok/skills`, `.devin/skills`, `.omp/skills`, `.pi/skills`, `.kiro/skills`, `.opencode/skills`, `.claude/skills`, `.cursor/skills`, `.agents/skills`
+**User:** `~/.grok/skills`, `~/.config/devin/skills`, `~/.kiro/skills`, `~/.config/opencode/skills`, `~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`
+**Project:** `.grok/skills`, `.devin/skills`, `.kiro/skills`, `.opencode/skills`, `.claude/skills`, `.cursor/skills`, `.agents/skills`
 
 ### Per-agent MCP configs (read/write adapters)
-**User:** `~/.grok/config.toml` `[mcp_servers.<name>]`; `~/.config/devin/mcp_config.json`; `~/.omp/agent/mcp.json`; `~/.pi/agent/mcp.json`; `~/.kiro/settings/mcp.json`; `~/.config/opencode/opencode.json` key `mcp`; `~/.claude.json` `mcpServers`; `~/.cursor/mcp.json`; hub `~/.agents/mcp.json`
-**Project:** `.mcp.json`; `.grok/config.toml`; `.omp/mcp.json`; `.pi/mcp.json`; `.kiro/settings/mcp.json`; project `opencode.json`; `.cursor/mcp.json`
+**User:** `~/.grok/config.toml` `[mcp_servers.<name>]`; `~/.config/devin/mcp_config.json`; `~/.kiro/settings/mcp.json`; `~/.config/opencode/opencode.json` key `mcp`; `~/.claude.json` `mcpServers`; `~/.cursor/mcp.json`; hub `~/.agents/mcp.json`
+**Project:** `.mcp.json`; `.grok/config.toml`; `.kiro/settings/mcp.json`; project `opencode.json`; `.cursor/mcp.json`
 
 ## Inventory
 Two scopes: **User** and **Project** (cwd → git root; if not a git repo, show a clear empty/error state).

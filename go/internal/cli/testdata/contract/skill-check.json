@@ -1,0 +1,7 @@
+{
+  "dest": "/tmp/skills/synca",
+  "inSync": false,
+  "missing": ["SKILL.md"],
+  "different": [],
+  "extra": ["notes.md"]
+}

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["key", "scope", "presence", "mismatch"],
+    "properties": {
+      "key": {"type": "string"},
+      "scope": {"enum": ["user", "project"]},
+      "presence": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["agent", "path", "normalized", "fingerprint"],
+          "properties": {
+            "agent": {
+              "enum": ["agents", "grok", "devin", "kiro", "opencode", "claude", "cursor"]
+            },
+            "path": {"type": "string"},
+            "normalized": {
+              "type": "object",
+              "required": ["transport", "command", "url", "args", "enabled", "env_keys"],
+              "properties": {
+                "transport": {"type": "string"},
+                "command": {"type": ["array", "null"], "items": {"type": "string"}},
+                "url": {"type": ["string", "null"]},
+                "args": {"type": ["array", "null"], "items": {"type": "string"}},
+                "enabled": {"type": ["boolean", "null"]},
+                "env_keys": {"type": "array", "items": {"type": "string"}},
+                "env": {"type": "object", "additionalProperties": {"type": "string"}}
+              }
+            },
+            "fingerprint": {"type": "string"}
+          }
+        }
+      },
+      "mismatch": {"type": "boolean"}
+    }
+  }
+}

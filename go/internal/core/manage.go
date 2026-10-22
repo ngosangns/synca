@@ -246,6 +246,7 @@ func presenceAgentIn(name string, filter []AgentKind) bool {
 }
 
 func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, purge bool) (*ManagePlan, error) {
+	requested := key
 	key = NormalizeKey(key)
 	canonical := CanonicalSkillsDir(scope, cwd)
 	if canonical == "" {
@@ -259,10 +260,12 @@ func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, pur
 	// Skill keys come from SKILL.md frontmatter, so the folder name can differ
 	// from the key (folder "gitbutler", name "but"). Act on the paths the scan
 	// actually found for this key instead of guessing <root>/<key>.
+	found := false
 	for _, e := range ScanSkills(scope, cwd) {
 		if e.Key != key {
 			continue
 		}
+		found = true
 		for _, p := range e.Presence {
 			if p.Agent == AgentAgents.String() {
 				if purge {
@@ -284,6 +287,9 @@ func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, pur
 				Kind: "unlink_skill", Path: p.Path, SkillKey: key, Agent: p.Agent,
 			})
 		}
+	}
+	if !found {
+		return nil, fmt.Errorf("no skill named %s", requested)
 	}
 	if len(plan.Actions) == 0 {
 		plan.Notes = append(plan.Notes, fmt.Sprintf("nothing to remove for skill '%s'", key))
@@ -321,8 +327,7 @@ func PlanAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter
 
 func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind) (*ManagePlan, error) {
 	key := NormalizeKey(name)
-	hub := CanonicalMcpPath(scope, cwd)
-	if hub == "" {
+	if CanonicalMcpPath(scope, cwd) == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
 	plan := &ManagePlan{
@@ -330,19 +335,34 @@ func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind) (*Ma
 		DryRun: true,
 		Notes:  []string{fmt.Sprintf("remove mcp '%s' from hub + agents", key)},
 	}
-	plan.Actions = append(plan.Actions, ManageAction{
-		Kind: "remove_mcp_hub", Hub: hub, Server: key,
-	})
-	for _, r := range McpConfigPaths(scope, cwd) {
-		if r.Agent == AgentAgents {
+	found := false
+	for _, e := range ScanMcp(scope, cwd) {
+		if e.Key != key {
 			continue
 		}
-		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
-			continue
+		found = true
+		for _, p := range e.Presence {
+			// The hub is removed whenever the server is in it, including when
+			// --agents limits which agent configs are edited.
+			if p.Agent == AgentAgents.String() {
+				plan.Actions = append(plan.Actions, ManageAction{
+					Kind: "remove_mcp_hub", Hub: p.Path, Server: key,
+				})
+				continue
+			}
+			if agentsFilter != nil && !presenceAgentIn(p.Agent, agentsFilter) {
+				continue
+			}
+			plan.Actions = append(plan.Actions, ManageAction{
+				Kind: "remove_mcp_agent", Path: p.Path, Agent: p.Agent, Server: key,
+			})
 		}
-		plan.Actions = append(plan.Actions, ManageAction{
-			Kind: "remove_mcp_agent", Path: r.Path, Agent: r.Agent.String(), Server: key,
-		})
+	}
+	if !found {
+		return nil, fmt.Errorf("no MCP server named %s", name)
+	}
+	if len(plan.Actions) == 0 {
+		plan.Notes = append(plan.Notes, fmt.Sprintf("nothing to remove for mcp '%s'", key))
 	}
 	return plan, nil
 }
@@ -416,6 +436,23 @@ func ApplyManagePlan(plan *ManagePlan, mcpPayload *McpNormalized) ([]string, err
 	return log, nil
 }
 
+// deleteNormalized removes every entry whose name is the same MCP key.
+// It reports whether a key was present so a missing server is not a rewrite.
+func deleteNormalized(obj map[string]any, server string) bool {
+	if len(obj) == 0 {
+		return false
+	}
+	want := NormalizeKey(server)
+	removed := false
+	for name := range obj {
+		if NormalizeKey(name) == want {
+			delete(obj, name)
+			removed = true
+		}
+	}
+	return removed
+}
+
 func removeMcpFromJSONHub(hub, server string) error {
 	if st, err := os.Stat(hub); err != nil || st.IsDir() {
 		return nil
@@ -428,8 +465,9 @@ func removeMcpFromJSONHub(hub, server string) error {
 	if err := json.Unmarshal(text, &root); err != nil {
 		return err
 	}
-	if obj, ok := root["mcpServers"].(map[string]any); ok {
-		delete(obj, server)
+	obj, ok := root["mcpServers"].(map[string]any)
+	if !ok || !deleteNormalized(obj, server) {
+		return nil
 	}
 	return writeJSONPretty(hub, root)
 }
@@ -443,14 +481,16 @@ func removeMcpFromAgent(path, agent, server string) error {
 		return removeMcpFromGrokToml(path, server)
 	case "opencode":
 		root := readJSONFile(path)
-		if obj, ok := root["mcp"].(map[string]any); ok {
-			delete(obj, server)
+		obj, ok := root["mcp"].(map[string]any)
+		if !ok || !deleteNormalized(obj, server) {
+			return nil
 		}
 		return writeJSONPretty(path, root)
 	default:
 		root := readJSONFile(path)
-		if obj, ok := root["mcpServers"].(map[string]any); ok {
-			delete(obj, server)
+		obj, ok := root["mcpServers"].(map[string]any)
+		if !ok || !deleteNormalized(obj, server) {
+			return nil
 		}
 		return writeJSONPretty(path, root)
 	}
@@ -468,8 +508,9 @@ func removeMcpFromGrokToml(path, server string) error {
 	if _, err := toml.Decode(string(text), &root); err != nil {
 		return err
 	}
-	if servers, ok := root["mcp_servers"].(map[string]any); ok {
-		delete(servers, server)
+	servers, ok := root["mcp_servers"].(map[string]any)
+	if !ok || !deleteNormalized(servers, server) {
+		return nil
 	}
 	var sb strings.Builder
 	if err := toml.NewEncoder(&sb).Encode(root); err != nil {

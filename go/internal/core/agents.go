@@ -7,7 +7,9 @@ type agentPath struct {
 	Path  string
 }
 
-// SkillRoots.
+// SkillRoots lists the skill directories synca reads and writes.
+// Pi (~/.pi) and OMP (~/.omp) are not targets. Directories that already
+// exist for them are left untouched.
 func SkillRoots(scope Scope, cwd string) []agentPath {
 	if scope == ScopeUser {
 		h := HomeDir()
@@ -15,8 +17,6 @@ func SkillRoots(scope Scope, cwd string) []agentPath {
 			{AgentAgents, filepath.Join(h, ".agents/skills")},
 			{AgentGrok, filepath.Join(h, ".grok/skills")},
 			{AgentDevin, filepath.Join(h, ".config/devin/skills")},
-			{AgentPi, filepath.Join(h, ".pi/agent/skills")},
-			{AgentOmp, filepath.Join(h, ".omp/agent/skills")},
 			{AgentKiro, filepath.Join(h, ".kiro/skills")},
 			{AgentOpenCode, filepath.Join(h, ".config/opencode/skills")},
 			{AgentClaude, filepath.Join(h, ".claude/skills")},
@@ -31,8 +31,6 @@ func SkillRoots(scope Scope, cwd string) []agentPath {
 		{AgentAgents, filepath.Join(root, ".agents/skills")},
 		{AgentGrok, filepath.Join(root, ".grok/skills")},
 		{AgentDevin, filepath.Join(root, ".devin/skills")},
-		{AgentOmp, filepath.Join(root, ".omp/skills")},
-		{AgentPi, filepath.Join(root, ".pi/skills")},
 		{AgentKiro, filepath.Join(root, ".kiro/skills")},
 		{AgentOpenCode, filepath.Join(root, ".opencode/skills")},
 		{AgentClaude, filepath.Join(root, ".claude/skills")},
@@ -48,8 +46,6 @@ func McpConfigPaths(scope Scope, cwd string) []agentPath {
 			{AgentAgents, filepath.Join(h, ".agents/mcp.json")},
 			{AgentGrok, filepath.Join(h, ".grok/config.toml")},
 			{AgentDevin, filepath.Join(h, ".config/devin/mcp_config.json")},
-			{AgentOmp, filepath.Join(h, ".omp/agent/mcp.json")},
-			{AgentPi, filepath.Join(h, ".pi/agent/mcp.json")},
 			{AgentKiro, filepath.Join(h, ".kiro/settings/mcp.json")},
 			{AgentOpenCode, filepath.Join(h, ".config/opencode/opencode.json")},
 			{AgentClaude, filepath.Join(h, ".claude.json")},
@@ -63,8 +59,6 @@ func McpConfigPaths(scope Scope, cwd string) []agentPath {
 	return []agentPath{
 		{AgentAgents, filepath.Join(root, ".mcp.json")},
 		{AgentGrok, filepath.Join(root, ".grok/config.toml")},
-		{AgentOmp, filepath.Join(root, ".omp/mcp.json")},
-		{AgentPi, filepath.Join(root, ".pi/mcp.json")},
 		{AgentKiro, filepath.Join(root, ".kiro/settings/mcp.json")},
 		{AgentOpenCode, filepath.Join(root, "opencode.json")},
 		{AgentCursor, filepath.Join(root, ".cursor/mcp.json")},

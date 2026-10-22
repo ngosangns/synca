@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dryRun", "scope", "actions", "notes"],
+  "properties": {
+    "dryRun": {"type": "boolean"},
+    "scope": {"enum": ["user", "project"]},
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "copy_skill",
+              "purge_canonical_skill",
+              "remove_mcp_agent",
+              "remove_mcp_hub",
+              "symlink_skill",
+              "unlink_skill",
+              "upsert_mcp_hub",
+              "write_mcp_agent"
+            ]
+          },
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "link": {"type": "string"},
+          "target": {"type": "string"},
+          "path": {"type": "string"},
+          "skill_key": {"type": "string"},
+          "agent": {"type": "string"},
+          "hub": {"type": "string"},
+          "server": {"type": "string"}
+        }
+      }
+    },
+    "notes": {"type": "array", "items": {"type": "string"}},
+    "applied": {"type": "array", "items": {"type": "string"}}
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "dryRun": true,
+  "scope": "user",
+  "actions": [
+    {
+      "kind": "copy_skill",
+      "from": "/tmp/src/alpha",
+      "to": "/tmp/agents/skills/alpha",
+      "skill_key": "alpha"
+    },
+    {
+      "kind": "remove_mcp_agent",
+      "path": "/tmp/cursor/mcp.json",
+      "agent": "cursor",
+      "server": "demo"
+    }
+  ],
+  "notes": []
+}

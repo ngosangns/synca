@@ -1,0 +1,41 @@
+[
+  {
+    "key": "alpha",
+    "display_name": "alpha",
+    "description": "Alpha skill",
+    "scope": "user",
+    "presence": [
+      {
+        "agent": "agents",
+        "path": "/home/fixture/.agents/skills/alpha",
+        "is_symlink": false,
+        "symlink_target": null,
+        "content_hash": "abc123"
+      },
+      {
+        "agent": "grok",
+        "path": "/home/fixture/.grok/skills/alpha",
+        "is_symlink": true,
+        "symlink_target": "/home/fixture/.agents/skills/alpha",
+        "content_hash": "abc123"
+      }
+    ],
+    "mismatch": false
+  },
+  {
+    "key": "beta",
+    "display_name": "beta",
+    "description": null,
+    "scope": "project",
+    "presence": [
+      {
+        "agent": "cursor",
+        "path": "/work/.cursor/skills/beta",
+        "is_symlink": false,
+        "symlink_target": null,
+        "content_hash": "dangling"
+      }
+    ],
+    "mismatch": true
+  }
+]

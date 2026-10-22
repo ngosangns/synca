@@ -1,0 +1,9 @@
+{
+  "dryRun": true,
+  "scope": "user",
+  "provider": "kiro",
+  "lines": [
+    "skills: nothing at /tmp/kiro/skills",
+    "mcp: nothing at /tmp/kiro/settings/mcp.json"
+  ]
+}

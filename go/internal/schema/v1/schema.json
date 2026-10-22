@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["name", "schemaVersion", "commands", "error"],
+  "properties": {
+    "name": {"enum": ["synca"]},
+    "schemaVersion": {"type": "integer", "enum": [1]},
+    "commands": {
+      "type": "object",
+      "required": [
+        "skills list",
+        "skills install",
+        "skills remove",
+        "mcp list",
+        "mcp add",
+        "mcp remove",
+        "sync skills",
+        "sync mcp",
+        "sync all",
+        "provider clear",
+        "doctor",
+        "skill install",
+        "skill check",
+        "update",
+        "version",
+        "schema"
+      ],
+      "additionalProperties": {"$ref": "#/$defs/command"}
+    },
+    "error": {"type": "object"}
+  },
+  "$defs": {
+    "command": {
+      "type": "object",
+      "required": ["summary", "mutates", "destructive", "flags", "output"],
+      "properties": {
+        "summary": {"type": "string"},
+        "mutates": {"type": "boolean"},
+        "destructive": {"type": "boolean"},
+        "flags": {"type": "array", "items": {"type": "string"}},
+        "output": {"type": ["object", "null"]}
+      }
+    }
+  }
+}

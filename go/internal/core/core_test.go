@@ -1,7 +1,6 @@
 package core
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -17,28 +16,6 @@ func TestNormalizeKey(t *testing.T) {
 		}
 	}
 }
-func TestPiSkillNameOK(t *testing.T) {
-	for _, n := range []string{"skill", "my-skill-2", "a"} {
-		if !PiSkillNameOK(n) {
-			t.Errorf("expected ok: %q", n)
-		}
-	}
-	for _, n := range []string{"", "-lead", "trail-", "double--dash", "UPPER", "has space", "under_score"} {
-		if PiSkillNameOK(n) {
-			t.Errorf("expected reject: %q", n)
-		}
-	}
-}
-
-func TestSlugify(t *testing.T) {
-	if got := SlugifySkillName("My Skill!"); got != "my-skill" {
-		t.Errorf("got %q", got)
-	}
-	if got := SlugifySkillName("!!!"); got != "skill" {
-		t.Errorf("fallback got %q", got)
-	}
-}
-
 func TestCanonicalTransport(t *testing.T) {
 	s := func(v string) *string { return &v }
 	url := func(v string) *string { return &v }
@@ -91,22 +68,5 @@ func TestMcpFromCLI(t *testing.T) {
 	n2, err := McpFromCLI("http", nil, &u, nil)
 	if err != nil || n2.URL == nil || *n2.URL != u {
 		t.Errorf("http: %v %v", n2, err)
-	}
-}
-
-func TestFrontmatterRepair(t *testing.T) {
-	text := "---\nname: Bad Name\ndescription: a: b\ncustom: fine\n---\n# body\n"
-	got := RepairSkillFrontmatter(text, "bad-name")
-	if got == "" {
-		t.Fatal("expected repair")
-	}
-	if !strings.Contains(got, "name: bad-name") {
-		t.Errorf("name not repaired: %q", got)
-	}
-	if !strings.Contains(got, `description: "a: b"`) {
-		t.Errorf("description not quoted: %q", got)
-	}
-	if RepairSkillFrontmatter("no frontmatter", "x") != "" {
-		t.Error("expected no-op")
 	}
 }

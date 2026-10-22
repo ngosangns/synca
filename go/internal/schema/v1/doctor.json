@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ok", "scope", "drift", "dangling", "missing", "mcp"],
+  "properties": {
+    "ok": {"type": "boolean"},
+    "scope": {"enum": ["user", "project"]},
+    "drift": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agent", "skill", "path", "canonical", "differs"],
+        "properties": {
+          "agent": {"type": "string"},
+          "skill": {"type": "string"},
+          "path": {"type": "string"},
+          "canonical": {"type": "string"},
+          "differs": {"type": "boolean"}
+        }
+      }
+    },
+    "dangling": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/link"}
+    },
+    "missing": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/link"}
+    },
+    "mcp": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agent", "server", "path", "reason"],
+        "properties": {
+          "agent": {"type": "string"},
+          "server": {"type": "string"},
+          "path": {"type": "string"},
+          "hub": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "link": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "skill", "path"],
+      "properties": {
+        "agent": {"type": "string"},
+        "skill": {"type": "string"},
+        "path": {"type": "string"},
+        "target": {"type": "string"}
+      }
+    }
+  }
+}

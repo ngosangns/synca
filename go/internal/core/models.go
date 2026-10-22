@@ -1,5 +1,5 @@
 // Package core scans, syncs and manages skills + MCP configs across coding agents:
-// models, paths, agents, discover, scan, sync, pi skills, manage.
+// models, paths, agents, discover, scan, sync, manage, doctor.
 package core
 
 import (
@@ -42,8 +42,6 @@ const (
 	AgentAgents AgentKind = iota
 	AgentGrok
 	AgentDevin
-	AgentOmp
-	AgentPi
 	AgentKiro
 	AgentOpenCode
 	AgentClaude
@@ -51,8 +49,7 @@ const (
 )
 
 var agentNames = [...]string{
-	"agents", "grok", "devin", "omp",
-	"pi", "kiro", "opencode", "claude", "cursor",
+	"agents", "grok", "devin", "kiro", "opencode", "claude", "cursor",
 }
 
 func (a AgentKind) String() string { return agentNames[a] }
@@ -60,8 +57,8 @@ func (a AgentKind) String() string { return agentNames[a] }
 // AllAgents in the canonical enum order (used for presence sort).
 func AllAgents() []AgentKind {
 	return []AgentKind{
-		AgentAgents, AgentGrok, AgentDevin, AgentOmp,
-		AgentPi, AgentKiro, AgentOpenCode, AgentClaude, AgentCursor,
+		AgentAgents, AgentGrok, AgentDevin,
+		AgentKiro, AgentOpenCode, AgentClaude, AgentCursor,
 	}
 }
 

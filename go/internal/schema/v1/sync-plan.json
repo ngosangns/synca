@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["dryRun", "scope", "onConflict", "actions", "conflicts"],
+  "properties": {
+    "dryRun": {"type": "boolean"},
+    "scope": {"enum": ["user", "project"]},
+    "onConflict": {"enum": ["skip", "keep-source", "keep-target"]},
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "enum": [
+              "conflict_skill",
+              "conflict_mcp",
+              "ensure_canonical_copy",
+              "ensure_mcp_hub",
+              "skip_mcp_same",
+              "skip_same",
+              "symlink_skill",
+              "write_mcp_server"
+            ]
+          },
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "link": {"type": "string"},
+          "target": {"type": "string"},
+          "path": {"type": "string"},
+          "skill_key": {"type": "string"},
+          "agent": {"type": "string"},
+          "reason": {"type": "string"},
+          "paths": {"type": "array", "items": {"type": "string"}},
+          "hashes": {"type": "array", "items": {"type": "string"}},
+          "hub": {"type": "string"},
+          "server": {"type": "string"},
+          "source_agent": {"type": "string"},
+          "fingerprints": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["skill", "key", "policy"],
+        "properties": {
+          "skill": {"type": "boolean"},
+          "key": {"type": "string"},
+          "policy": {"enum": ["skip", "keep-source", "keep-target"]}
+        }
+      }
+    },
+    "applied": {"type": "array", "items": {"type": "string"}}
+  }
+}

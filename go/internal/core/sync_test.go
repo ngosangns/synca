@@ -262,7 +262,7 @@ func TestMcpWritersKeepArgsWhenCommandIsSingleToken(t *testing.T) {
 		Env:       map[string]string{},
 	}
 	jsonPath := filepath.Join(tmp, "mcp.json")
-	if err := WriteMcpToAgent(jsonPath, AgentPi, "svc", norm); err != nil {
+	if err := WriteMcpToAgent(jsonPath, AgentCursor, "svc", norm); err != nil {
 		t.Fatal(err)
 	}
 	svc := readJSON(t, jsonPath)["mcpServers"].(map[string]any)["svc"].(map[string]any)
@@ -387,19 +387,19 @@ func TestPlanSyncMcpRecordsSingleScope(t *testing.T) {
 // ---- aliased skills roots and dangling links ------------------------------------
 
 // A project may symlink an agent's skills dir to the canonical one
-// (.pi/skills -> ../.agents/skills). Syncing must never turn the canonical copy
+// (.cursor/skills -> ../.agents/skills). Syncing must never turn the canonical copy
 // into a link to itself.
 func aliasedProject(t *testing.T) (proj string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	proj = filepath.Join(t.TempDir(), "proj")
-	for _, d := range []string{filepath.Join(proj, ".git"), filepath.Join(proj, ".agents/skills/unit-testing"), filepath.Join(proj, ".pi")} {
+	for _, d := range []string{filepath.Join(proj, ".git"), filepath.Join(proj, ".agents/skills/unit-testing"), filepath.Join(proj, ".cursor")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := os.Symlink("../.agents/skills", filepath.Join(proj, ".pi/skills")); err != nil {
+	if err := os.Symlink("../.agents/skills", filepath.Join(proj, ".cursor/skills")); err != nil {
 		t.Fatal(err)
 	}
 	// folder name differs from the SKILL.md name -> key "unit-test"
@@ -509,5 +509,49 @@ func TestRemoveSkillNeverDeletesCanonicalThroughAliasedRoot(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(proj, ".agents/skills/unit-test/SKILL.md")); err != nil {
 		t.Fatalf("unlink deleted the canonical copy through the aliased root: %v", err)
+	}
+}
+
+func TestPiAndOmpDirectoriesAreIgnored(t *testing.T) {
+	home := realTempHome(t)
+	piSkill := filepath.Join(home, ".pi/agent/skills/orphan/SKILL.md")
+	ompSkill := filepath.Join(home, ".omp/agent/skills/orphan/SKILL.md")
+	mustWrite(t, piSkill, "---\nname: orphan\n---\npi\n")
+	mustWrite(t, ompSkill, "---\nname: orphan\n---\nomp\n")
+	mustWrite(t, filepath.Join(home, ".pi/agent/mcp.json"), `{"mcpServers":{"pi-only":{"command":"echo"}}}`)
+	mustWrite(t, filepath.Join(home, ".omp/agent/mcp.json"), `{"mcpServers":{"omp-only":{"command":"echo"}}}`)
+
+	for _, e := range ScanSkills(ScopeUser, home) {
+		if e.Key == "orphan" {
+			t.Fatalf("scanned a Pi or OMP skill: %+v", e.Presence)
+		}
+	}
+	for _, e := range ScanMcp(ScopeUser, home) {
+		if e.Key == "pi-only" || e.Key == "omp-only" {
+			t.Fatalf("scanned a Pi or OMP server: %+v", e)
+		}
+	}
+	plan, err := PlanSyncSkills(ScopeUser, home, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcp, err := PlanSyncMcp(ScopeUser, home, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range append(plan.Actions, mcp.Actions...) {
+		blob := a.Path + a.Link + a.From + a.To + a.Hub + a.Target
+		if strings.Contains(blob, "/.pi/") || strings.Contains(blob, "/.omp/") {
+			t.Fatalf("plan touches Pi or OMP: %+v", a)
+		}
+	}
+	if _, err := ApplyPlan(plan, home, ScopeUser, NewDecisions(ConflictSkip)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(piSkill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ompSkill); err != nil {
+		t.Fatal(err)
 	}
 }

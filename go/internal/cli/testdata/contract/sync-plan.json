@@ -1,0 +1,28 @@
+{
+  "dryRun": true,
+  "scope": "user",
+  "onConflict": "skip",
+  "actions": [
+    {
+      "kind": "symlink_skill",
+      "link": "/tmp/grok/skills/alpha",
+      "target": "/tmp/agents/skills/alpha",
+      "skill_key": "alpha"
+    },
+    {
+      "kind": "conflict_skill",
+      "skill_key": "beta",
+      "paths": ["/tmp/agents/skills/beta", "/tmp/grok/skills/beta"],
+      "hashes": ["aaa", "bbb"]
+    },
+    {
+      "kind": "conflict_mcp",
+      "server": "demo",
+      "fingerprints": ["aaa", "bbb"]
+    }
+  ],
+  "conflicts": [
+    {"skill": true, "key": "beta", "policy": "skip"},
+    {"skill": false, "key": "demo", "policy": "skip"}
+  ]
+}

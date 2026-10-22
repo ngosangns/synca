@@ -104,7 +104,7 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
 			continue
 		}
-		// A root that is itself the canonical dir (e.g. .pi/skills -> ../.agents/skills)
+		// A root that is itself the canonical dir (e.g. .cursor/skills -> ../.agents/skills)
 		// already sees every canonical skill; "linking" into it would replace the
 		// canonical copy with a link to itself.
 		if rootAliasesCanonical(r.Path, canonical) {
@@ -114,7 +114,6 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 	}
 
 	plan := &SyncPlan{Scope: scope.String(), DryRun: true, Actions: []SyncAction{}}
-	plan.Actions = append(plan.Actions, PlanPiCompat(scope, cwd, canonical, onlyKey)...)
 
 	for _, skill := range skills {
 		if onlyKey != "" && skill.Key != NormalizeKey(onlyKey) && skill.DisplayName != onlyKey {
@@ -239,7 +238,7 @@ func physicalPath(p string) string {
 }
 
 // rootAliasesCanonical reports whether an agent skills root is the canonical
-// skills dir reached through a symlink (e.g. .pi/skills -> ../.agents/skills).
+// skills dir reached through a symlink (e.g. .cursor/skills -> ../.agents/skills).
 func rootAliasesCanonical(root, canonical string) bool {
 	a, ea := filepath.EvalSymlinks(root)
 	b, eb := filepath.EvalSymlinks(canonical)
@@ -448,39 +447,6 @@ func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecis
 				return log, err
 			}
 			log = append(log, fmt.Sprintf("hub upsert %s in %s", a.Server, a.Hub))
-		case "repair_skill_frontmatter":
-			ok, err := ApplyFrontmatterRepair(a.Path)
-			switch {
-			case err != nil:
-				log = append(log, fmt.Sprintf("repair failed %s (%s): %v", a.SkillKey, a.Path, err))
-			case ok:
-				log = append(log, fmt.Sprintf("repaired frontmatter %s: %s", a.SkillKey, a.Path))
-			default:
-				log = append(log, fmt.Sprintf("skip repair %s: %s", a.SkillKey, a.Path))
-			}
-		case "collapse_skill_alias":
-			if _, err := os.Lstat(a.To); os.IsNotExist(err) {
-				log = append(log, fmt.Sprintf("skip collapse %s: target missing %s", a.SkillKey, a.To))
-				continue
-			}
-			if canonSame(a.From, a.To) {
-				log = append(log, fmt.Sprintf("skip collapse %s: %s already aliases %s", a.SkillKey, a.From, a.To))
-				continue
-			}
-			ha, ea := TreeHash(a.From)
-			hb, eb := TreeHash(a.To)
-			switch {
-			case ea == nil && eb == nil && ha == hb:
-				if err := ForceSymlink(a.From, a.To, "pi-dedupe", &log); err != nil {
-					return log, err
-				}
-			case ea == nil && eb == nil:
-				log = append(log, fmt.Sprintf("skip collapse %s: trees differ %s vs %s", a.SkillKey, a.From, a.To))
-			case ea != nil:
-				log = append(log, fmt.Sprintf("skip collapse %s: %v", a.SkillKey, ea))
-			default:
-				log = append(log, fmt.Sprintf("skip collapse %s: %v", a.SkillKey, eb))
-			}
 		case "write_mcp_server":
 			norm := mcpSource[a.Server]
 			if norm == nil {
@@ -491,9 +457,6 @@ func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecis
 			}
 			log = append(log, fmt.Sprintf("wrote mcp %s -> %s (%s)", a.Server, a.Path, a.Agent))
 		}
-	}
-	if canon := CanonicalSkillsDir(scope, cwd); canon != "" {
-		log = append(log, RepairInstalledSkills(canon)...)
 	}
 	return log, nil
 }

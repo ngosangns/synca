@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **CLI:** `synca version [--json]` prints the version. With `--json` it prints `name`, `version`, `schemaVersion`, `commit`, and `dirty` (`dirty` is true when the VCS working tree was modified at build time). `synca schema [--json] [<command>]` lists commands (`R`/`M`/`D`) and the embedded v1 JSON Schemas.
+- **JSON plans:** `sync skills|mcp|all --json` prints one plan: `dryRun`, `scope`, `onConflict`, `actions`, `conflicts`. Apply adds `applied` and sets `dryRun` to false. Without `--json` the text plan is unchanged. `skills install`, `skills remove`, `mcp add`, and `mcp remove` accept `--json`, and `mcp add` / `mcp remove` accept `--dry-run`.
+- **Exit codes:** usage is 2, a missing path or project root is 3, a failed operation is 5, a destructive command without `--yes` off a TTY is 6, and `doctor` or `skill check` drift is 8. With `--json`, every command prints one `{"error":...}` line on stdout. Without `--json`, stderr stays `synca failed: ...`. `sync --on-conflict skip` still exits 0 when conflicts remain. `update` keeps its own codes (1 failed, 2 usage) and its own JSON report.
+- **Confirm:** `skills remove --purge`, `mcp remove`, and `sync` with `--on-conflict keep-source` or `keep-target` require `--yes` when stdin is not a TTY. `provider clear` requires `--yes` even on a TTY. A dry-run does not. Every command's `--help` exits 0.
+- **doctor:** read-only report of skill drift (a real agent directory whose content differs from canonical), dangling symlinks, missing links, and MCP entries that differ between the hub and an agent.
+- **skill:** `synca skill install [--dest DIR]` writes the embedded `skills/synca` skill. The default dest is `~/.agents/skills/synca`. `synca skill check` exits 8 on drift and 3 when the directory is missing.
+- **Agents:** Pi and OMP are no longer targets. Existing `~/.pi` and `~/.omp` directories are ignored and never deleted. Pi frontmatter repair and alias collapse are gone.
+
 ## 0.2.10 — 2026-10-22
 
 - **Internals:** skill and Pi tree hashing share one walker; duplicate test helpers removed. No behavior change.

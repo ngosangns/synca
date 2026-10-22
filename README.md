@@ -2,7 +2,7 @@
 
 # synca
 
-Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor) from one CLI.
+Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, Kiro, OpenCode, Claude, Cursor) from one CLI. Pi (`~/.pi`) and OMP (`~/.omp`) are not targets. Directories that already exist for them are ignored and never deleted.
 
 The CLI is the source of truth and the only writer. The window is `synca-gpui` in the sibling repo [`ns-gpui`](#window). There is no daemon or background service.
 
@@ -12,7 +12,7 @@ The window, driven by the CLI (`synca-gpui`, dark theme).
 
 ![Library and a skill detail in the main window](docs/screenshots/synca-main-1440.png)
 
-Main view (1440×900): skills and MCP servers on the left, the selected entry on the right.
+Main view (1440×900): User and Workspace scopes, search, and the skill and MCP server list on the left, with Install… and the sync actions pinned at the bottom; the selected entry's scope, sync state, agents, files and markdown preview on the right.
 
 ![Install dialog, Skill tab](docs/screenshots/synca-install-dialog.png)
 
@@ -22,9 +22,9 @@ The Install dialog, Skill tab: pick a local folder, remote Git source, skills.sh
 
 The MCP server tab of the same dialog: name the server, choose a local process, HTTP, SSE or a JSON config, then preview the normalized config.
 
-<img src="docs/screenshots/synca-mobile-390.png" alt="The list screen in a 390 pt wide window" width="320">
+<img src="docs/screenshots/synca-mobile-390.png" alt="A skill detail in a 390 pt wide window" width="320">
 
-The list screen in a narrow (390 pt) window: the list and the detail become separate screens, and the Install dialog fills the window.
+A skill detail in a narrow (390 pt) window: the list and the detail become separate screens (the back arrow returns to the list), and the Install dialog fills the window.
 
 ## Install
 
@@ -86,8 +86,12 @@ synca --version       # synca 0.2.9
 synca skills <list|install|remove> [flags]
 synca mcp <list|add|remove> [flags]
 synca sync <skills|mcp|all> [flags]
-synca provider clear <name> [--scope --cwd --yes --dry-run]
+synca provider clear <name> [--scope --cwd --yes --dry-run --json]
+synca doctor [--scope --cwd --json]
+synca skill <install|check> [--dest DIR] [--json]
 synca update [--check] [--json] [--force]
+synca version [--json]
+synca schema [--json] [<command>]
 ```
 
 ### Common flags
@@ -98,9 +102,10 @@ synca update [--check] [--json] [--force]
 | `--cwd <dir>` | Where to look for the project root. Default `.` |
 | `--agents a,b,c` | Restrict to these agents. Unknown names are ignored; an empty result means all agents |
 | `--dry-run` | Print the plan and change nothing |
-| `--json` | JSON output. Only `skills list`, `mcp list` and `update` honor it |
-| `--on-conflict skip\|keep-source\|keep-target` | `sync` only. Default `skip` |
-| `--key <name>` | `sync skills` and `sync mcp` only. Plan just one entry (used by the window; not in `--help`) |
+| `--json` | One JSON document on stdout. Every command accepts it |
+| `--yes` | Confirm a destructive command. Required off a TTY for `skills remove --purge`, `mcp remove`, and `sync` with `keep-source` or `keep-target`. `provider clear` requires it even on a TTY |
+| `--on-conflict skip\|keep-source\|keep-target` | `sync` only. Default `skip`. `skip` exits 0 and reports conflicts. `keep-source` and `keep-target` overwrite and need `--yes` off a TTY |
+| `--key <name>` | `sync skills` and `sync mcp` only. `sync all` rejects it |
 
 Flags take `--flag value` or `--flag=value`.
 
@@ -141,8 +146,11 @@ Remote sources are cloned with `git clone --depth 1` into a temp dir that is rem
 synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
 synca mcp add hosted-server --transport http --url https://example.com/mcp
 synca mcp add stream-server --transport sse --url https://example.com/sse
-synca mcp remove my-server --scope user
+synca mcp remove my-server --scope user --dry-run
+synca mcp remove my-server --scope user --yes
 ```
+
+`mcp add` and `mcp remove` both accept `--dry-run`. `mcp remove` deletes the server from the hub and from agent configs, so off a TTY it exits 6 unless you pass `--yes`.
 
 `mcp add` flags: `--transport stdio|http|sse` (default `stdio`; `local` means stdio, `remote` means http), `--command` (required for stdio, split like a shell line), `--url` (required for http and sse), `--enabled true|false`. `sse` is kept only when the URL ends in `/sse`; otherwise the server is stored as `http`.
 
@@ -153,21 +161,22 @@ synca sync skills --scope user --dry-run
 synca sync mcp --scope user --dry-run
 synca sync all --scope user --dry-run
 synca sync skills --scope user --on-conflict skip
-synca sync all --scope user --on-conflict keep-source
-synca sync mcp --scope user --on-conflict keep-target
+synca sync all --scope user --on-conflict keep-source --yes
+synca sync mcp --scope user --on-conflict keep-target --yes
+synca sync skills --dry-run --json
 ```
 
-Run with `--dry-run` first. The plan lists every action as JSON: `ensure_canonical_copy`, `symlink_skill`, `ensure_mcp_hub`, `write_mcp_server`, `skip_same`, `skip_mcp_same`, `conflict_skill`, `conflict_mcp`, and for skills also `repair_skill_frontmatter` and `collapse_skill_alias` (see below). `ensure_mcp_hub` is an idempotent upsert and shows up even when the hub is already correct.
+Run with `--dry-run` first. The text plan is one compact JSON object per line. `--json` prints one document instead: `dryRun`, `scope`, `onConflict`, `actions` (those same objects), and `conflicts` (`skill`, `key`, `policy`). An apply adds `applied` and sets `dryRun` to false. Without `--json` the text is unchanged.
+
+Action kinds: `ensure_canonical_copy`, `symlink_skill`, `ensure_mcp_hub`, `write_mcp_server`, `skip_same`, `skip_mcp_same`, `conflict_skill`, `conflict_mcp`. `ensure_mcp_hub` is an idempotent upsert and shows up even when the hub is already correct.
 
 | `--on-conflict` | Behavior |
 |-----------------|----------|
-| `skip` (default) | Leave conflicting entries untouched. On a TTY, a non-dry run with conflicts asks once for `skip`, `keep-source` or `keep-target` |
-| `keep-source` | Prefer canonical / Agents (or first) content; overwrite others + symlink/write |
-| `keep-target` | Prefer the first agent copy whose content differs from the source; promote it to the hub and sync out |
+| `skip` (default) | Leave conflicting entries untouched and exit 0. On a TTY, a non-dry run with conflicts asks once for `skip`, `keep-source` or `keep-target` |
+| `keep-source` | Prefer canonical / Agents (or first) content; overwrite others + symlink/write. Needs `--yes` off a TTY |
+| `keep-target` | Prefer the first agent copy whose content differs from the source; promote it to the hub and sync out. Needs `--yes` off a TTY |
 
-Never silent overwrite.
-
-Skill sync also keeps skills loadable by Pi: it plans a `repair_skill_frontmatter` for canonical `SKILL.md` files whose `name` is not lowercase letters, digits and single hyphens (max 64), or whose plain values contain `:`. It plans `collapse_skill_alias` for byte-identical duplicate folders of one skill in the canonical dir. In user scope it also collapses a project `.agents/skills` copy identical to a user one.
+Never silent overwrite. A dry-run does not need `--yes`.
 
 ### Providers
 
@@ -176,7 +185,7 @@ synca provider clear kiro --dry-run
 synca provider clear kiro --scope user --yes
 ```
 
-Deletes one agent's skill copies and MCP server entries in the scope. It refuses without `--yes` (unless `--dry-run`). It never touches the canonical hub, and only removes the MCP server table or key from the agent's config, not the rest of the file. `agents` is not a valid provider.
+Deletes one agent's skill copies and MCP server entries in the scope. It refuses without `--yes` (unless `--dry-run`) and exits 6, including on a TTY. It never touches the canonical hub, and only removes the MCP server table or key from the agent's config, not the rest of the file. `agents` is not a valid provider. `--json` prints `{dryRun, scope, provider, lines}` where `lines` are the same strings as the text output.
 
 ### Update
 
@@ -193,7 +202,38 @@ Details:
 - Replaces only a binary installed as `~/.local/share/synca/bin/synca-<ver>` (or the regular file `~/.local/bin/synca`). It refuses other binaries and anything inside an `.app` bundle.
 - The release asset must carry a GitHub SHA-256 digest; a sidecar checksum file is not accepted. It refuses a downgrade.
 - Uses `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token` when available, to avoid API rate limits.
-- Exit status: 1 for a failed update, 2 for bad arguments.
+- Exit status: 1 for a failed update, 2 for bad arguments. Other commands use the contract codes below. `update` does not.
+
+### Doctor
+
+```bash
+synca doctor
+synca doctor --json
+```
+
+Read-only. Reports a real agent skill directory whose content differs from canonical, dangling symlinks, missing links in agent skill directories that exist, and MCP entries that differ between the hub and an agent config. Exit 0 when clean, 8 when anything differs. An agent with no skills directory or no MCP file is not reported. Pi and OMP are not inspected.
+
+### Bundled skill
+
+```bash
+synca skill install
+synca skill check
+synca skill check --json
+```
+
+`skill install` writes the embedded copy of `skills/synca` (the source of truth in this repo). The default destination is `~/.agents/skills/synca`. `skill check` exits 0 when that directory matches, 8 when it has drifted, and 3 when it is missing.
+
+### Exit codes
+
+| Exit | When |
+| --- | --- |
+| 2 | Usage: unknown flag, bad argument, unknown command |
+| 3 | Unavailable: missing path or source, or no git root for `--scope project` |
+| 5 | The operation failed |
+| 6 | A destructive command had no `--yes` off a TTY |
+| 8 | `doctor` or `skill check` found drift |
+
+With `--json`, a failure prints one line on stdout: `{"error":{"code","exit","message","hint"}}`. Without `--json`, stderr stays `synca failed: ...` plus an optional `hint:` line. `sync --on-conflict skip` exits 0 and still lists conflicts. Every `--help` / `-h` exits 0.
 
 ## Where things live
 
@@ -219,8 +259,6 @@ Skills dirs (`<root>` is `~` for user scope, `<git-root>` for project scope):
 | --- | --- | --- |
 | Grok | `~/.grok/skills` | `.grok/skills` |
 | Devin | `~/.config/devin/skills` | `.devin/skills` |
-| OMP | `~/.omp/agent/skills` | `.omp/skills` |
-| Pi | `~/.pi/agent/skills` | `.pi/skills` |
 | Kiro | `~/.kiro/skills` | `.kiro/skills` |
 | OpenCode | `~/.config/opencode/skills` | `.opencode/skills` |
 | Claude | `~/.claude/skills` | `.claude/skills` |
@@ -232,8 +270,6 @@ MCP config files:
 | --- | --- | --- |
 | Grok | `~/.grok/config.toml` | `.grok/config.toml` |
 | Devin | `~/.config/devin/mcp_config.json` | none |
-| OMP | `~/.omp/agent/mcp.json` | `.omp/mcp.json` |
-| Pi | `~/.pi/agent/mcp.json` | `.pi/mcp.json` |
 | Kiro | `~/.kiro/settings/mcp.json` | `.kiro/settings/mcp.json` |
 | OpenCode | `~/.config/opencode/opencode.json` | `opencode.json` |
 | Claude | `~/.claude.json` | none |
@@ -265,12 +301,12 @@ Window state is stored in the macOS defaults domain `com.ngosangns.synca` (`sync
 `skills/synca/SKILL.md` is a skill that teaches coding agents to use this CLI instead of hand-editing agent dirs. Install it with:
 
 ```bash
-synca skills install ./skills/synca --scope user
+synca skill install
 ```
 
 ## Agents
 
-Grok, Devin, OMP, Pi, Kiro, OpenCode, Claude, Cursor (+ canonical `agents`).
+Grok, Devin, Kiro, OpenCode, Claude, Cursor (+ canonical `agents`). Pi and OMP are ignored.
 
 ## License
 

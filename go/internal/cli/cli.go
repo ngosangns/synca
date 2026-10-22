@@ -14,11 +14,11 @@ import (
 
 // flags is a minimal clap-style flag parser: --long value, --long=value, --bool.
 type flags struct {
-	args    []string
-	vals    map[string]string
-	bools   map[string]bool
-	pos     []string
-	unknown []string
+	args      []string
+	vals      map[string]string
+	bools     map[string]bool
+	pos       []string
+	flagOrder []string
 }
 
 func parseFlags(args []string, boolFlags map[string]bool) *flags {
@@ -35,6 +35,7 @@ func parseFlags(args []string, boolFlags map[string]bool) *flags {
 			val = name[eq+1:]
 			name = name[:eq]
 		}
+		f.flagOrder = append(f.flagOrder, name)
 		if boolFlags[name] {
 			f.bools[name] = val == "" || val == "true"
 			continue
@@ -60,6 +61,23 @@ func (f *flags) strPtr(name string) *string {
 		return &v
 	}
 	return nil
+}
+
+func (f *flags) unknownFlag(allowed map[string]bool) string {
+	for _, name := range f.flagOrder {
+		if !allowed[name] {
+			return name
+		}
+	}
+	return ""
+}
+
+func allow(names ...string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, name := range names {
+		out[name] = true
+	}
+	return out
 }
 
 func (f *flags) boolVal(name string) *bool {
@@ -123,9 +141,13 @@ func Run(args []string) error {
 	case "help", "--help", "-h":
 		printHelp()
 		return nil
-	case "--version", "-V", "version":
+	case "--version", "-V":
 		fmt.Println("synca", core.Version)
 		return nil
+	case "version":
+		return runVersion(rest)
+	case "schema":
+		return runSchema(rest)
 	case "skills":
 		return runSkills(rest)
 	case "mcp":
@@ -134,6 +156,10 @@ func Run(args []string) error {
 		return runSync(rest)
 	case "provider":
 		return runProvider(rest)
+	case "doctor":
+		return runDoctor(rest)
+	case "skill":
+		return runSkill(rest)
 	case "update":
 		err := updater.Run(context.Background(), updater.Options{
 			Args:    rest,
@@ -149,7 +175,7 @@ func Run(args []string) error {
 		}
 		return err
 	default:
-		return fmt.Errorf("unknown command '%s' (see: synca help)", cmd)
+		return failUsage(jsonIn(args), fmt.Sprintf("unknown command '%s' (see: synca help)", cmd), "see: synca help")
 	}
 }
 
@@ -161,32 +187,104 @@ USAGE:
   synca mcp <list|add|remove> [flags]
   synca sync <skills|mcp|all> [flags]
   synca provider clear <name> [--scope --cwd --yes --dry-run]
+  synca doctor [--scope --cwd --json]
+  synca skill <install|check> [--dest DIR]
   synca update [--check] [--json] [--force]
+  synca version [--json]
+  synca schema [--json] [<command>]
 
 COMMON FLAGS:
   --scope <user|project>   default: user
   --cwd <dir>              project root hint (default: .)
   --json                   machine-readable output
-  --agents <a,b,c>         restrict to agents
+  --agents <a,b,c>         restrict to agents (grok, devin, kiro, opencode, claude, cursor)
   --dry-run                plan only
+  --yes                    confirm a destructive command when stdin is not a TTY
   --on-conflict <policy>   skip|keep-source|keep-target
+`)
+}
+
+func isHelp(s string) bool {
+	return s == "--help" || s == "-h"
+}
+
+func hasHelp(args []string) bool {
+	for _, arg := range args {
+		if isHelp(arg) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonIn(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" || strings.HasPrefix(arg, "--json=") {
+			return true
+		}
+	}
+	return false
+}
+
+// stdinIsTerminal reports whether stdin is a real terminal (see isTTY).
+// Tests replace it so a developer terminal cannot turn a hermetic run into a prompt.
+var stdinIsTerminal = func() bool { return isTTY(os.Stdin) }
+
+func printSkillsHelp() {
+	fmt.Print(`USAGE:
+  synca skills list [--scope user|project] [--cwd <dir>] [--json]
+  synca skills install <source> [--scope --cwd --agents --dry-run --json]
+  synca skills remove <name> [--scope --cwd --agents --purge --yes --dry-run --json]
+`)
+}
+
+func printMcpHelp() {
+	fmt.Print(`USAGE:
+  synca mcp list [--scope user|project] [--cwd <dir>] [--json]
+  synca mcp add <name> [--transport --command --url --enabled --scope --cwd --agents --dry-run --json]
+  synca mcp remove <name> [--scope --cwd --agents --yes --dry-run --json]
+`)
+}
+
+func printSyncHelp() {
+	fmt.Print(`USAGE:
+  synca sync <skills|mcp|all> [--scope --cwd --agents --dry-run --on-conflict --key --yes --json]
+
+--json prints one plan: dryRun, scope, onConflict, actions, conflicts.
+An apply adds applied and sets dryRun to false. Without --json the text plan is unchanged.
+keep-source and keep-target overwrite data and need --yes when stdin is not a TTY.
+--on-conflict skip leaves conflicts in place and exits 0.
+`)
+}
+
+func printProviderHelp() {
+	fmt.Print(`USAGE:
+  synca provider clear <name> [--scope --cwd --yes --dry-run --json]
 `)
 }
 
 func runSkills(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: synca skills <list|install|remove>")
+		return failUsage(jsonIn(args), "usage: synca skills <list|install|remove>", "see: synca skills --help")
+	}
+	if isHelp(args[0]) || (len(args) > 1 && hasHelp(args[1:])) {
+		printSkillsHelp()
+		return nil
 	}
 	sub, rest := args[0], args[1:]
 	f := parseFlags(rest, commonBool)
+	jsonOut := f.bools["json"]
+	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "dry-run", "purge", "yes", "json", "help")); bad != "" {
+		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca skills --help")
+	}
 	scope, err := scopeOf(f)
 	if err != nil {
-		return err
+		return failUsage(jsonOut, err.Error(), "see: synca skills --help")
 	}
 	switch sub {
 	case "list":
 		inv := core.ScanAll(scope, cwdOf(f))
-		if f.bools["json"] {
+		if jsonOut {
 			fmt.Println(jsonPretty(inv.Skills))
 		} else {
 			fmt.Printf("Skills (%s)\n", scope)
@@ -206,63 +304,80 @@ func runSkills(args []string) error {
 		return nil
 	case "install":
 		if len(f.pos) < 1 {
-			return fmt.Errorf("usage: synca skills install <source> [--scope --agents --dry-run --cwd]")
+			return failUsage(jsonOut, "usage: synca skills install <source> [--scope --agents --dry-run --cwd]", "see: synca skills --help")
 		}
 		filter, err := agentsFilter(f)
 		if err != nil {
-			return err
+			return asCommandErr(jsonOut, err)
 		}
 		plan, log, err := core.InstallSkill(scope, cwdOf(f), f.pos[0], filter, f.bools["dry-run"])
 		if err != nil {
-			return err
+			return asCommandErr(jsonOut, err)
 		}
-		printManagePlan(plan)
-		return printPlanResult(log, f.bools["dry-run"], "")
+		return finishManage(plan, log, f.bools["dry-run"], jsonOut)
 	case "remove":
 		if len(f.pos) < 1 {
-			return fmt.Errorf("usage: synca skills remove <name> [--scope --agents --purge --yes --dry-run --cwd]")
+			return failUsage(jsonOut, "usage: synca skills remove <name> [--scope --agents --purge --yes --dry-run --cwd]", "see: synca skills --help")
 		}
 		name := f.pos[0]
 		purge, yes, dry := f.bools["purge"], f.bools["yes"], f.bools["dry-run"]
-		if purge && !yes && !dry {
+		filter, err := agentsFilter(f)
+		if err != nil {
+			return asCommandErr(jsonOut, err)
+		}
+		plan, err := core.PlanRemoveSkill(scope, cwdOf(f), name, filter, purge)
+		if err != nil {
+			return asCommandErr(jsonOut, err)
+		}
+		if purge && !yes && !dry && len(plan.Actions) > 0 {
+			if !stdinIsTerminal() {
+				return failNeedsConfirm(jsonOut, "purge deletes the canonical skill "+quoteArg(name), "pass --yes")
+			}
 			ok, err := confirmPurge(name)
 			if err != nil {
-				return err
+				return asCommandErr(jsonOut, err)
 			}
 			if !ok {
 				fmt.Println("purge cancelled")
 				return nil
 			}
 		}
-		filter, err := agentsFilter(f)
-		if err != nil {
-			return err
+		plan.DryRun = dry
+		var log []string
+		if !dry {
+			log, err = core.ApplyManagePlan(plan, nil)
+			if err != nil {
+				return asCommandErr(jsonOut, err)
+			}
 		}
-		plan, log, err := core.RemoveSkill(scope, cwdOf(f), name, filter, purge, dry)
-		if err != nil {
-			return err
-		}
-		printManagePlan(plan)
-		return printPlanResult(log, dry, "")
+		return finishManage(plan, log, dry, jsonOut)
 	default:
-		return fmt.Errorf("unknown skills command '%s'", sub)
+		return failUsage(jsonOut, fmt.Sprintf("unknown skills command '%s'", sub), "see: synca skills --help")
 	}
 }
 
 func runMcp(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: synca mcp <list|add|remove>")
+		return failUsage(jsonIn(args), "usage: synca mcp <list|add|remove>", "see: synca mcp --help")
+	}
+	if isHelp(args[0]) || (len(args) > 1 && hasHelp(args[1:])) {
+		printMcpHelp()
+		return nil
 	}
 	sub, rest := args[0], args[1:]
 	f := parseFlags(rest, commonBool)
+	jsonOut := f.bools["json"]
+	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "transport", "command", "url", "enabled", "dry-run", "yes", "json", "help")); bad != "" {
+		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca mcp --help")
+	}
 	scope, err := scopeOf(f)
 	if err != nil {
-		return err
+		return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
 	}
 	switch sub {
 	case "list":
 		inv := core.ScanAll(scope, cwdOf(f))
-		if f.bools["json"] {
+		if jsonOut {
 			fmt.Println(jsonPretty(inv.Mcps))
 		} else {
 			fmt.Printf("MCPs (%s)\n", scope)
@@ -282,7 +397,7 @@ func runMcp(args []string) error {
 		return nil
 	case "add":
 		if len(f.pos) < 1 {
-			return fmt.Errorf("usage: synca mcp add <name> [--transport --command --url --enabled --scope --agents --dry-run --cwd]")
+			return failUsage(jsonOut, "usage: synca mcp add <name> [--transport --command --url --enabled --scope --agents --dry-run --cwd]", "see: synca mcp --help")
 		}
 		norm, err := core.McpFromCLI(
 			f.str("transport", "stdio"),
@@ -291,52 +406,78 @@ func runMcp(args []string) error {
 			f.boolVal("enabled"),
 		)
 		if err != nil {
-			return err
+			return asCommandErr(jsonOut, err)
 		}
 		filter, err := agentsFilter(f)
 		if err != nil {
-			return err
+			return asCommandErr(jsonOut, err)
 		}
 		plan, log, err := core.AddMcp(scope, cwdOf(f), f.pos[0], norm, filter, f.bools["dry-run"])
 		if err != nil {
-			return err
+			return asCommandErr(jsonOut, err)
 		}
-		printManagePlan(plan)
-		return printPlanResult(log, f.bools["dry-run"], "")
+		return finishManage(plan, log, f.bools["dry-run"], jsonOut)
 	case "remove":
 		if len(f.pos) < 1 {
-			return fmt.Errorf("usage: synca mcp remove <name> [--scope --agents --dry-run --cwd]")
+			return failUsage(jsonOut, "usage: synca mcp remove <name> [--scope --agents --yes --dry-run --cwd]", "see: synca mcp --help")
 		}
+		dry := f.bools["dry-run"]
 		filter, err := agentsFilter(f)
 		if err != nil {
-			return err
+			return asCommandErr(jsonOut, err)
 		}
-		plan, log, err := core.RemoveMcp(scope, cwdOf(f), f.pos[0], filter, f.bools["dry-run"])
+		plan, err := core.PlanRemoveMcp(scope, cwdOf(f), f.pos[0], filter)
 		if err != nil {
-			return err
+			return asCommandErr(jsonOut, err)
 		}
-		printManagePlan(plan)
-		return printPlanResult(log, f.bools["dry-run"], "")
+		if !dry && !f.bools["yes"] && len(plan.Actions) > 0 && !stdinIsTerminal() {
+			return failNeedsConfirm(jsonOut, "mcp remove deletes the server from the hub and from agent configs", "pass --yes")
+		}
+		plan.DryRun = dry
+		var log []string
+		if !dry {
+			log, err = core.ApplyManagePlan(plan, nil)
+			if err != nil {
+				return asCommandErr(jsonOut, err)
+			}
+		}
+		return finishManage(plan, log, dry, jsonOut)
 	default:
-		return fmt.Errorf("unknown mcp command '%s'", sub)
+		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
 	}
 }
 
 func runSync(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: synca sync <skills|mcp|all>")
+		return failUsage(jsonIn(args), "usage: synca sync <skills|mcp|all>", "see: synca sync --help")
+	}
+	if isHelp(args[0]) || (len(args) > 1 && hasHelp(args[1:])) {
+		printSyncHelp()
+		return nil
 	}
 	sub, rest := args[0], args[1:]
 	f := parseFlags(rest, commonBool)
+	jsonOut := f.bools["json"]
+	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "dry-run", "on-conflict", "key", "yes", "json", "help")); bad != "" {
+		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca sync --help")
+	}
+	if sub == "all" && f.str("key", "") != "" {
+		return failUsage(jsonOut, "sync all does not take --key", "see: synca sync --help")
+	}
 	scope, err := scopeOf(f)
 	if err != nil {
-		return err
+		return failUsage(jsonOut, err.Error(), "see: synca sync --help")
 	}
 	cwd := cwdOf(f)
 	dry := f.bools["dry-run"]
 	filter, err := agentsFilter(f)
 	if err != nil {
-		return err
+		return asCommandErr(jsonOut, err)
+	}
+	onConflict := f.str("on-conflict", "skip")
+	policy, ok := core.ParseConflictPolicy(onConflict)
+	if !ok {
+		return failUsage(jsonOut, fmt.Sprintf("invalid --on-conflict '%s' (use skip|keep-source|keep-target)", onConflict), "see: synca sync --help")
 	}
 
 	var plan *core.SyncPlan
@@ -357,17 +498,31 @@ func runSync(args []string) error {
 			plan = core.MergePlans(sk, mc)
 		}
 	default:
-		return fmt.Errorf("unknown sync command '%s'", sub)
+		return failUsage(jsonOut, fmt.Sprintf("unknown sync command '%s'", sub), "see: synca sync --help")
 	}
 	if err != nil {
-		return err
+		return asCommandErr(jsonOut, err)
 	}
 	plan.DryRun = dry
-	printPlan(plan)
+	if !dry && (policy == core.ConflictKeepSource || policy == core.ConflictKeepTarget) && !f.bools["yes"] && !stdinIsTerminal() {
+		return failNeedsConfirm(jsonOut, "sync --on-conflict "+policy.String()+" overwrites skill or MCP data", "pass --yes")
+	}
+	if jsonOut {
+		if dry {
+			return writeSyncJSON(plan, policy.String(), true, nil)
+		}
+		decisions := core.NewDecisions(policy)
+		log, err := core.ApplyPlan(plan, cwd, scope, decisions)
+		if err != nil {
+			return asCommandErr(jsonOut, err)
+		}
+		return writeSyncJSON(plan, policy.String(), false, log)
+	}
 
-	decisions, err := resolveCLIConflicts(plan, f.str("on-conflict", "skip"), dry)
+	printPlan(plan)
+	decisions, err := resolveCLIConflicts(plan, onConflict, dry)
 	if err != nil {
-		return err
+		return asCommandErr(false, err)
 	}
 	if dry {
 		fmt.Printf("(dry-run; no changes) on-conflict=%s\n", decisions.Default.String())
@@ -375,7 +530,7 @@ func runSync(args []string) error {
 	}
 	log, err := core.ApplyPlan(plan, cwd, scope, decisions)
 	if err != nil {
-		return err
+		return asCommandErr(false, err)
 	}
 	for _, line := range log {
 		fmt.Println(" ", line)
@@ -426,7 +581,7 @@ func resolveCLIConflicts(plan *core.SyncPlan, onConflict string, dry bool) (*cor
 			break
 		}
 	}
-	if hasConflict && !dry && onConflict == "skip" && isTTY(os.Stdin) {
+	if hasConflict && !dry && onConflict == "skip" && stdinIsTerminal() {
 		fmt.Fprintln(os.Stderr, "Conflicts detected. Choose policy:")
 		fmt.Fprintln(os.Stderr, "  [s] skip (default)")
 		fmt.Fprintln(os.Stderr, "  [a] keep-source")
@@ -445,14 +600,6 @@ func resolveCLIConflicts(plan *core.SyncPlan, onConflict string, dry bool) (*cor
 	return core.NewDecisions(policy), nil
 }
 
-func isTTY(f *os.File) bool {
-	st, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return st.Mode()&os.ModeCharDevice != 0
-}
-
 func confirmPurge(name string) (bool, error) {
 	fmt.Fprintf(os.Stderr, "PURGE skill '%s' will DELETE the canonical tree and unlink all agents.\n", name)
 	fmt.Fprintln(os.Stderr, "Type the skill name again to confirm, or press Enter to cancel:")
@@ -466,24 +613,44 @@ func confirmPurge(name string) (bool, error) {
 }
 
 func runProvider(args []string) error {
+	if hasHelp(args) {
+		printProviderHelp()
+		return nil
+	}
+	jsonOut := jsonIn(args)
 	if len(args) == 0 || args[0] != "clear" {
-		return fmt.Errorf("usage: synca provider clear <name> [--scope --cwd --yes --dry-run]")
+		return failUsage(jsonOut, "usage: synca provider clear <name> [--scope --cwd --yes --dry-run]", "see: synca provider --help")
 	}
 	f := parseFlags(args[1:], commonBool)
+	jsonOut = f.bools["json"]
+	if bad := f.unknownFlag(allow("scope", "cwd", "yes", "dry-run", "json", "help")); bad != "" {
+		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca provider --help")
+	}
 	if len(f.pos) < 1 {
-		return fmt.Errorf("usage: synca provider clear <name> [--scope --cwd --yes --dry-run]")
+		return failUsage(jsonOut, "usage: synca provider clear <name> [--scope --cwd --yes --dry-run]", "see: synca provider --help")
 	}
 	scope, err := scopeOf(f)
 	if err != nil {
-		return err
+		return failUsage(jsonOut, err.Error(), "see: synca provider --help")
 	}
 	dry, yes := f.bools["dry-run"], f.bools["yes"]
 	if !dry && !yes {
-		return fmt.Errorf("refusing to delete provider data without --yes")
+		return failNeedsConfirm(jsonOut, "refusing to delete provider data without --yes", "pass --yes")
 	}
 	log, err := core.ClearProvider(scope, cwdOf(f), f.pos[0], dry)
 	if err != nil {
-		return err
+		return asCommandErr(jsonOut, err)
+	}
+	if log == nil {
+		log = []string{}
+	}
+	if jsonOut {
+		return writeJSON(providerDocument{
+			DryRun:   dry,
+			Scope:    scope.String(),
+			Provider: f.pos[0],
+			Lines:    log,
+		})
 	}
 	for _, line := range log {
 		fmt.Println(line)

@@ -1,0 +1,37 @@
+{
+  "ok": false,
+  "scope": "user",
+  "drift": [
+    {
+      "agent": "grok",
+      "skill": "alpha",
+      "path": "/tmp/grok/skills/alpha",
+      "canonical": "/tmp/agents/skills/alpha",
+      "differs": true
+    }
+  ],
+  "dangling": [
+    {
+      "agent": "cursor",
+      "skill": "beta",
+      "path": "/tmp/cursor/skills/beta",
+      "target": "/missing"
+    }
+  ],
+  "missing": [
+    {
+      "agent": "claude",
+      "skill": "alpha",
+      "path": "/tmp/claude/skills/alpha"
+    }
+  ],
+  "mcp": [
+    {
+      "agent": "kiro",
+      "server": "demo",
+      "path": "/tmp/kiro/settings/mcp.json",
+      "hub": "/tmp/agents/mcp.json",
+      "reason": "differs"
+    }
+  ]
+}
