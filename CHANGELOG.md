@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.0
+
+- **Hooks:** a third resource next to skills and MCP. `synca hooks list|add|remove|trust|untrust|sync` and `synca sync hooks` manage `~/.agents/hooks.json` (version 1) and write approved hooks to Claude (`~/.claude/settings.json`), Grok (own file `~/.grok/hooks/synca.json`) and Devin (`~/.config/devin/config.json`). Events use Claude's PascalCase names, tool classes (`shell`, `read`, `write`, `search`, `web`, `agent`, `mcp`) are translated per agent, and anything an agent cannot express is reported (`event_unsupported`, `tool_unmapped`, `failure_mode_weakened`) instead of dropped. Kiro, OpenCode and Cursor are designed in `docs/plans/hooks-sync.md` and not implemented yet. User scope only.
+- **Trust:** a hook runs code, so a new or changed hook (definition plus its script files) is written only after `synca hooks trust <id>` is run by a person at a terminal. There is no `--yes` for it and an agent cannot approve its own hook. Approvals live in `~/.local/state/synca/hooks/trust.json` (0600).
+- **Safe edits:** only the top-level `hooks` member of a shared settings file is rewritten, one matcher group per hook, other tools' hooks untouched; a lock file lets synca update or remove only its own groups; an unparseable file is never modified; every write is atomic with a backup under `~/.local/state/synca/hooks/backups/`.
+- **sync all:** includes hooks when `~/.agents/hooks.json` exists (user scope), adding an optional `hooks` object to the JSON plan. Unapproved hooks are skipped and listed with exit 0; `--strict` exits 7. `--no-hooks` leaves them out. Without a hooks hub the output is unchanged.
+- **Schema:** `hooks-list.json`, `hooks-plan.json`, `hooks-change.json`, `hooks-trust.json`; `sync-plan.json` gains the optional `hooks` property. New exit use: 7 is `--strict` skipped-unapproved hooks, 8 is also `hooks add` on an existing id.
+
 ## 0.2.11
 
 - **Secrets:** `mcp list` masks every env value, a URL userinfo password, and a secret-looking arg (`--token=…`, an `Authorization` header) as `••••••`. `--reveal` prints the real values. Fingerprints and mismatch still use the real config. `mcp add --env KEY=VAL` stores the variable; the plan shows the key with a masked value.
