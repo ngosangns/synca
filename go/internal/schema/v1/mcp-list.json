@@ -23,11 +23,22 @@
               "properties": {
                 "transport": {"type": "string"},
                 "command": {"type": ["array", "null"], "items": {"type": "string"}},
-                "url": {"type": ["string", "null"]},
-                "args": {"type": ["array", "null"], "items": {"type": "string"}},
+                "url": {
+                  "description": "Server URL. A userinfo password is \"••••••\" unless mcp list --reveal.",
+                  "type": ["string", "null"]
+                },
+                "args": {
+                  "description": "Arguments. A secret-looking value (--token=…, Authorization) is \"••••••\" unless --reveal.",
+                  "type": ["array", "null"],
+                  "items": {"type": "string"}
+                },
                 "enabled": {"type": ["boolean", "null"]},
                 "env_keys": {"type": "array", "items": {"type": "string"}},
-                "env": {"type": "object", "additionalProperties": {"type": "string"}}
+                "env": {
+                  "description": "Env entries. Every value is \"••••••\" unless mcp list --reveal. Keys match env_keys.",
+                  "type": "object",
+                  "additionalProperties": {"type": "string"}
+                }
               }
             },
             "fingerprint": {"type": "string"}

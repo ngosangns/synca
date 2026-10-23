@@ -86,6 +86,12 @@ synca update [--check] [--json]
 `sync --json` prints `dryRun`, `scope`, `onConflict`, `actions`, and `conflicts` (`skill`, `key`, `policy`). Each action is the same object the text plan prints on its own line. An apply adds `applied` and sets `dryRun` to false. Without `--json` the text plan is unchanged.
 `schema` marks each command R (read), M (mutate), or D (destructive).
 
+## Secrets
+
+`mcp list` masks every env value as `••••••`. A URL password and a secret-looking arg (`--token=…`, an `Authorization` header) are masked the same way. `env_keys` stay visible. Do not pass `--reveal` unless the user asked for the value.
+
+`mcp add --env KEY=VAL --dry-run` prints the key with a masked value.
+
 ## Failures
 
 | Exit | Name | When |

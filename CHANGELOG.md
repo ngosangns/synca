@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Secrets:** `mcp list` masks every env value, a URL userinfo password, and a secret-looking arg (`--token=…`, an `Authorization` header) as `••••••`. `--reveal` prints the real values. Fingerprints and mismatch still use the real config. `mcp add --env KEY=VAL` stores the variable; the plan shows the key with a masked value.
 - **CLI:** `synca version [--json]` prints the version. With `--json` it prints `name`, `version`, `schemaVersion`, `commit`, and `dirty` (`dirty` is true when the VCS working tree was modified at build time). `synca schema [--json] [<command>]` lists commands (`R`/`M`/`D`) and the embedded v1 JSON Schemas.
 - **JSON plans:** `sync skills|mcp|all --json` prints one plan: `dryRun`, `scope`, `onConflict`, `actions`, `conflicts`. Apply adds `applied` and sets `dryRun` to false. Without `--json` the text plan is unchanged. `skills install`, `skills remove`, `mcp add`, and `mcp remove` accept `--json`, and `mcp add` / `mcp remove` accept `--dry-run`.
 - **Exit codes:** usage is 2, a missing path or project root is 3, a failed operation is 5, a destructive command without `--yes` off a TTY is 6, and `doctor` or `skill check` drift is 8. With `--json`, every command prints one `{"error":...}` line on stdout. Without `--json`, stderr stays `synca failed: ...`. `sync --on-conflict skip` still exits 0 when conflicts remain. `update` keeps its own codes (1 failed, 2 usage) and its own JSON report.

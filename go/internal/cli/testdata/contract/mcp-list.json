@@ -13,7 +13,7 @@
           "args": ["hi"],
           "enabled": null,
           "env_keys": ["TOKEN"],
-          "env": {"TOKEN": "example"}
+          "env": {"TOKEN": "••••••"}
         },
         "fingerprint": "abc123"
       }

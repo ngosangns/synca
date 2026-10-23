@@ -69,15 +69,15 @@ func commandSpecs() []commandSpec {
 		},
 		{
 			path:       "mcp list",
-			summary:    "List MCP servers and which agents have each one",
-			flags:      []string{"--scope", "--cwd", "--json"},
+			summary:    "List MCP servers. Env values, URL passwords, and secret-looking args are masked unless --reveal",
+			flags:      []string{"--scope", "--cwd", "--json", "--reveal"},
 			schemaFile: "mcp-list.json",
 		},
 		{
 			path:       "mcp add",
-			summary:    "Add an MCP server to the hub and write it to agent configs",
+			summary:    "Add an MCP server to the hub and agent configs. --env KEY=VAL is masked in the plan",
 			mutates:    true,
-			flags:      []string{"--transport", "--command", "--url", "--enabled", "--scope", "--cwd", "--agents", "--dry-run", "--json"},
+			flags:      []string{"--transport", "--command", "--url", "--env", "--enabled", "--scope", "--cwd", "--agents", "--dry-run", "--json"},
 			schemaFile: "manage-plan.json",
 		},
 		{

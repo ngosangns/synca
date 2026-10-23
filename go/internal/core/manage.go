@@ -308,6 +308,12 @@ func PlanAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter
 		DryRun: true,
 		Notes:  []string{fmt.Sprintf("add mcp '%s' to hub + agents", key)},
 	}
+	// Notes are printed. The real values stay on norm and are written on apply.
+	if norm != nil {
+		for _, envKey := range norm.EnvKeys {
+			plan.Notes = append(plan.Notes, fmt.Sprintf("env %s=%s", envKey, SecretMask))
+		}
+	}
 	plan.Actions = append(plan.Actions, ManageAction{
 		Kind: "upsert_mcp_hub", Hub: hub, Server: key,
 	})

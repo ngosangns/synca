@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/ngosangns/synca/go/internal/core"
@@ -17,12 +18,17 @@ type flags struct {
 	args      []string
 	vals      map[string]string
 	bools     map[string]bool
+	lists     map[string][]string
 	pos       []string
 	flagOrder []string
 }
 
 func parseFlags(args []string, boolFlags map[string]bool) *flags {
-	f := &flags{vals: map[string]string{}, bools: map[string]bool{}}
+	f := &flags{
+		vals:  map[string]string{},
+		bools: map[string]bool{},
+		lists: map[string][]string{},
+	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if !strings.HasPrefix(a, "--") || a == "--" {
@@ -45,6 +51,7 @@ func parseFlags(args []string, boolFlags map[string]bool) *flags {
 			i++
 		}
 		f.vals[name] = val
+		f.lists[name] = append(f.lists[name], val)
 	}
 	return f
 }
@@ -88,7 +95,7 @@ func (f *flags) boolVal(name string) *bool {
 	return nil
 }
 
-var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true}
+var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true, "reveal": true}
 
 func agentsFilter(f *flags) ([]core.AgentKind, error) {
 	s := f.str("agents", "")
@@ -240,9 +247,14 @@ func printSkillsHelp() {
 
 func printMcpHelp() {
 	fmt.Print(`USAGE:
-  synca mcp list [--scope user|project] [--cwd <dir>] [--json]
-  synca mcp add <name> [--transport --command --url --enabled --scope --cwd --agents --dry-run --json]
+  synca mcp list [--scope user|project] [--cwd <dir>] [--json] [--reveal]
+  synca mcp add <name> [--transport --command --url --env KEY=VAL --enabled --scope --cwd --agents --dry-run --json]
   synca mcp remove <name> [--scope --cwd --agents --yes --dry-run --json]
+
+JSON masks every env value as •••••• unless --reveal. A URL password and a
+secret-looking arg (--token=…, an Authorization header) are masked the same way.
+--reveal prints the real values. The text list is a summary and does not print
+them. --env may be repeated.
 `)
 }
 
@@ -367,7 +379,12 @@ func runMcp(args []string) error {
 	sub, rest := args[0], args[1:]
 	f := parseFlags(rest, commonBool)
 	jsonOut := f.bools["json"]
-	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "transport", "command", "url", "enabled", "dry-run", "yes", "json", "help")); bad != "" {
+	switch sub {
+	case "list", "add", "remove":
+	default:
+		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
+	}
+	if bad := f.unknownFlag(mcpAllow(sub)); bad != "" {
 		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca mcp --help")
 	}
 	scope, err := scopeOf(f)
@@ -377,11 +394,15 @@ func runMcp(args []string) error {
 	switch sub {
 	case "list":
 		inv := core.ScanAll(scope, cwdOf(f))
+		entries := inv.Mcps
+		if !f.bools["reveal"] {
+			entries = core.MaskMcpEntries(entries)
+		}
 		if jsonOut {
-			fmt.Println(jsonPretty(inv.Mcps))
+			fmt.Println(jsonPretty(entries))
 		} else {
 			fmt.Printf("MCPs (%s)\n", scope)
-			for _, m := range inv.Mcps {
+			for _, m := range entries {
 				var agents []string
 				for _, p := range m.Presence {
 					agents = append(agents, p.Agent)
@@ -392,12 +413,12 @@ func runMcp(args []string) error {
 				}
 				fmt.Printf("  %s  [%s]%s\n", m.Key, strings.Join(agents, ","), flag)
 			}
-			fmt.Printf("%d mcp server(s)\n", len(inv.Mcps))
+			fmt.Printf("%d mcp server(s)\n", len(entries))
 		}
 		return nil
 	case "add":
 		if len(f.pos) < 1 {
-			return failUsage(jsonOut, "usage: synca mcp add <name> [--transport --command --url --enabled --scope --agents --dry-run --cwd]", "see: synca mcp --help")
+			return failUsage(jsonOut, "usage: synca mcp add <name> [--transport --command --url --env KEY=VAL --enabled --scope --agents --dry-run --cwd]", "see: synca mcp --help")
 		}
 		norm, err := core.McpFromCLI(
 			f.str("transport", "stdio"),
@@ -408,6 +429,12 @@ func runMcp(args []string) error {
 		if err != nil {
 			return asCommandErr(jsonOut, err)
 		}
+		env, keys, err := parseEnvPairs(f.lists["env"])
+		if err != nil {
+			return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
+		}
+		norm.Env = env
+		norm.EnvKeys = keys
 		filter, err := agentsFilter(f)
 		if err != nil {
 			return asCommandErr(jsonOut, err)
@@ -445,6 +472,41 @@ func runMcp(args []string) error {
 	default:
 		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
 	}
+}
+
+func mcpAllow(sub string) map[string]bool {
+	switch sub {
+	case "list":
+		return allow("scope", "cwd", "json", "reveal", "help")
+	case "add":
+		return allow("scope", "cwd", "agents", "transport", "command", "url", "env", "enabled", "dry-run", "json", "help")
+	case "remove":
+		return allow("scope", "cwd", "agents", "yes", "dry-run", "json", "help")
+	default:
+		return allow("help")
+	}
+}
+
+// parseEnvPairs reads repeated --env KEY=VALUE flags. Keys are sorted.
+func parseEnvPairs(pairs []string) (map[string]string, []string, error) {
+	env := map[string]string{}
+	var keys []string
+	for _, pair := range pairs {
+		key, val, ok := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			return nil, nil, fmt.Errorf("invalid --env %s (use KEY=VALUE)", quoteArg(pair))
+		}
+		if _, exists := env[key]; !exists {
+			keys = append(keys, key)
+		}
+		env[key] = val
+	}
+	sort.Strings(keys)
+	if keys == nil {
+		keys = []string{}
+	}
+	return env, keys, nil
 }
 
 func runSync(args []string) error {
