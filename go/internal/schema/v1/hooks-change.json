@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dryRun",
+    "hook",
+    "change",
+    "hub"
+  ],
+  "properties": {
+    "dryRun": {
+      "type": "boolean"
+    },
+    "hook": {
+      "type": "string"
+    },
+    "change": {
+      "enum": [
+        "added",
+        "replaced",
+        "removed"
+      ]
+    },
+    "hub": {
+      "type": "string"
+    }
+  }
+}

@@ -109,6 +109,10 @@ func TestEmbeddedSchemasAreValidJSON(t *testing.T) {
 	want := []string{
 		"doctor.json",
 		"error.json",
+		"hooks-change.json",
+		"hooks-list.json",
+		"hooks-plan.json",
+		"hooks-trust.json",
 		"manage-plan.json",
 		"mcp-list.json",
 		"provider-clear.json",

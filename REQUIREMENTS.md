@@ -3,7 +3,7 @@
 The agent list below was amended when Pi and OMP were dropped. Existing Pi and OMP directories are ignored and never deleted.
 
 ## Goal
-CLI (macOS arm64 first) to **browse and sync skills + MCP configs** across coding agents. The window is `synca-gpui` in the sibling repo `ns-gpui`.
+CLI (macOS arm64 first) to **browse and sync skills + MCP configs + hooks** across coding agents. The window is `synca-gpui` in the sibling repo `ns-gpui`.
 
 ## Stack
 - CLI: Go (`go/`: `internal/core` scan/sync/manage/update, `internal/cli` commands, `cmd/synca`)
@@ -18,6 +18,7 @@ Out of scope: crush, goose, omp, pi.
 - Skills project: `<git-root>/.agents/skills/<name>/SKILL.md`
 - MCP user hub: `~/.agents/mcp.json` (`{ "mcpServers": { ... } }`)
 - MCP project canonical: `<git-root>/.mcp.json`
+- Hooks user hub: `~/.agents/hooks.json` (`{ "version": 1, "hooks": { ... } }`), scripts in `~/.agents/hooks/<id>/`; user scope only; written to Claude, Grok and Devin (design for Kiro, OpenCode, Cursor and project scope: `docs/plans/hooks-sync.md`)
 
 ### Per-agent skill roots (read; write via symlink to canonical when syncing)
 **User:** `~/.grok/skills`, `~/.config/devin/skills`, `~/.kiro/skills`, `~/.config/opencode/skills`, `~/.claude/skills`, `~/.cursor/skills`, `~/.agents/skills`
@@ -48,6 +49,11 @@ Each scope lists Skills and MCP servers.
 1. Promote/merge into hub (`~/.agents/mcp.json` or `.mcp.json`).
 2. Writers per agent format (TOML↔JSON↔OpenCode `mcp`; command string↔argv; type/transport; preserve existing env secrets on target if source lacks key).
 3. Support sync one / sync all missing / selected agents; dry-run preview.
+
+### Hooks
+1. Hub to agents only; never import an agent's hooks into the hub.
+2. A hook runs code: a new or changed hook is written only after a person approves it (`synca hooks trust`, terminal only). Unapproved hooks are skipped and listed.
+3. Edit shared settings files in place (only the `hooks` member), keep foreign hooks, back up, write atomically, never touch an unparseable file.
 
 ## CLI
 ```

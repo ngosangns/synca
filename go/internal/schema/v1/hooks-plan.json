@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dryRun",
+    "scope",
+    "onConflict",
+    "untrusted",
+    "actions"
+  ],
+  "properties": {
+    "dryRun": {
+      "type": "boolean"
+    },
+    "scope": {
+      "enum": [
+        "user"
+      ]
+    },
+    "onConflict": {
+      "enum": [
+        "skip",
+        "keep-source",
+        "keep-target"
+      ]
+    },
+    "untrusted": {
+      "type": "integer"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "write_hook",
+              "update_hook",
+              "remove_hook",
+              "adopt_hook",
+              "skip_hook_same",
+              "skip_hook_unsupported",
+              "conflict_hook"
+            ]
+          },
+          "hook": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "lossy": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "code",
+                "severity",
+                "detail"
+              ],
+              "properties": {
+                "code": {
+                  "type": "string"
+                },
+                "severity": {
+                  "enum": [
+                    "info",
+                    "warn",
+                    "error"
+                  ]
+                },
+                "detail": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "applied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

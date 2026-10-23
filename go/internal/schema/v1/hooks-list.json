@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "scope",
+    "hub",
+    "hooks"
+  ],
+  "properties": {
+    "scope": {
+      "enum": [
+        "user"
+      ]
+    },
+    "hub": {
+      "type": "string"
+    },
+    "hooks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "event",
+          "tools",
+          "command",
+          "timeoutSec",
+          "onFailure",
+          "enabled",
+          "trusted",
+          "agents"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "event": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "command": {
+            "type": "string"
+          },
+          "timeoutSec": {
+            "type": "integer"
+          },
+          "onFailure": {
+            "enum": [
+              "continue",
+              "block"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "trusted": {
+            "type": "boolean"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "agent",
+                "state"
+              ],
+              "properties": {
+                "agent": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

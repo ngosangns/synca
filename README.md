@@ -85,7 +85,8 @@ synca --version       # synca 0.2.9
 ```text
 synca skills <list|install|remove> [flags]
 synca mcp <list|add|remove> [flags]
-synca sync <skills|mcp|all> [flags]
+synca hooks <list|add|remove|trust|untrust|sync> [flags]
+synca sync <skills|mcp|hooks|all> [flags]
 synca provider clear <name> [--scope --cwd --yes --dry-run --json]
 synca doctor [--scope --cwd --json]
 synca skill <install|check> [--dest DIR] [--json]
@@ -179,6 +180,29 @@ Action kinds: `ensure_canonical_copy`, `symlink_skill`, `ensure_mcp_hub`, `write
 
 Never silent overwrite. A dry-run does not need `--yes`.
 
+### Hooks
+
+Hooks are shell commands an agent runs on an event (before or after a tool, on prompt submit, on stop). Skills and MCP only copy data; a hook **runs code with your permissions**, so it is handled more strictly.
+
+```bash
+synca hooks add block-rm --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh' --timeout 10
+synca hooks list
+synca hooks trust block-rm      # a person at a terminal: shows the command, you type "yes"
+synca hooks sync --dry-run
+synca hooks sync                # same as: synca sync hooks
+```
+
+- **Hub:** `~/.agents/hooks.json` (`{"version":1,"hooks":{"<id>":{...}}}`). Scripts live in `~/.agents/hooks/<id>/`; `{{hook_dir}}` in a command expands to that directory. Unknown fields are rejected, and so is a command that embeds a token or password.
+- **Events:** `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop` (portable) and `SessionEnd`, `PreCompact`, `PostCompact`, `Notification`, `PermissionRequest`, `SubagentStart`, `SubagentStop`, `PostToolUseFailure` (not every agent has them: the plan lists `skip_hook_unsupported`).
+- **Tools:** `shell`, `read`, `write`, `search`, `web`, `agent`, `mcp` are translated to each agent's tool names. If no class maps for an agent the hook is skipped for it, never widened to every tool.
+- **Agents written:** Claude (`~/.claude/settings.json`), Grok (its own file `~/.grok/hooks/synca.json`), Devin (`~/.config/devin/config.json`). Kiro, OpenCode and Cursor are designed (`docs/plans/hooks-sync.md`) but not implemented. An agent is written only when its config directory exists.
+- **Trust:** a new or changed hook (its definition and every file under `~/.agents/hooks/<id>/`) is never written until `synca hooks trust <id>` is run at a terminal. There is no flag to skip it, and an agent running synca cannot approve its own hook. Approvals are stored per machine in `~/.local/state/synca/hooks/trust.json` (mode 0600).
+- **Sync:** hub to agents only; synca never imports an agent's hooks into the hub. `sync hooks` and `sync all` skip unapproved hooks and list them (exit 0; `--strict` exits 7). `sync all` includes hooks only when `~/.agents/hooks.json` exists; `--no-hooks` leaves them out. Re-running changes nothing.
+- **Editing:** for Claude and Devin only the top-level `"hooks"` member of the settings file is rewritten (every other byte is kept; inside `hooks` whitespace is normalized), one new matcher group per hook, and other tools' hooks are left alone. synca remembers what it wrote in `~/.local/state/synca/hooks/lock.json`, so it can update or remove only its own groups. A file that is not valid JSON is never touched. Each write is atomic and the previous file is saved under `~/.local/state/synca/hooks/backups/` (last 20 per file).
+- **Lossy:** `onFailure: "block"` has no verified equivalent in these agents, so it is reported as `failure_mode_weakened` (a script that exits with code 2 still blocks where the agent supports it).
+- **Conflicts:** a hand-edited Grok file or Claude/Devin group is reported as `modified_externally` and skipped; `--on-conflict keep-source --yes` restores the hub version.
+- Only `--scope user` is supported for hooks.
+
 ### Providers
 
 ```bash
@@ -231,8 +255,9 @@ synca skill check --json
 | 2 | Usage: unknown flag, bad argument, unknown command |
 | 3 | Unavailable: missing path or source, or no git root for `--scope project` |
 | 5 | The operation failed |
-| 6 | A destructive command had no `--yes` off a TTY |
-| 8 | `doctor` or `skill check` found drift |
+| 6 | A destructive command had no `--yes` off a TTY, or `hooks trust` was not run by a person at a terminal |
+| 7 | `--strict`: `sync hooks` or `sync all` skipped a hook that was not approved |
+| 8 | `doctor` or `skill check` found drift, or `hooks add` found the id already exists |
 
 With `--json`, a failure prints one line on stdout: `{"error":{"code","exit","message","hint"}}`. Without `--json`, stderr stays `synca failed: ...` plus an optional `hint:` line. `sync --on-conflict skip` exits 0 and still lists conflicts. Every `--help` / `-h` exits 0.
 

@@ -1,19 +1,19 @@
 ---
 name: synca
-description: "Browse, install, and sync skills and MCP configs across coding agents (Grok, Devin, Kiro, OpenCode, Claude, Cursor) with the synca CLI. Use when installing a skill or MCP server for every agent, checking whether a skill is in sync, resolving a conflict, running doctor, or updating synca. Triggers: synca, sync skills, sync mcp, install skill for all agents, doctor, synca version, synca schema."
+description: "Browse, install, and sync skills, MCP configs and hooks across coding agents (Grok, Devin, Kiro, OpenCode, Claude, Cursor) with the synca CLI. Use when installing a skill or MCP server for every agent, adding a hook for several agents, checking whether a skill is in sync, resolving a conflict, running doctor, or updating synca. Triggers: synca, sync skills, sync mcp, sync hooks, install skill for all agents, doctor, synca version, synca schema."
 ---
 
 # synca
 
-`synca` keeps one canonical copy of each skill and MCP server and links it to each agent. Use the CLI. Do not hand-edit per-agent directories.
+`synca` keeps one canonical copy of each skill, MCP server and hook and links or writes it to each agent. Use the CLI. Do not hand-edit per-agent directories.
 
 Do not edit `~/.agents/skills/synca` by hand. Edit this repo's `skills/synca/SKILL.md`, then run `synca skill install`.
 
 ## Mutate rule
 
-Read-only: `skills list`, `mcp list`, `version`, `schema`, `doctor`, `skill check`, and any command with `--dry-run`.
+Read-only: `skills list`, `mcp list`, `hooks list`, `version`, `schema`, `doctor`, `skill check`, and any command with `--dry-run`.
 
-Run a mutating command only when the user asked for that action in this task: `skills install`, `skills remove`, `mcp add`, `mcp remove`, `sync` without `--dry-run`, `provider clear`, `skill install`, `update`. Pass `--dry-run` first on the plan commands.
+Run a mutating command only when the user asked for that action in this task: `skills install`, `skills remove`, `mcp add`, `mcp remove`, `hooks add`, `hooks remove`, `hooks untrust`, `sync` without `--dry-run`, `provider clear`, `skill install`, `update`. Pass `--dry-run` first on the plan commands.
 
 These are destructive and need `--yes` when stdin is not a TTY: `skills remove --purge`, `mcp remove`, `provider clear`, and `sync` with `--on-conflict keep-source` or `keep-target`. `provider clear` needs `--yes` even on a TTY. A dry-run does not need `--yes`.
 
@@ -21,6 +21,7 @@ These are destructive and need `--yes` when stdin is not a TTY: `skills remove -
 
 - Skills: `~/.agents/skills/<name>/` (user), `<git-root>/.agents/skills/<name>/` (project).
 - MCP hub: `~/.agents/mcp.json` (user), `<git-root>/.mcp.json` (project).
+- Hooks hub: `~/.agents/hooks.json` (user scope only), scripts in `~/.agents/hooks/<id>/`. Written to claude, grok and devin.
 - Agents: grok, devin, kiro, opencode, claude, cursor, plus canonical `agents`. Pi (`~/.pi`) and OMP (`~/.omp`) are ignored and never deleted.
 - `--scope user` is the default. `--scope project` needs a git repository, or `--cwd`.
 
@@ -68,12 +69,30 @@ synca skill check
 synca skill install
 ```
 
+## Hooks
+
+A hook is a shell command an agent runs on an event. It executes code, so approval is a person's job.
+
+```bash
+synca hooks add <id> --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh' --dry-run
+synca hooks add <id> --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh'
+synca hooks list --json
+synca hooks sync --dry-run --json
+```
+
+- **Never run `synca hooks trust`.** It needs a person at a terminal, has no `--yes`, and fails off a TTY with exit 6. After `hooks add`, tell the user to run `synca hooks trust <id>` themselves. Do not try to write `~/.local/state/synca/hooks/trust.json` or edit the agents' hook files by hand.
+- `sync hooks` and `sync all` write only approved hooks. Unapproved ones appear as `conflict_hook` with reason `untrusted` and the exit stays 0 (7 with `--strict`).
+- A hook with `onFailure: block` is reported `failure_mode_weakened`: the agents have no verified way to make a failing hook block; the script must exit 2.
+- Events: SessionStart UserPromptSubmit PreToolUse PostToolUse Stop SessionEnd PreCompact PostCompact Notification PermissionRequest SubagentStart SubagentStop PostToolUseFailure. Tools (tool events only): shell read write search web agent mcp.
+- To remove a hook: `synca hooks remove <id>`, then `synca hooks sync`.
+
 ## Commands
 
 ```bash
 synca skills list|install|remove
 synca mcp list|add|remove
-synca sync skills|mcp|all [--dry-run] [--on-conflict skip|keep-source|keep-target] [--key name] [--yes] [--json]
+synca hooks list|add|remove|trust|untrust|sync
+synca sync skills|mcp|hooks|all [--dry-run] [--on-conflict skip|keep-source|keep-target] [--key name] [--yes] [--strict] [--no-hooks] [--json]
 synca provider clear <name> [--yes] [--dry-run] [--json]
 synca doctor [--json]
 synca skill install|check [--dest DIR] [--json]
@@ -99,7 +118,8 @@ synca update [--check] [--json]
 | 2 | usage | Bad flags or arguments |
 | 3 | unavailable | Missing path, source, or project root |
 | 5 | failed | The operation failed |
-| 6 | needs-confirm | Destructive command without `--yes` off a TTY |
-| 8 | conflict | `doctor` or `skill check` found drift |
+| 6 | needs-confirm | Destructive command without `--yes` off a TTY, or `hooks trust` off a terminal |
+| 7 | unauthorized | `--strict`: a hook was skipped because no person approved it |
+| 8 | conflict | `doctor` or `skill check` found drift, or `hooks add` on an existing id |
 
 With `--json`, a failure prints one line on stdout: `{"error":{"code","exit","message","hint"}}`. Without `--json`, stderr is `synca failed: ...` and an optional `hint:` line. `sync --on-conflict skip` exits 0 and still lists conflicts. `update` keeps its own codes: 1 failed, 2 usage.

@@ -17,7 +17,7 @@ The CLI is the product. The window does not reimplement a sync. There is no daem
 
 ## Scope
 
-In scope: skills and MCP for the agents listed in the README, user scope and project scope, and a dry-run plan before a write.
+In scope: skills, MCP and hooks for the agents listed in the README, user scope and project scope, and a dry-run plan before a write.
 
 Out of scope: a UI in this repo, a command palette, an extension host, collaboration, editing file contents in the window, and a second sync engine.
 

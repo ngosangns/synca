@@ -2,16 +2,37 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["dryRun", "scope", "onConflict", "actions", "conflicts"],
+  "required": [
+    "dryRun",
+    "scope",
+    "onConflict",
+    "actions",
+    "conflicts"
+  ],
   "properties": {
-    "dryRun": {"type": "boolean"},
-    "scope": {"enum": ["user", "project"]},
-    "onConflict": {"enum": ["skip", "keep-source", "keep-target"]},
+    "dryRun": {
+      "type": "boolean"
+    },
+    "scope": {
+      "enum": [
+        "user",
+        "project"
+      ]
+    },
+    "onConflict": {
+      "enum": [
+        "skip",
+        "keep-source",
+        "keep-target"
+      ]
+    },
     "actions": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["kind"],
+        "required": [
+          "kind"
+        ],
         "properties": {
           "kind": {
             "enum": [
@@ -25,20 +46,57 @@
               "write_mcp_server"
             ]
           },
-          "from": {"type": "string"},
-          "to": {"type": "string"},
-          "link": {"type": "string"},
-          "target": {"type": "string"},
-          "path": {"type": "string"},
-          "skill_key": {"type": "string"},
-          "agent": {"type": "string"},
-          "reason": {"type": "string"},
-          "paths": {"type": "array", "items": {"type": "string"}},
-          "hashes": {"type": "array", "items": {"type": "string"}},
-          "hub": {"type": "string"},
-          "server": {"type": "string"},
-          "source_agent": {"type": "string"},
-          "fingerprints": {"type": "array", "items": {"type": "string"}}
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "skill_key": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hashes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "hub": {
+            "type": "string"
+          },
+          "server": {
+            "type": "string"
+          },
+          "source_agent": {
+            "type": "string"
+          },
+          "fingerprints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
@@ -47,14 +105,135 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["skill", "key", "policy"],
+        "required": [
+          "skill",
+          "key",
+          "policy"
+        ],
         "properties": {
-          "skill": {"type": "boolean"},
-          "key": {"type": "string"},
-          "policy": {"enum": ["skip", "keep-source", "keep-target"]}
+          "skill": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "policy": {
+            "enum": [
+              "skip",
+              "keep-source",
+              "keep-target"
+            ]
+          }
         }
       }
     },
-    "applied": {"type": "array", "items": {"type": "string"}}
+    "applied": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dryRun",
+        "scope",
+        "onConflict",
+        "untrusted",
+        "actions"
+      ],
+      "properties": {
+        "dryRun": {
+          "type": "boolean"
+        },
+        "scope": {
+          "enum": [
+            "user"
+          ]
+        },
+        "onConflict": {
+          "enum": [
+            "skip",
+            "keep-source",
+            "keep-target"
+          ]
+        },
+        "untrusted": {
+          "type": "integer"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "write_hook",
+                  "update_hook",
+                  "remove_hook",
+                  "adopt_hook",
+                  "skip_hook_same",
+                  "skip_hook_unsupported",
+                  "conflict_hook"
+                ]
+              },
+              "hook": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "event": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "lossy": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "code",
+                    "severity",
+                    "detail"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "enum": [
+                        "info",
+                        "warn",
+                        "error"
+                      ]
+                    },
+                    "detail": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "applied": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
   }
 }

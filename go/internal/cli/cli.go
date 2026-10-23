@@ -95,7 +95,7 @@ func (f *flags) boolVal(name string) *bool {
 	return nil
 }
 
-var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true, "reveal": true}
+var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true, "reveal": true, "strict": true, "no-hooks": true}
 
 func agentsFilter(f *flags) ([]core.AgentKind, error) {
 	s := f.str("agents", "")
@@ -159,6 +159,8 @@ func Run(args []string) error {
 		return runSkills(rest)
 	case "mcp":
 		return runMcp(rest)
+	case "hooks":
+		return runHooks(rest)
 	case "sync":
 		return runSync(rest)
 	case "provider":
@@ -187,12 +189,13 @@ func Run(args []string) error {
 }
 
 func printHelp() {
-	fmt.Print(`synca — Browse and sync skills + MCP across coding agents
+	fmt.Print(`synca — Browse and sync skills, MCP servers and hooks across coding agents
 
 USAGE:
   synca skills <list|install|remove> [flags]
   synca mcp <list|add|remove> [flags]
-  synca sync <skills|mcp|all> [flags]
+  synca hooks <list|add|remove|trust|untrust|sync> [flags]
+  synca sync <skills|mcp|hooks|all> [flags]
   synca provider clear <name> [--scope --cwd --yes --dry-run]
   synca doctor [--scope --cwd --json]
   synca skill <install|check> [--dest DIR]
@@ -260,10 +263,13 @@ them. --env may be repeated.
 
 func printSyncHelp() {
 	fmt.Print(`USAGE:
-  synca sync <skills|mcp|all> [--scope --cwd --agents --dry-run --on-conflict --key --yes --json]
+  synca sync <skills|mcp|hooks|all> [--scope --cwd --agents --dry-run --on-conflict --key --yes --strict --no-hooks --json]
 
 --json prints one plan: dryRun, scope, onConflict, actions, conflicts.
 An apply adds applied and sets dryRun to false. Without --json the text plan is unchanged.
+sync all also syncs hooks (user scope) when ~/.agents/hooks.json exists, and adds a "hooks" key to the JSON.
+Hooks that no person approved (synca hooks trust) are skipped and listed; exit stays 0 unless --strict (exit 7).
+--no-hooks leaves hooks out of sync all.
 keep-source and keep-target overwrite data and need --yes when stdin is not a TTY.
 --on-conflict skip leaves conflicts in place and exits 0.
 `)
@@ -511,7 +517,7 @@ func parseEnvPairs(pairs []string) (map[string]string, []string, error) {
 
 func runSync(args []string) error {
 	if len(args) == 0 {
-		return failUsage(jsonIn(args), "usage: synca sync <skills|mcp|all>", "see: synca sync --help")
+		return failUsage(jsonIn(args), "usage: synca sync <skills|mcp|hooks|all>", "see: synca sync --help")
 	}
 	if isHelp(args[0]) || (len(args) > 1 && hasHelp(args[1:])) {
 		printSyncHelp()
@@ -520,8 +526,23 @@ func runSync(args []string) error {
 	sub, rest := args[0], args[1:]
 	f := parseFlags(rest, commonBool)
 	jsonOut := f.bools["json"]
-	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "dry-run", "on-conflict", "key", "yes", "json", "help")); bad != "" {
+	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "dry-run", "on-conflict", "key", "yes", "json", "help", "strict", "no-hooks")); bad != "" {
 		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca sync --help")
+	}
+	if sub == "hooks" {
+		if f.str("key", "") != "" {
+			return failUsage(jsonOut, "sync hooks does not take --key", "see: synca sync --help")
+		}
+		if f.bools["no-hooks"] {
+			return failUsage(jsonOut, "--no-hooks does not apply to sync hooks", "see: synca sync --help")
+		}
+		if s := f.str("scope", "user"); s != "user" {
+			return failUsage(jsonOut, "hooks support --scope user only in this version", "see: synca hooks --help")
+		}
+		return runHooksSync(f, jsonOut)
+	}
+	if (f.bools["strict"] || f.bools["no-hooks"]) && sub != "all" {
+		return failUsage(jsonOut, "--strict and --no-hooks only apply to sync all and sync hooks", "see: synca sync --help")
 	}
 	if sub == "all" && f.str("key", "") != "" {
 		return failUsage(jsonOut, "sync all does not take --key", "see: synca sync --help")
@@ -569,16 +590,44 @@ func runSync(args []string) error {
 	if !dry && (policy == core.ConflictKeepSource || policy == core.ConflictKeepTarget) && !f.bools["yes"] && !stdinIsTerminal() {
 		return failNeedsConfirm(jsonOut, "sync --on-conflict "+policy.String()+" overwrites skill or MCP data", "pass --yes")
 	}
+	withHooks := sub == "all" && scope == core.ScopeUser && !f.bools["no-hooks"] && core.HooksHubExists()
+	hookPolicy := policy
+	if hookPolicy == core.ConflictKeepTarget {
+		hookPolicy = core.ConflictSkip
+	}
 	if jsonOut {
 		if dry {
-			return writeSyncJSON(plan, policy.String(), true, nil)
+			var hd *hooksPlanDocument
+			if withHooks {
+				hp, _, err := syncHooksNow(filter, hookPolicy, true)
+				if err != nil {
+					return asCommandErr(jsonOut, err)
+				}
+				d := hooksPlanDoc(hp, hookPolicy.String(), true, nil)
+				hd = &d
+			}
+			return writeSyncJSON(plan, policy.String(), true, nil, hd)
 		}
 		decisions := core.NewDecisions(policy)
 		log, err := core.ApplyPlan(plan, cwd, scope, decisions)
 		if err != nil {
 			return asCommandErr(jsonOut, err)
 		}
-		return writeSyncJSON(plan, policy.String(), false, log)
+		var hd *hooksPlanDocument
+		var hp *core.HooksPlan
+		if withHooks {
+			var hlog []string
+			hp, hlog, err = syncHooksNow(filter, hookPolicy, false)
+			if err != nil {
+				return asCommandErr(jsonOut, err)
+			}
+			d := hooksPlanDoc(hp, hookPolicy.String(), false, hlog)
+			hd = &d
+		}
+		if err := writeSyncJSON(plan, policy.String(), false, log, hd); err != nil {
+			return err
+		}
+		return strictHooksStatus(f, hp, true)
 	}
 
 	printPlan(plan)
@@ -588,6 +637,14 @@ func runSync(args []string) error {
 	}
 	if dry {
 		fmt.Printf("(dry-run; no changes) on-conflict=%s\n", decisions.Default.String())
+		if withHooks {
+			hp, _, err := syncHooksNow(filter, hookPolicy, true)
+			if err != nil {
+				return asCommandErr(false, err)
+			}
+			fmt.Println("hooks:")
+			printHooksPlan(hp, nil, true)
+		}
 		return nil
 	}
 	log, err := core.ApplyPlan(plan, cwd, scope, decisions)
@@ -597,7 +654,25 @@ func runSync(args []string) error {
 	for _, line := range log {
 		fmt.Println(" ", line)
 	}
+	if withHooks {
+		hp, hlog, err := syncHooksNow(filter, hookPolicy, false)
+		if err != nil {
+			return asCommandErr(false, err)
+		}
+		fmt.Println("hooks:")
+		printHooksPlan(hp, hlog, false)
+		return strictHooksStatus(f, hp, false)
+	}
 	return nil
+}
+
+// strictHooksStatus turns hooks skipped for lack of approval into exit 7 when
+// --strict is set. The plan was already printed.
+func strictHooksStatus(f *flags, hp *core.HooksPlan, jsonOut bool) error {
+	if hp == nil || !f.bools["strict"] || hp.Untrusted == 0 {
+		return nil
+	}
+	return statusOnlyAfter(jsonOut, ExitUnauthorized, fmt.Sprintf("%d hook(s) need approval (synca hooks trust <id>)", hp.Untrusted))
 }
 
 func printPlan(plan *core.SyncPlan) {

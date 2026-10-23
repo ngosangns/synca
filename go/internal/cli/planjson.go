@@ -14,11 +14,12 @@ type syncConflict struct {
 }
 
 type syncDocument struct {
-	DryRun     bool              `json:"dryRun"`
-	Scope      string            `json:"scope"`
-	OnConflict string            `json:"onConflict"`
-	Actions    []core.SyncAction `json:"actions"`
-	Conflicts  []syncConflict    `json:"conflicts"`
+	DryRun     bool               `json:"dryRun"`
+	Scope      string             `json:"scope"`
+	OnConflict string             `json:"onConflict"`
+	Actions    []core.SyncAction  `json:"actions"`
+	Conflicts  []syncConflict     `json:"conflicts"`
+	Hooks      *hooksPlanDocument `json:"hooks,omitempty"`
 }
 
 type syncAppliedDocument struct {
@@ -61,7 +62,7 @@ func syncConflicts(plan *core.SyncPlan, policy string) []syncConflict {
 	return out
 }
 
-func writeSyncJSON(plan *core.SyncPlan, policy string, dry bool, applied []string) error {
+func writeSyncJSON(plan *core.SyncPlan, policy string, dry bool, applied []string, hooks *hooksPlanDocument) error {
 	actions := plan.Actions
 	if actions == nil {
 		actions = []core.SyncAction{}
@@ -72,6 +73,7 @@ func writeSyncJSON(plan *core.SyncPlan, policy string, dry bool, applied []strin
 		OnConflict: policy,
 		Actions:    actions,
 		Conflicts:  syncConflicts(plan, policy),
+		Hooks:      hooks,
 	}
 	if dry {
 		return writeJSON(doc)
