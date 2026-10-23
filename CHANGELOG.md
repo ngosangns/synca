@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.11
 
 - **Secrets:** `mcp list` masks every env value, a URL userinfo password, and a secret-looking arg (`--token=…`, an `Authorization` header) as `••••••`. `--reveal` prints the real values. Fingerprints and mismatch still use the real config. `mcp add --env KEY=VAL` stores the variable; the plan shows the key with a masked value.
 - **CLI:** `synca version [--json]` prints the version. With `--json` it prints `name`, `version`, `schemaVersion`, `commit`, and `dirty` (`dirty` is true when the VCS working tree was modified at build time). `synca schema [--json] [<command>]` lists commands (`R`/`M`/`D`) and the embedded v1 JSON Schemas.
