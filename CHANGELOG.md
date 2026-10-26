@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Docs:** new `docs/hooks.md` reference (hub schema, event and tool support per agent, trust, sync actions, lossy codes, JSON shapes, backup/lock paths). README now documents the full hooks flag set, JSON documents, per-agent hook files, and the `--strict`/`--no-hooks` rules; `ARCHITECTURE.md` and `REQUIREMENTS.md` were refreshed for the v0.3.0 command surface.
+- **Skill:** `skills/synca/SKILL.md` covers hook ids, add flags, trust hashes, per-agent support, conflict reasons, and accurate untrust semantics. The embedded copy is unchanged in kind and still byte-identical.
+- **Skill scripts:** the bundled skill now ships `scripts/status.sh` (read-only version/doctor/skill/MCP/hook summary), `scripts/plan.sh` (read-only dry-run summary) and `scripts/hook-scaffold.sh` (creates a hook script and prints the add/trust commands; never edits the hub or trusts).
+- **CLI:** the `hooks untrust` message now says that existing agent entries are left in place until `hooks remove` plus `hooks sync`, matching the implementation.
+
 ## 0.3.0
 
 - **Hooks:** a third resource next to skills and MCP. `synca hooks list|add|remove|trust|untrust|sync` and `synca sync hooks` manage `~/.agents/hooks.json` (version 1) and write approved hooks to Claude (`~/.claude/settings.json`), Grok (own file `~/.grok/hooks/synca.json`) and Devin (`~/.config/devin/config.json`). Events use Claude's PascalCase names, tool classes (`shell`, `read`, `write`, `search`, `web`, `agent`, `mcp`) are translated per agent, and anything an agent cannot express is reported (`event_unsupported`, `tool_unmapped`, `failure_mode_weakened`) instead of dropped. Kiro, OpenCode and Cursor are designed in `docs/plans/hooks-sync.md` and not implemented yet. User scope only.

@@ -6,6 +6,8 @@ Browse and sync **skills**, **MCP** configs, and **hooks** across coding agents 
 
 The CLI is the source of truth and the only writer. The window is `synca-gpui` in the sibling repo [`ns-gpui`](#window). There is no daemon or background service.
 
+The full hooks reference is in [`docs/hooks.md`](docs/hooks.md).
+
 ## Screenshots
 
 The window, driven by the CLI (`synca-gpui`, dark theme).
@@ -101,12 +103,14 @@ synca schema [--json] [<command>]
 | --- | --- |
 | `--scope user\|project` | Default `user`. `project` needs a git repo (see [Scope](#scope)) |
 | `--cwd <dir>` | Where to look for the project root. Default `.` |
-| `--agents a,b,c` | Restrict to these agents. Unknown names are ignored; an empty result means all agents |
+| `--agents a,b,c` | Restrict to these agents. Unknown names are ignored for skills and MCP (an empty result means all agents); `hooks add` rejects an unknown agent |
 | `--dry-run` | Print the plan and change nothing |
-| `--json` | One JSON document on stdout. Every command accepts it |
-| `--yes` | Confirm a destructive command. Required off a TTY for `skills remove --purge`, `mcp remove`, and `sync` with `keep-source` or `keep-target`. `provider clear` requires it even on a TTY |
-| `--on-conflict skip\|keep-source\|keep-target` | `sync` only. Default `skip`. `skip` exits 0 and reports conflicts. `keep-source` and `keep-target` overwrite and need `--yes` off a TTY |
-| `--key <name>` | `sync skills` and `sync mcp` only. `sync all` rejects it |
+| `--json` | One JSON document on stdout. Every command accepts it except `hooks trust` |
+| `--yes` | Confirm a destructive command. Required off a TTY for `skills remove --purge`, `mcp remove`, `hooks sync --on-conflict keep-source`, and `sync` with `keep-source` or `keep-target`. `provider clear` requires it even on a TTY |
+| `--on-conflict skip\|keep-source\|keep-target` | `sync` only. Default `skip`. `skip` exits 0 and reports conflicts. `keep-source` and `keep-target` overwrite and need `--yes` off a TTY. Hooks accept only `skip` and `keep-source` |
+| `--key <name>` | `sync skills` and `sync mcp` only. `sync all` and `sync hooks` reject it |
+| `--strict` | `sync hooks` and `sync all`. Exit 7 when a hook was skipped because no person approved it |
+| `--no-hooks` | `sync all` only. Leave hooks out of the run |
 
 Flags take `--flag value` or `--flag=value`.
 
@@ -117,6 +121,7 @@ synca skills list --scope user
 synca skills list --scope project --json
 synca mcp list --scope user
 synca mcp list --json
+synca mcp list --json --reveal
 ```
 
 Text output is one line per entry with the agents that have it, and `MISMATCH` when copies differ. It does not print env values. `mcp list --json` does: every env value is `••••••` unless you pass `--reveal`. A URL password and a secret-looking arg are masked the same way. The fingerprint still comes from the real config.
@@ -165,12 +170,16 @@ synca sync all --scope user --dry-run
 synca sync skills --scope user --on-conflict skip
 synca sync all --scope user --on-conflict keep-source --yes
 synca sync mcp --scope user --on-conflict keep-target --yes
+synca sync hooks --scope user --dry-run
+synca sync all --scope user --dry-run --no-hooks
 synca sync skills --dry-run --json
 ```
 
 Run with `--dry-run` first. The text plan is one compact JSON object per line. `--json` prints one document instead: `dryRun`, `scope`, `onConflict`, `actions` (those same objects), and `conflicts` (`skill`, `key`, `policy`). An apply adds `applied` and sets `dryRun` to false. Without `--json` the text is unchanged.
 
-Action kinds: `ensure_canonical_copy`, `symlink_skill`, `ensure_mcp_hub`, `write_mcp_server`, `skip_same`, `skip_mcp_same`, `conflict_skill`, `conflict_mcp`. `ensure_mcp_hub` is an idempotent upsert and shows up even when the hub is already correct.
+Action kinds for skills and MCP: `ensure_canonical_copy`, `symlink_skill`, `ensure_mcp_hub`, `write_mcp_server`, `skip_same`, `skip_mcp_same`, `conflict_skill`, `conflict_mcp`. `ensure_mcp_hub` is an idempotent upsert and shows up even when the hub is already correct. Hooks use their own kinds (`write_hook`, `update_hook`, …); see [Hooks](#hooks).
+
+`sync all` also runs the hooks phase when the scope is user and `~/.agents/hooks.json` exists. The JSON plan then gains a `hooks` object with the same shape as `hooks sync --json`; `--no-hooks` leaves it out. Unapproved hooks are skipped and listed (exit 0, or 7 with `--strict`). `--on-conflict keep-target` applies to skills and MCP; the hooks phase falls back to `skip`.
 
 | `--on-conflict` | Behavior |
 |-----------------|----------|
@@ -182,25 +191,33 @@ Never silent overwrite. A dry-run does not need `--yes`.
 
 ### Hooks
 
-Hooks are shell commands an agent runs on an event (before or after a tool, on prompt submit, on stop). Skills and MCP only copy data; a hook **runs code with your permissions**, so it is handled more strictly.
+Hooks are shell commands an agent runs on an event (before or after a tool, on prompt submit, on stop). Skills and MCP only copy data; a hook **runs code with your permissions**, so it is handled more strictly. The complete event/tool tables, JSON shapes and edit rules are in [`docs/hooks.md`](docs/hooks.md).
 
 ```bash
+~/.agents/skills/synca/scripts/hook-scaffold.sh block-rm --event PreToolUse --tools shell
+synca hooks add block-rm --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh' --timeout 10 --dry-run
 synca hooks add block-rm --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh' --timeout 10
 synca hooks list
 synca hooks trust block-rm      # a person at a terminal: shows the command, you type "yes"
 synca hooks sync --dry-run
-synca hooks sync                # same as: synca sync hooks
+synca hooks sync
 ```
 
-- **Hub:** `~/.agents/hooks.json` (`{"version":1,"hooks":{"<id>":{...}}}`). Scripts live in `~/.agents/hooks/<id>/`; `{{hook_dir}}` in a command expands to that directory. Unknown fields are rejected, and so is a command that embeds a token or password.
-- **Events:** `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop` (portable) and `SessionEnd`, `PreCompact`, `PostCompact`, `Notification`, `PermissionRequest`, `SubagentStart`, `SubagentStop`, `PostToolUseFailure` (not every agent has them: the plan lists `skip_hook_unsupported`).
-- **Tools:** `shell`, `read`, `write`, `search`, `web`, `agent`, `mcp` are translated to each agent's tool names. If no class maps for an agent the hook is skipped for it, never widened to every tool.
+`synca hooks sync` is the same as `synca sync hooks`.
+
+- **Hub:** `~/.agents/hooks.json` (`{"version":1,"hooks":{"<id>":{...}}}`). Scripts live in `~/.agents/hooks/<id>/`; `{{hook_dir}}` in a command expands to that directory. An id is lowercase letters, digits and `-`; `hooks add` normalizes the argument. Unknown fields are rejected, and so is a command that embeds a token, key, password or `Authorization` header.
+- **Add flags:** `--event` and `--command` are required. `--tools shell,read` is allowed only on `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `PermissionRequest`. `--timeout SEC` is `0..3600`. `--on-failure continue|block`. `--agents` / `--exclude-agents` restrict where it is written. `--force` replaces an existing id (a changed definition needs a new approval); without it the id exits 8. `--dry-run` validates and reports `added` or `replaced` without writing.
+- **Events:** `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop` (portable) and `SessionEnd`, `PreCompact`, `PostCompact`, `Notification`, `PermissionRequest`, `SubagentStart`, `SubagentStop`, `PostToolUseFailure`. Not every agent has each one: the plan reports `skip_hook_unsupported` / `event_unsupported`.
+- **Tools:** `shell`, `read`, `write`, `search`, `web`, `agent`, `mcp` are translated to each agent's tool names. If no class maps for an agent the hook is skipped for it, never widened to every tool. Unmapped classes are reported as `tool_unmapped`.
 - **Agents written:** Claude (`~/.claude/settings.json`), Grok (its own file `~/.grok/hooks/synca.json`), Devin (`~/.config/devin/config.json`). Kiro, OpenCode and Cursor are designed (`docs/plans/hooks-sync.md`) but not implemented. An agent is written only when its config directory exists.
-- **Trust:** a new or changed hook (its definition and every file under `~/.agents/hooks/<id>/`) is never written until `synca hooks trust <id>` is run at a terminal. There is no flag to skip it, and an agent running synca cannot approve its own hook. Approvals are stored per machine in `~/.local/state/synca/hooks/trust.json` (mode 0600).
-- **Sync:** hub to agents only; synca never imports an agent's hooks into the hub. `sync hooks` and `sync all` skip unapproved hooks and list them (exit 0; `--strict` exits 7). `sync all` includes hooks only when `~/.agents/hooks.json` exists; `--no-hooks` leaves them out. Re-running changes nothing.
-- **Editing:** for Claude and Devin only the top-level `"hooks"` member of the settings file is rewritten (every other byte is kept; inside `hooks` whitespace is normalized), one new matcher group per hook, and other tools' hooks are left alone. synca remembers what it wrote in `~/.local/state/synca/hooks/lock.json`, so it can update or remove only its own groups. A file that is not valid JSON is never touched. Each write is atomic and the previous file is saved under `~/.local/state/synca/hooks/backups/` (last 20 per file).
+- **Trust:** a new or changed hook (its definition and every file under `~/.agents/hooks/<id>/`) is never written until `synca hooks trust <id>` is run by a person at a terminal and they type `yes`. There is no flag to skip it, and an agent running synca cannot approve its own hook. Approvals are stored per machine in `~/.local/state/synca/hooks/trust.json` (mode 0600). Off a terminal, `hooks trust` exits 6.
+- **Untrust and remove:** `hooks untrust <id>` withdraws approval. Existing agent entries stay and are reported as `untrusted`; they are not deleted. To delete them, run `hooks remove <id>`, then `hooks sync`. `hooks remove` deletes the hub entry and approval; the next sync removes synca's groups.
+- **Sync:** hub to agents only; synca never imports an agent's hooks into the hub. `sync hooks` and `sync all` write only approved hooks. Unapproved ones appear as `conflict_hook` with reason `untrusted` and the exit stays 0 (7 with `--strict`). `sync all` includes hooks only when `~/.agents/hooks.json` exists; `--no-hooks` leaves them out. `sync hooks` rejects `--on-conflict keep-target`. Re-running changes nothing.
+- **Plan kinds:** `write_hook`, `update_hook`, `remove_hook`, `adopt_hook`, `skip_hook_same`, `skip_hook_unsupported`, `conflict_hook`. Reasons include `untrusted`, `modified_externally`, `parse_error: …`, `agent_not_installed`, `event_unsupported`, `tool_unmapped`, `scope_unsupported`.
+- **Editing:** for Claude and Devin only the top-level `"hooks"` member of the settings file is rewritten (every other byte is kept; inside `hooks` whitespace is normalized), one matcher group per hook, and other tools' hooks are left alone. synca remembers what it wrote in `~/.local/state/synca/hooks/lock.json`, so it can update or remove only its own groups. A file that is not valid JSON is never touched. Each write is atomic and the previous file is saved under `~/.local/state/synca/hooks/backups/` (last 20 per file).
 - **Lossy:** `onFailure: "block"` has no verified equivalent in these agents, so it is reported as `failure_mode_weakened` (a script that exits with code 2 still blocks where the agent supports it).
-- **Conflicts:** a hand-edited Grok file or Claude/Devin group is reported as `modified_externally` and skipped; `--on-conflict keep-source --yes` restores the hub version.
+- **Conflicts:** a hand-edited Grok file or Claude/Devin group is reported as `modified_externally` and skipped; `--on-conflict keep-source --yes` restores the hub version. `untrusted` is never resolved by a conflict policy.
+- **JSON:** `hooks list --json` prints `{scope, hub, hooks}`; `hooks add|remove --json` prints `{dryRun, hook, change, hub}`; `hooks untrust --json` prints `{hook, trusted:false}`; `hooks sync --json` prints `{dryRun, scope, onConflict, untrusted, actions}` and an apply adds `applied`. `sync all --json` adds an optional `hooks` object with the same shape.
 - Only `--scope user` is supported for hooks.
 
 ### Providers
@@ -246,16 +263,16 @@ synca skill check
 synca skill check --json
 ```
 
-`skill install` writes the embedded copy of `skills/synca` (the source of truth in this repo). The default destination is `~/.agents/skills/synca`. `skill check` exits 0 when that directory matches, 8 when it has drifted, and 3 when it is missing.
+`skill install` writes the embedded copy of `skills/synca` (the source of truth in this repo), including `scripts/status.sh`, `scripts/plan.sh` and `scripts/hook-scaffold.sh`. The default destination is `~/.agents/skills/synca`; `--dest DIR` writes elsewhere. `skill check` exits 0 when that directory matches, 8 when it has drifted, and 3 when it is missing. The helper scripts need `jq` and the `synca` binary; `status.sh` and `plan.sh` are read-only, while `hook-scaffold.sh` only creates `~/.agents/hooks/<id>/check.sh` and never adds or trusts a hook.
 
 ### Exit codes
 
 | Exit | When |
 | --- | --- |
-| 2 | Usage: unknown flag, bad argument, unknown command |
-| 3 | Unavailable: missing path or source, or no git root for `--scope project` |
+| 2 | Usage: unknown flag, bad argument, unknown command, unknown event or tool class, secret in a hook command |
+| 3 | Unavailable: missing path or source, no git root for `--scope project`, or an unknown hook id |
 | 5 | The operation failed |
-| 6 | A destructive command had no `--yes` off a TTY, or `hooks trust` was not run by a person at a terminal |
+| 6 | A destructive command had no `--yes` off a TTY, or `hooks trust` was not run by a person at a terminal or was not answered `yes` |
 | 7 | `--strict`: `sync hooks` or `sync all` skipped a hook that was not approved |
 | 8 | `doctor` or `skill check` found drift, or `hooks add` found the id already exists |
 
@@ -267,6 +284,7 @@ With `--json`, a failure prints one line on stdout: `{"error":{"code","exit","me
 
 - `user` (default): `~/.agents/...` plus per-agent home dirs.
 - `project`: `<git-root>/.agents/...` plus repo-local agent dirs. The git root is the nearest parent of `--cwd` that contains `.git`. Outside a repo, `list` shows nothing and `install`, `add` and `remove` fail with "no project root".
+- Hooks are user scope only. `--scope project` is rejected for `hooks` and `sync hooks`.
 
 ### Canonical paths
 
@@ -274,8 +292,11 @@ With `--json`, a failure prints one line on stdout: `{"error":{"code","exit","me
 | --- | --- | --- |
 | Skills | `~/.agents/skills/<name>/` | `<git-root>/.agents/skills/<name>/` |
 | MCP hub | `~/.agents/mcp.json` | `<git-root>/.mcp.json` |
+| Hooks hub | `~/.agents/hooks.json` | not supported |
 
-Sync prefers **symlinks** from each agent's skills dir to the canonical dir. An agent dir that is itself a symlink to the canonical dir is left alone. MCP writers translate to each agent's format (JSON, Grok TOML, OpenCode `mcp` key) and preserve existing **env secrets** on the target when the source lacks a key.
+Hook scripts live in `~/.agents/hooks/<id>/`. Hook state (trust, lock, backups) lives in `~/.local/state/synca/hooks/`.
+
+Sync prefers **symlinks** from each agent's skills dir to the canonical dir. An agent dir that is itself a symlink to the canonical dir is left alone. MCP writers translate to each agent's format (JSON, Grok TOML, OpenCode `mcp` key) and preserve existing **env secrets** on the target when the source lacks a key. Hook writers translate event and tool names and edit shared settings files in place.
 
 ### Agent paths
 
@@ -301,6 +322,14 @@ MCP config files:
 | Claude | `~/.claude.json` | none |
 | Cursor | `~/.cursor/mcp.json` | `.cursor/mcp.json` |
 
+Hook files (user scope only):
+
+| Agent | File | Ownership |
+| --- | --- | --- |
+| Claude | `~/.claude/settings.json` | Shared; only the top-level `hooks` member is edited |
+| Grok | `~/.grok/hooks/synca.json` | Owned by synca |
+| Devin | `~/.config/devin/config.json` | Shared; only the top-level `hooks` member is edited |
+
 ## Window
 
 The window is the `synca-gpui` crate in the sibling repo `ns-gpui` (clone it next to this repo). It shells out to `~/.local/bin/synca` (or `synca` on `PATH`), so install the CLI first.
@@ -324,11 +353,13 @@ Window state is stored in the macOS defaults domain `com.ngosangns.synca` (`sync
 
 ## Agent skill
 
-`skills/synca/SKILL.md` is a skill that teaches coding agents to use this CLI instead of hand-editing agent dirs. Install it with:
+`skills/synca/SKILL.md` is a skill that teaches coding agents to use this CLI instead of hand-editing agent dirs. It ships with `scripts/status.sh` (read-only health summary), `scripts/plan.sh` (read-only dry-run summary) and `scripts/hook-scaffold.sh` (creates a hook script and prints the add/trust commands). Install the skill and its scripts with:
 
 ```bash
 synca skill install
 ```
+
+The hooks reference for people is [`docs/hooks.md`](docs/hooks.md).
 
 ## Agents
 

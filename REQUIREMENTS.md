@@ -1,6 +1,6 @@
 # synca — Requirements (locked 2026-10-02)
 
-The agent list below was amended when Pi and OMP were dropped. Existing Pi and OMP directories are ignored and never deleted.
+The agent list below was amended when Pi and OMP were dropped. Existing Pi and OMP directories are ignored and never deleted. The CLI list was amended for hooks and the v0.3.0 command surface.
 
 ## Goal
 CLI (macOS arm64 first) to **browse and sync skills + MCP configs + hooks** across coding agents. The window is `synca-gpui` in the sibling repo `ns-gpui`.
@@ -57,12 +57,21 @@ Each scope lists Skills and MCP servers.
 
 ## CLI
 ```
-synca                 # print help
-synca skills list [--scope user|project] [--json]
-synca mcp list [--scope user|project] [--json]
-synca sync skills|mcp [--scope user|project] [--agents a,b] [--dry-run]
+synca                                         # print help
+synca skills list|install|remove [--scope user|project] [--agents a,b] [--dry-run] [--json]
+synca mcp list|add|remove [--scope user|project] [--agents a,b] [--dry-run] [--json]
+synca hooks list|add|remove|trust|untrust|sync [--agents a,b] [--dry-run] [--json]
+synca sync skills|mcp|hooks|all [--scope user|project] [--agents a,b] [--dry-run]
+              [--on-conflict skip|keep-source|keep-target] [--key name] [--yes] [--strict] [--no-hooks] [--json]
+synca provider clear <name> [--scope user|project] [--yes] [--dry-run] [--json]
+synca doctor [--scope user|project] [--json]
+synca skill install|check [--dest DIR] [--json]
+synca version [--json]
+synca schema [--json] [<command>]
 synca update [--check] [--json] [--force]
 ```
+
+The bundled skill (`skills/synca`, embedded in the binary) ships read-only helpers `status.sh` and `plan.sh` and the side-effect-limited `hook-scaffold.sh`.
 
 ## Update
 GitHub Releases `ngosangns/synca`, install under `~/.local/share/synca/bin/synca-X.Y.Z` + symlink `~/.local/bin/synca`. Asset: `synca-vX.Y.Z-darwin-arm64`. The updater requires the GitHub sha256 digest, does not downgrade, and does not replace any other path.

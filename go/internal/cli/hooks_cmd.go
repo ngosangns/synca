@@ -264,7 +264,7 @@ func runHooks(args []string) error {
 		if jsonOut {
 			return writeJSON(hooksTrustDocument{Hook: id, Trusted: false})
 		}
-		fmt.Printf("withdrew the approval for %s. The next sync removes it from the agents.\n", id)
+		fmt.Printf("withdrew the approval for %s. Existing agent entries stay in place and are reported as untrusted; run \"synca hooks remove %s\" then \"synca hooks sync\" to delete them.\n", id, id)
 		return nil
 	default:
 		return runHooksSync(f, jsonOut)
