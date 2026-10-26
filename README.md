@@ -2,7 +2,7 @@
 
 # synca
 
-Browse and sync **skills** + **MCP** configs across coding agents (Grok, Devin, Kiro, OpenCode, Claude, Cursor) from one CLI. Pi (`~/.pi`) and OMP (`~/.omp`) are not targets. Directories that already exist for them are ignored and never deleted.
+Browse and sync **skills**, **MCP** configs, and **hooks** across coding agents (Grok, Devin, Kiro, OpenCode, Claude, Cursor) from one CLI. Pi (`~/.pi`) and OMP (`~/.omp`) are not targets. Directories that already exist for them are ignored and never deleted.
 
 The CLI is the source of truth and the only writer. The window is `synca-gpui` in the sibling repo [`ns-gpui`](#window). There is no daemon or background service.
 
@@ -33,7 +33,7 @@ A skill detail in a narrow (390 pt) window: the list and the detail become separ
 macOS arm64 only. Asset name: `synca-vX.Y.Z-darwin-arm64`. `SHA256SUMS` is for a manual check. `synca update` verifies the GitHub asset digest instead.
 
 ```bash
-TAG=v0.2.9
+TAG=v0.3.0
 ASSET=synca-${TAG}-darwin-arm64
 VER=${TAG#v}
 mkdir -p ~/.local/share/synca/bin ~/.local/bin
@@ -79,7 +79,7 @@ The version lives in the root `VERSION` file and must match `Version` in `go/int
 
 ```bash
 synca                 # print help (same as synca help)
-synca --version       # synca 0.2.9
+synca --version       # synca 0.3.0
 ```
 
 ```text

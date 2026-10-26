@@ -8,7 +8,7 @@ Synca copies skills and MCP config. That work is file IO. The product in this re
 | --- | --- |
 | `cmd/synca` | Process entry. Exits non-zero and prints the error. |
 | `internal/cli` | Flag parsing and stdout. No copy of the sync rules. |
-| `internal/core` | Discover agents, read skills and MCP, plan a sync, write it. |
+| `internal/core` | Discover agents, read skills, MCP and hooks, plan a sync, write it. |
 | `internal/updater` | `synca update`. GitHub release into the versioned bin dir. |
 
 `internal/core` stays one package until a second caller needs a seam.
