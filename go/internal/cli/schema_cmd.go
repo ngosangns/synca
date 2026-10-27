@@ -82,10 +82,10 @@ func commandSpecs() []commandSpec {
 		},
 		{
 			path:        "mcp remove",
-			summary:     "Remove an MCP server from the hub and from agent configs",
+			summary:     "Remove an MCP server from the hub and from agent configs. --keep-hub with --agents removes it from those agents only",
 			mutates:     true,
 			destructive: true,
-			flags:       []string{"--scope", "--cwd", "--agents", "--yes", "--dry-run", "--json"},
+			flags:       []string{"--scope", "--cwd", "--agents", "--keep-hub", "--yes", "--dry-run", "--json"},
 			schemaFile:  "manage-plan.json",
 		},
 		{

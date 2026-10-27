@@ -89,7 +89,7 @@ func TestMcpAddAndRemove(t *testing.T) {
 		t.Fatalf("demo-mcp missing from hub: %v", servers)
 	}
 
-	_, log2, err := RemoveMcp(ScopeUser, home, "demo-mcp", nil, false)
+	_, log2, err := RemoveMcp(ScopeUser, home, "demo-mcp", nil, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,6 +99,38 @@ func TestMcpAddAndRemove(t *testing.T) {
 	servers2, _ := readJSON(t, hub)["mcpServers"].(map[string]any)
 	if _, ok := servers2["demo-mcp"]; ok {
 		t.Error("demo-mcp still in hub")
+	}
+}
+
+func TestMcpRemoveKeepHub(t *testing.T) {
+	home := realTempHome(t)
+	cmd := "npx -y demo-mcp"
+	norm, err := McpFromCLI("stdio", &cmd, nil, bp(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := AddMcp(ScopeUser, home, "demo-mcp", norm, nil, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := PlanRemoveMcp(ScopeUser, home, "demo-mcp", nil, true); err == nil {
+		t.Fatal("--keep-hub without --agents must be refused")
+	}
+
+	_, log, err := RemoveMcp(ScopeUser, home, "demo-mcp", []AgentKind{AgentCursor}, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !logHas(log, "removed mcp demo-mcp") {
+		t.Errorf("log=%v", log)
+	}
+	hubServers, _ := readJSON(t, filepath.Join(home, ".agents/mcp.json"))["mcpServers"].(map[string]any)
+	if _, ok := hubServers["demo-mcp"]; !ok {
+		t.Fatal("hub must keep the server with --keep-hub")
+	}
+	cursorServers, _ := readJSON(t, filepath.Join(home, ".cursor/mcp.json"))["mcpServers"].(map[string]any)
+	if _, ok := cursorServers["demo-mcp"]; ok {
+		t.Fatal("cursor must lose the server")
 	}
 }
 

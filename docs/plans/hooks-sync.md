@@ -1332,4 +1332,4 @@ Nothing from this list is blocking. Open work is the remaining milestones in "Im
 - OpenCode plugins: https://opencode.ai/docs/plugins/
 - Reference: Codex https://developers.openai.com/codex/hooks ; Gemini https://geminicli.com/docs/hooks/reference/ ; Copilot https://docs.github.com/en/copilot/reference/hooks-reference ; Windsurf/Cascade https://docs.devin.ai/desktop/cascade/hooks
 - MCP: specification 2026-07-28 https://modelcontextprotocol.io/specification/2026-07-28 ; versioning https://modelcontextprotocol.io/specification/2026-07-28/basic/versioning ; Go SDK https://github.com/modelcontextprotocol/go-sdk (v1.8.0; LICENSE: MIT→Apache-2.0 transition), https://go.sdk.modelcontextprotocol.io/quick_start/
-- Synca repo 0.2.11: `ARCHITECTURE.md`, `README.md`, `REQUIREMENTS.md`, `go/internal/{core,cli,schema}`, `skills/synca/SKILL.md`; window client `ns-gpui/crates/synca-gpui/src/engine.rs`
+- Synca repo 0.2.11: `ARCHITECTURE.md`, `README.md`, `REQUIREMENTS.md`, `go/internal/{core,cli,schema}`, `skills/synca/SKILL.md`; window client `synca/apps/synca-gpui/src/engine.rs`

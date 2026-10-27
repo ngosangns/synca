@@ -1,6 +1,6 @@
 version: '3'
 
-# Thin wrapper over go/Makefile. The window is synca-gpui in the sibling repo ns-gpui.
+# Thin wrapper over go/Makefile. The window is synca-gpui in apps/synca-gpui.
 
 tasks:
   default:
@@ -50,7 +50,7 @@ tasks:
       - ./scripts/release-local.sh --publish
 
   dev:install:
-    desc: Build the GUI from ../ns-gpui and install "Synca Dev.app" into ~/Applications
+    desc: Build the GUI in apps/synca-gpui and install "Synca Dev.app" into ~/Applications
     cmds:
       - ../ns-gpui/scripts/install-dev.sh synca
 

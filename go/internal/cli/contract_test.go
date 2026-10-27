@@ -467,6 +467,9 @@ func TestTypedExitsForCommandErrors(t *testing.T) {
 	if strings.Count(strings.TrimRight(out, "\n"), "\n") != 0 {
 		t.Fatalf("error JSON is not one line:\n%s", out)
 	}
+
+	out, err = runCLI(t, "mcp", "remove", "demo", "--keep-hub")
+	assertUsageText(t, out, err, "--keep-hub requires --agents")
 }
 
 func TestLiveListsMatchSchemas(t *testing.T) {

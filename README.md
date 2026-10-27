@@ -4,7 +4,7 @@
 
 Browse and sync **skills**, **MCP** configs, and **hooks** across coding agents (Grok, Devin, Kiro, OpenCode, Claude, Cursor) from one CLI. Pi (`~/.pi`) and OMP (`~/.omp`) are not targets. Directories that already exist for them are ignored and never deleted.
 
-The CLI is the source of truth and the only writer. The window is `synca-gpui` in the sibling repo [`ns-gpui`](#window). There is no daemon or background service.
+The CLI is the source of truth and the only writer. The window is `synca-gpui` in [`apps/synca-gpui`](#window). There is no daemon or background service.
 
 The full hooks reference is in [`docs/hooks.md`](docs/hooks.md).
 
@@ -72,7 +72,7 @@ task install        # builds, copies to ~/.local/share/synca/bin/synca-<VERSION>
 | `task test` / `task cli:test` | `go vet ./...` and `go test ./...` |
 | `task release:build` | Test and build `dist/synca-vX.Y.Z-darwin-arm64` plus `SHA256SUMS`. No publish |
 | `task release:publish` | Same, then `gh release create` or upload for the `VERSION` file. Asks first |
-| `task dev:install` | Build the window from `../ns-gpui` and install `Synca Dev.app` into `~/Applications` |
+| `task dev:install` | Build the window in `apps/synca-gpui` and install `Synca Dev.app` into `~/Applications` |
 | `task dev:install:all` | `task install`, then `task dev:install` |
 
 The version lives in the root `VERSION` file and must match `Version` in `go/internal/core/models.go`; the release script and CI refuse a tag that does not match. CI (`.github/workflows/ci.yml`) vets, tests and builds the CLI. `release.yml` builds the asset on a `v*` tag push.
@@ -155,9 +155,10 @@ synca mcp add hosted-server --transport http --url https://example.com/mcp
 synca mcp add stream-server --transport sse --url https://example.com/sse
 synca mcp remove my-server --scope user --dry-run
 synca mcp remove my-server --scope user --yes
+synca mcp remove my-server --agents cursor --keep-hub
 ```
 
-`mcp add` and `mcp remove` both accept `--dry-run`. `mcp remove` deletes the server from the hub and from agent configs, so off a TTY it exits 6 unless you pass `--yes`.
+`mcp add` and `mcp remove` both accept `--dry-run`. `mcp remove` deletes the server from the hub and from agent configs, so off a TTY it exits 6 unless you pass `--yes`. With `--keep-hub --agents a,b` it removes the server from those agent configs only and keeps it in the hub; that unlink is reversible (the next `sync mcp` adds it back) and needs no `--yes`. `--keep-hub` without `--agents` is a usage error.
 
 `mcp add` flags: `--transport stdio|http|sse` (default `stdio`; `local` means stdio, `remote` means http), `--command` (required for stdio, split like a shell line), `--url` (required for http and sse), `--env KEY=VAL` (repeatable; the plan shows the key with the value masked), `--enabled true|false`. `sse` is kept only when the URL ends in `/sse`; otherwise the server is stored as `http`.
 
@@ -332,12 +333,12 @@ Hook files (user scope only):
 
 ## Window
 
-The window is the `synca-gpui` crate in the sibling repo `ns-gpui` (clone it next to this repo). It shells out to `~/.local/bin/synca` (or `synca` on `PATH`), so install the CLI first.
+The window is the `synca-gpui` crate in `apps/synca-gpui`. It has its own Cargo workspace and links the shared chrome crate `ns-ui` from the `ns-gpui` repo. It shells out to `~/.local/bin/synca` (or `synca` on `PATH`), so install the CLI first.
 
 ```bash
-task dev:install      # builds ../ns-gpui and installs ~/Applications/Synca Dev.app
-# or, from ns-gpui:
-cargo run --release -p synca-gpui
+task dev:install      # builds apps/synca-gpui and installs ~/Applications/Synca Dev.app
+# or, from apps/synca-gpui:
+cargo run --release
 ```
 
 What it does, all through the CLI:

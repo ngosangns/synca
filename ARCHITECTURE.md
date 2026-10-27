@@ -1,6 +1,6 @@
 # How this app is built
 
-Synca copies skills and MCP config. That work is file IO. The product in this repo is the Go module. The macOS window is `synca-gpui` in the sibling repo `ns-gpui`. It calls this CLI. This repo has no UI.
+Synca copies skills and MCP config. That work is file IO. The product in this repo is the Go module. The macOS window is `synca-gpui` in `apps/synca-gpui`, a separate Cargo workspace. It calls this CLI.
 
 ## What the Go module is
 
@@ -25,7 +25,7 @@ The skill scripts (`skills/synca/scripts/`) are thin read-only wrappers around t
 
 In scope: skills, MCP and hooks for the agents listed in the README, user scope and project scope, and a dry-run plan before a write.
 
-Out of scope: a UI in this repo, a command palette, an extension host, collaboration, editing file contents in the window, and a second sync engine.
+Out of scope: a command palette, an extension host, collaboration, editing file contents in the window, and a second sync engine. The window lives in `apps/`, not in the Go module.
 
 ## GitHub
 

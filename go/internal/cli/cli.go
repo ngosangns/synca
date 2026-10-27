@@ -95,7 +95,7 @@ func (f *flags) boolVal(name string) *bool {
 	return nil
 }
 
-var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true, "reveal": true, "strict": true, "no-hooks": true}
+var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true, "reveal": true, "strict": true, "no-hooks": true, "keep-hub": true}
 
 func agentsFilter(f *flags) ([]core.AgentKind, error) {
 	s := f.str("agents", "")
@@ -252,7 +252,10 @@ func printMcpHelp() {
 	fmt.Print(`USAGE:
   synca mcp list [--scope user|project] [--cwd <dir>] [--json] [--reveal]
   synca mcp add <name> [--transport --command --url --env KEY=VAL --enabled --scope --cwd --agents --dry-run --json]
-  synca mcp remove <name> [--scope --cwd --agents --yes --dry-run --json]
+  synca mcp remove <name> [--scope --cwd --agents --keep-hub --yes --dry-run --json]
+
+--keep-hub removes the server from the selected agent configs and keeps it in
+the hub; the next sync adds it back. It needs --agents.
 
 JSON masks every env value as •••••• unless --reveal. A URL password and a
 secret-looking arg (--token=…, an Authorization header) are masked the same way.
@@ -452,18 +455,21 @@ func runMcp(args []string) error {
 		return finishManage(plan, log, f.bools["dry-run"], jsonOut)
 	case "remove":
 		if len(f.pos) < 1 {
-			return failUsage(jsonOut, "usage: synca mcp remove <name> [--scope --agents --yes --dry-run --cwd]", "see: synca mcp --help")
+			return failUsage(jsonOut, "usage: synca mcp remove <name> [--scope --agents --keep-hub --yes --dry-run --cwd]", "see: synca mcp --help")
 		}
-		dry := f.bools["dry-run"]
+		dry, keepHub := f.bools["dry-run"], f.bools["keep-hub"]
 		filter, err := agentsFilter(f)
 		if err != nil {
 			return asCommandErr(jsonOut, err)
 		}
-		plan, err := core.PlanRemoveMcp(scope, cwdOf(f), f.pos[0], filter)
+		if keepHub && len(filter) == 0 {
+			return failUsage(jsonOut, "--keep-hub requires --agents", "see: synca mcp --help")
+		}
+		plan, err := core.PlanRemoveMcp(scope, cwdOf(f), f.pos[0], filter, keepHub)
 		if err != nil {
 			return asCommandErr(jsonOut, err)
 		}
-		if !dry && !f.bools["yes"] && len(plan.Actions) > 0 && !stdinIsTerminal() {
+		if !keepHub && !dry && !f.bools["yes"] && len(plan.Actions) > 0 && !stdinIsTerminal() {
 			return failNeedsConfirm(jsonOut, "mcp remove deletes the server from the hub and from agent configs", "pass --yes")
 		}
 		plan.DryRun = dry
@@ -487,7 +493,7 @@ func mcpAllow(sub string) map[string]bool {
 	case "add":
 		return allow("scope", "cwd", "agents", "transport", "command", "url", "env", "enabled", "dry-run", "json", "help")
 	case "remove":
-		return allow("scope", "cwd", "agents", "yes", "dry-run", "json", "help")
+		return allow("scope", "cwd", "agents", "keep-hub", "yes", "dry-run", "json", "help")
 	default:
 		return allow("help")
 	}

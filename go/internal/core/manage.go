@@ -331,15 +331,22 @@ func PlanAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter
 	return plan, nil
 }
 
-func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind) (*ManagePlan, error) {
+func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind, keepHub bool) (*ManagePlan, error) {
 	key := NormalizeKey(name)
 	if CanonicalMcpPath(scope, cwd) == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
+	if keepHub && len(agentsFilter) == 0 {
+		return nil, fmt.Errorf("--keep-hub requires --agents")
+	}
+	note := fmt.Sprintf("remove mcp '%s' from hub + agents", key)
+	if keepHub {
+		note = fmt.Sprintf("remove mcp '%s' from agents (hub kept)", key)
+	}
 	plan := &ManagePlan{
 		Scope:  scope.String(),
 		DryRun: true,
-		Notes:  []string{fmt.Sprintf("remove mcp '%s' from hub + agents", key)},
+		Notes:  []string{note},
 	}
 	found := false
 	for _, e := range ScanMcp(scope, cwd) {
@@ -349,11 +356,14 @@ func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind) (*Ma
 		found = true
 		for _, p := range e.Presence {
 			// The hub is removed whenever the server is in it, including when
-			// --agents limits which agent configs are edited.
+			// --agents limits which agent configs are edited. --keep-hub keeps
+			// the hub so the next sync can restore the agent links.
 			if p.Agent == AgentAgents.String() {
-				plan.Actions = append(plan.Actions, ManageAction{
-					Kind: "remove_mcp_hub", Hub: p.Path, Server: key,
-				})
+				if !keepHub {
+					plan.Actions = append(plan.Actions, ManageAction{
+						Kind: "remove_mcp_hub", Hub: p.Path, Server: key,
+					})
+				}
 				continue
 			}
 			if agentsFilter != nil && !presenceAgentIn(p.Agent, agentsFilter) {
@@ -573,8 +583,8 @@ func AddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter []A
 	return plan, log, err
 }
 
-func RemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind, dryRun bool) (*ManagePlan, []string, error) {
-	plan, err := PlanRemoveMcp(scope, cwd, name, agentsFilter)
+func RemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind, keepHub, dryRun bool) (*ManagePlan, []string, error) {
+	plan, err := PlanRemoveMcp(scope, cwd, name, agentsFilter, keepHub)
 	if err != nil {
 		return nil, nil, err
 	}

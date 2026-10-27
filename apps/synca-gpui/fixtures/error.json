@@ -1,0 +1,8 @@
+{
+  "error": {
+    "code": "usage",
+    "exit": 2,
+    "message": "unknown command \"nope\"",
+    "hint": "see: synca schema"
+  }
+}

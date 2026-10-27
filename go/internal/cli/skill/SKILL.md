@@ -17,6 +17,8 @@ Run a mutating command only when the user asked for that action in this task: `s
 
 These are destructive and need `--yes` when stdin is not a TTY: `skills remove --purge`, `mcp remove`, `provider clear`, `sync` with `--on-conflict keep-source` or `keep-target`, and `hooks sync --on-conflict keep-source`. `provider clear` needs `--yes` even on a TTY. A dry-run does not need `--yes`.
 
+`skills remove <key> --agents a,b` and `mcp remove <name> --agents a,b --keep-hub` unlink one or more agents and keep the canonical copy; the next sync adds the links back. `--keep-hub` without `--agents` is a usage error.
+
 **Never run `synca hooks trust`.** It needs a person at a terminal, has no `--yes`, and fails off a TTY with exit 6. After `hooks add`, tell the user to run it themselves. Do not write the trust store or the agents' hook files by hand.
 
 ## Layout
