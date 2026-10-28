@@ -117,9 +117,16 @@ func ScanSkills(scope Scope, cwd string) []SkillEntry {
 		}
 	}
 
+	lock := ReadLock(scope, cwd)
 	out := make([]SkillEntry, 0, len(byKey))
 	for _, k := range order {
 		e := *byKey[k]
+		e.Origin = "local"
+		if l, ok := lock[k]; ok && l.Remote() {
+			e.Origin = "remote"
+			src, typ := l.Source, l.SourceType
+			e.Source, e.SourceType = &src, &typ
+		}
 		hashes := map[string]bool{}
 		for _, p := range e.Presence {
 			if p.ContentHash != HashDangling {

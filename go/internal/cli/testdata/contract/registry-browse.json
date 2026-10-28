@@ -1,0 +1,23 @@
+{
+  "view": "hot",
+  "page": 0,
+  "perPage": 1,
+  "total": 9501,
+  "hasMore": true,
+  "skills": [
+    {
+      "id": "dualface/ste-zh/ste",
+      "source": "dualface/ste-zh",
+      "slug": "ste",
+      "name": "ste",
+      "installs": 9,
+      "sourceType": "github",
+      "installUrl": "https://github.com/dualface/ste-zh",
+      "url": "https://skills.sh/dualface/ste-zh/ste",
+      "official": false,
+      "duplicate": false,
+      "installsYesterday": 1,
+      "change": 8
+    }
+  ]
+}

@@ -102,6 +102,11 @@ type SkillEntry struct {
 	Scope       string          `json:"scope"`
 	Presence    []SkillPresence `json:"presence"`
 	Mismatch    bool            `json:"mismatch"`
+	// Origin is "remote" when the skills lock file records a registry or Git
+	// source for this skill, otherwise "local".
+	Origin     string  `json:"origin"`
+	Source     *string `json:"source"`
+	SourceType *string `json:"source_type"`
 }
 
 type McpNormalized struct {

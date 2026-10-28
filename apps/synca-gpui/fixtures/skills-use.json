@@ -1,0 +1,4 @@
+{
+  "name": "find-skills",
+  "prompt": "You are being given a Skill to execute for the user's next request.\n\nUse the following SKILL.md as your instructions:\n\n<"
+}

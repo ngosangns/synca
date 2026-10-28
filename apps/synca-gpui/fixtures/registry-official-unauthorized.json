@@ -1,0 +1,1 @@
+{"error":{"code":"unauthorized","exit":7,"message":"the official list needs a skills.sh API token","hint":"set SKILLS_API_TOKEN to a Vercel OIDC token (see https://skills.sh/docs/api#authentication)"}}

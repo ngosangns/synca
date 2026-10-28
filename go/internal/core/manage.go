@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -24,6 +23,10 @@ type ManageAction struct {
 	Path     string `json:"path,omitempty"`
 	Hub      string `json:"hub,omitempty"`
 	Server   string `json:"server,omitempty"`
+	Source   string `json:"source,omitempty"`
+	// Origin is the lock entry a record_origin action writes. It is not part of
+	// the JSON plan.
+	Origin *LockEntry `json:"-"`
 }
 
 // MarshalJSON matches the serde enum field order per variant.
@@ -39,6 +42,7 @@ func (a ManageAction) MarshalJSON() ([]byte, error) {
 		Agent    string `json:"agent,omitempty"`
 		Hub      string `json:"hub,omitempty"`
 		Server   string `json:"server,omitempty"`
+		Source   string `json:"source,omitempty"`
 	}
 	switch a.Kind {
 	case "unlink_skill":
@@ -64,7 +68,7 @@ func (a ManageAction) MarshalJSON() ([]byte, error) {
 	default:
 		return json.Marshal(j{
 			Kind: a.Kind, From: a.From, To: a.To, Link: a.Link, Target: a.Target,
-			Path: a.Path, SkillKey: a.SkillKey, Agent: a.Agent, Hub: a.Hub, Server: a.Server,
+			Path: a.Path, SkillKey: a.SkillKey, Agent: a.Agent, Hub: a.Hub, Server: a.Server, Source: a.Source,
 		})
 	}
 }
@@ -74,121 +78,6 @@ type ManagePlan struct {
 	DryRun  bool           `json:"dry_run"`
 	Actions []ManageAction `json:"actions"`
 	Notes   []string       `json:"notes"`
-}
-
-// ResolveSkillSource resolves a local path, owner/repo shorthand, Git URL,
-// or skills.sh URL to one skill directory. Remote sources are cloned into a
-// temporary directory and cleaned up by the caller.
-func ResolveSkillSource(src string) (string, func(), error) {
-	trimmed := strings.TrimSpace(src)
-	if trimmed == "" {
-		return "", nil, fmt.Errorf("empty skill source")
-	}
-	remote, requested := normalizeSkillSource(trimmed)
-	st, statErr := os.Stat(trimmed)
-	isDir := statErr == nil && st.IsDir()
-	if remote != "" && !isDir {
-		tmp, err := os.MkdirTemp("", "synca-*")
-		if err != nil {
-			return "", nil, err
-		}
-		cleanup := func() { os.RemoveAll(tmp) }
-		dest := filepath.Join(tmp, "repo")
-		cmd := exec.Command("git", "clone", "--depth", "1", remote, dest)
-		if err := cmd.Run(); err != nil {
-			cleanup()
-			return "", nil, fmt.Errorf("git clone failed for %s", trimmed)
-		}
-		dir, err := findSkillDirAt(dest, requested)
-		if err != nil {
-			cleanup()
-			return "", nil, err
-		}
-		return dir, cleanup, nil
-	}
-	path := trimmed
-	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", nil, err
-		}
-		path = filepath.Join(cwd, path)
-	}
-	if _, err := os.Stat(path); err != nil {
-		return "", nil, fmt.Errorf("skill source not found: %s", path)
-	}
-	dir, err := findSkillDir(path)
-	if err != nil {
-		return "", nil, err
-	}
-	return dir, nil, nil
-}
-
-func normalizeSkillSource(src string) (string, string) {
-	if strings.HasPrefix(src, "https://skills.sh/") || strings.HasPrefix(src, "http://skills.sh/") {
-		parts := strings.Split(strings.Trim(src, "/"), "/")
-		if len(parts) >= 6 && parts[2] != "p" {
-			return "https://github.com/" + parts[3] + "/" + parts[4] + ".git", parts[5]
-		}
-		return "", ""
-	}
-	if strings.HasPrefix(src, "git@") || strings.HasSuffix(src, ".git") || strings.Contains(src, "github.com/") || strings.Contains(src, "gitlab.com/") {
-		return src, ""
-	}
-	parts := strings.Split(strings.Trim(src, "/"), "/")
-	if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-		return "https://github.com/" + parts[0] + "/" + parts[1] + ".git", ""
-	}
-	return "", ""
-}
-
-func findSkillDirAt(root, requested string) (string, error) {
-	if requested != "" {
-		candidates := []string{filepath.Join(root, requested), filepath.Join(root, "skills", requested), filepath.Join(root, ".agents", "skills", requested)}
-		for _, candidate := range candidates {
-			if st, err := os.Stat(filepath.Join(candidate, "SKILL.md")); err == nil && !st.IsDir() {
-				return candidate, nil
-			}
-		}
-		return "", fmt.Errorf("skill %s not found in remote repository", requested)
-	}
-	return findSkillDir(root)
-}
-
-func findSkillDir(path string) (string, error) {
-	if r, err := filepath.EvalSymlinks(path); err == nil {
-		path = r
-	} else {
-		path, _ = filepath.Abs(path)
-	}
-	if st, err := os.Stat(filepath.Join(path, "SKILL.md")); err == nil && !st.IsDir() {
-		return path, nil
-	}
-	if st, err := os.Stat(path); err == nil && st.IsDir() {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return "", err
-		}
-		var candidates []string
-		for _, e := range entries {
-			p := filepath.Join(path, e.Name())
-			if st, err := os.Stat(filepath.Join(p, "SKILL.md")); err == nil && !st.IsDir() {
-				candidates = append(candidates, p)
-			}
-		}
-		if len(candidates) == 1 {
-			return candidates[0], nil
-		}
-		if len(candidates) == 0 {
-			nested := filepath.Join(path, ".agents/skills")
-			if st, err := os.Stat(nested); err == nil && st.IsDir() {
-				return findSkillDir(nested)
-			}
-			return "", fmt.Errorf("no SKILL.md under %s", path)
-		}
-		return "", fmt.Errorf("multiple skills under %s; point at a specific skill folder", path)
-	}
-	return "", fmt.Errorf("not a skill directory: %s", path)
 }
 
 func skillKeyFromDir(dir string) string {
@@ -204,7 +93,11 @@ func skillKeyFromDir(dir string) string {
 	return NormalizeKey(name)
 }
 
-func PlanInstallSkill(scope Scope, cwd, sourceDir string, agentsFilter []AgentKind) (*ManagePlan, error) {
+// PlanInstallSkill plans a copy of sourceDir into the canonical directory and
+// links to agents. A non-nil origin records where the skill came from. A nil
+// origin on a skill the lock file lists as remote removes that record, since
+// the installed copy is now a local one.
+func PlanInstallSkill(scope Scope, cwd, sourceDir string, agentsFilter []AgentKind, origin *LockEntry) (*ManagePlan, error) {
 	canonical := CanonicalSkillsDir(scope, cwd)
 	if canonical == "" {
 		return nil, fmt.Errorf("no project root for project scope")
@@ -233,6 +126,26 @@ func PlanInstallSkill(scope Scope, cwd, sourceDir string, agentsFilter []AgentKi
 			Kind: "symlink_skill", Link: filepath.Join(r.Path, key), Target: canonSkill,
 			SkillKey: key, Agent: r.Agent.String(),
 		})
+	}
+	if lock := LockPath(scope, cwd); lock != "" {
+		if origin != nil {
+			entry := *origin
+			if filepath.Base(lock) == projectLockName {
+				hash, err := ComputeFolderHash(sourceDir)
+				if err != nil {
+					return nil, err
+				}
+				entry.ComputedHash = hash
+				entry.FolderHash = ""
+			}
+			plan.Actions = append(plan.Actions, ManageAction{
+				Kind: "record_origin", Path: lock, SkillKey: key, Source: entry.Source, Origin: &entry,
+			})
+		} else if _, ok := ReadLock(scope, cwd)[key]; ok {
+			plan.Actions = append(plan.Actions, ManageAction{
+				Kind: "forget_origin", Path: lock, SkillKey: key,
+			})
+		}
 	}
 	return plan, nil
 }
@@ -291,6 +204,15 @@ func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, pur
 	}
 	if !found {
 		return nil, fmt.Errorf("no skill named %s", requested)
+	}
+	if purge {
+		if lock := LockPath(scope, cwd); lock != "" {
+			if _, ok := ReadLock(scope, cwd)[key]; ok {
+				plan.Actions = append(plan.Actions, ManageAction{
+					Kind: "forget_origin", Path: lock, SkillKey: key,
+				})
+			}
+		}
 	}
 	if len(plan.Actions) == 0 {
 		plan.Notes = append(plan.Notes, fmt.Sprintf("nothing to remove for skill '%s'", key))
@@ -392,8 +314,8 @@ func ApplyManagePlan(plan *ManagePlan, mcpPayload *McpNormalized) ([]string, err
 	var failures []error
 	failedSkills := map[string]bool{}
 	for _, a := range plan.Actions {
-		if a.SkillKey != "" && failedSkills[a.SkillKey] && a.Kind == "symlink_skill" {
-			log = append(log, fmt.Sprintf("skipped symlink_skill for skill %s: the copy failed", a.SkillKey))
+		if a.SkillKey != "" && failedSkills[a.SkillKey] && (a.Kind == "symlink_skill" || a.Kind == "record_origin") {
+			log = append(log, fmt.Sprintf("skipped %s for skill %s: the copy failed", a.Kind, a.SkillKey))
 			continue
 		}
 		lines, err := applyManageAction(a, mcpPayload)
@@ -439,6 +361,22 @@ func applyManageAction(a ManageAction, mcpPayload *McpNormalized) ([]string, err
 				return log, err
 			}
 			log = append(log, fmt.Sprintf("purged canonical skill %s: %s", a.SkillKey, a.Path))
+		}
+	case "record_origin":
+		if a.Origin == nil {
+			return log, fmt.Errorf("origin required for record_origin")
+		}
+		if err := RecordOrigin(a.Path, a.SkillKey, *a.Origin); err != nil {
+			return log, err
+		}
+		log = append(log, fmt.Sprintf("recorded origin of %s: %s", a.SkillKey, a.Source))
+	case "forget_origin":
+		removed, err := ForgetOrigin(a.Path, a.SkillKey)
+		if err != nil {
+			return log, err
+		}
+		if removed {
+			log = append(log, fmt.Sprintf("forgot origin of %s", a.SkillKey))
 		}
 	case "upsert_mcp_hub":
 		if mcpPayload == nil {
@@ -562,14 +500,12 @@ func removeMcpFromGrokToml(path, server string) error {
 // ---------- convenience wrappers ----------
 
 func InstallSkill(scope Scope, cwd, source string, agentsFilter []AgentKind, dryRun bool) (*ManagePlan, []string, error) {
-	dir, cleanup, err := ResolveSkillSource(source)
+	res, err := ResolveSkillSource(source)
 	if err != nil {
 		return nil, nil, err
 	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-	plan, err := PlanInstallSkill(scope, cwd, dir, agentsFilter)
+	defer res.Cleanup()
+	plan, err := PlanInstallSkill(scope, cwd, res.Dir, agentsFilter, res.Origin)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -650,8 +586,21 @@ func ParseCommandLine(s string) []string {
 }
 
 func McpFromCLI(transport string, command, url *string, enabled *bool) (*McpNormalized, error) {
+	var parts []string
+	if command != nil {
+		parts = ParseCommandLine(*command)
+		if len(parts) == 0 {
+			return nil, fmt.Errorf("empty --command")
+		}
+	}
+	return McpFromParts(transport, parts, url, enabled)
+}
+
+// McpFromParts builds a normalized server from an argv that is already split.
+// Registry installs use it so a package spec is never re-parsed as a shell line.
+func McpFromParts(transport string, command []string, url *string, enabled *bool) (*McpNormalized, error) {
 	requested := strings.ToLower(strings.TrimSpace(transport))
-	canonical := CanonicalTransport(&requested, url, command != nil)
+	canonical := CanonicalTransport(&requested, url, len(command) > 0)
 	norm := &McpNormalized{
 		Transport: canonical,
 		Enabled:   enabled,
@@ -660,16 +609,12 @@ func McpFromCLI(transport string, command, url *string, enabled *bool) (*McpNorm
 	}
 	switch canonical {
 	case "stdio":
-		if command == nil {
+		if len(command) == 0 {
 			return nil, fmt.Errorf("--command required for stdio")
 		}
-		parts := ParseCommandLine(*command)
-		if len(parts) == 0 {
-			return nil, fmt.Errorf("empty --command")
-		}
-		norm.Command = parts[:1]
-		if len(parts) > 1 {
-			norm.Args = parts[1:]
+		norm.Command = []string{command[0]}
+		if len(command) > 1 {
+			norm.Args = append([]string{}, command[1:]...)
 		}
 	case "http", "sse":
 		if url == nil {

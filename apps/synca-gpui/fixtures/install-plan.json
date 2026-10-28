@@ -1,0 +1,28 @@
+{
+  "dryRun": true,
+  "scope": "user",
+  "actions": [
+    {
+      "kind": "copy_skill",
+      "from": "/tmp/repo/skills/find-skills",
+      "to": "/home/u/.agents/skills/find-skills",
+      "skill_key": "find-skills"
+    },
+    {
+      "kind": "symlink_skill",
+      "link": "/home/u/.grok/skills/find-skills",
+      "target": "/home/u/.agents/skills/find-skills",
+      "skill_key": "find-skills",
+      "agent": "grok"
+    },
+    {
+      "kind": "record_origin",
+      "path": "/home/u/.agents/.skill-lock.json",
+      "skill_key": "find-skills",
+      "source": "vercel-labs/skills"
+    }
+  ],
+  "notes": [
+    "install skill 'find-skills' from /tmp/repo/skills/find-skills"
+  ]
+}

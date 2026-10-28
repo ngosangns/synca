@@ -86,7 +86,7 @@ synca --version       # synca 0.3.0
 
 ```text
 synca skills <list|install|remove> [flags]
-synca mcp <list|add|remove> [flags]
+synca mcp <list|add|remove|search|browse|info|install> [flags]
 synca hooks <list|add|remove|trust|untrust|sync> [flags]
 synca sync <skills|mcp|hooks|all> [flags]
 synca provider clear <name> [--scope --cwd --yes --dry-run --json]
@@ -130,9 +130,9 @@ Text output is one line per entry with the agents that have it, and `MISMATCH` w
 
 ```bash
 synca skills install ./my-skill --scope user
-synca skills install vercel-labs/agent-skills --scope user
+synca skills install vercel-labs/agent-skills@find-skills --dry-run
 synca skills install https://skills.sh/vercel-labs/agent-skills/find-skills --dry-run
-synca skills install https://github.com/org/skill-repo.git --dry-run
+synca skills install https://github.com/org/skill-repo.git@my-skill --dry-run
 synca skills remove my-skill                  # unlink agents, keep the canonical copy
 synca skills remove my-skill --purge          # also delete canonical; asks you to retype the name
 synca skills remove my-skill --purge --yes
@@ -140,16 +140,76 @@ synca skills remove my-skill --purge --yes
 
 `install` takes a source and copies the skill into the canonical dir, then links it into each agent dir:
 
-- a local folder with `SKILL.md`, or a folder that holds exactly one skill folder (it also looks in `.agents/skills`);
-- `owner/repo` shorthand (GitHub);
+- a local folder with `SKILL.md`, or a folder that holds exactly one skill folder (it also looks in `.agents/skills` and `skills`);
+- `owner/repo` shorthand (GitHub), or `owner/repo@skill` to pick one skill from a repository that holds many;
 - a Git URL (`https://github.com/...`, `gitlab.com`, `git@...`, anything ending in `.git`);
 - a `https://skills.sh/<owner>/<repo>/<skill>` URL.
 
 Remote sources are cloned with `git clone --depth 1` into a temp dir that is removed afterwards. `git` must be installed. A skill's key is its `SKILL.md` `name`, not the folder name; `remove` works on that key.
 
+#### Origin: remote or local
+
+Every skill in `skills list --json` has `origin`, `source` and `source_type`. `origin` is `remote` when the skills lock file records a GitHub or Git source for the skill, and `local` for everything else. The window shows the same value as a badge.
+
+synca reads and writes the lock files that `npx skills` keeps, so both tools share one history:
+
+| Scope | Lock file |
+| --- | --- |
+| user | `$XDG_STATE_HOME/skills/.skill-lock.json`, else `~/.agents/.skill-lock.json` |
+| project | `<project root>/skills-lock.json` |
+
+A remote `install` adds a `record_origin` action. Installing a local folder over a remote skill adds `forget_origin`, so the skill becomes `local`. `remove --purge` forgets the origin; `remove` without `--purge` keeps it. Fields synca does not know are kept when it rewrites a lock file, and a lock file that does not parse is never modified.
+
+#### skills.sh registry
+
+```bash
+synca skills search "react native" --limit 10
+synca skills browse --view trending --page 0
+synca skills info vercel-labs/skills/find-skills --contents
+synca skills audit vercel-labs/skills/find-skills
+synca skills use vercel-labs/skills@find-skills       # prompt text, nothing installed
+synca skills discover anthropics/skills               # list the skills in a repo
+synca skills update --dry-run                         # check; no change
+synca sync skills --update --dry-run                  # same fetch, then the cross-agent sync
+synca skills update find-skills
+synca skills restore --dry-run                        # remote skills in the lock file but missing on disk
+synca skills init my-skill --dir .
+```
+
+| Command | Endpoint | Token |
+| --- | --- | --- |
+| `search` | `/api/search` | no |
+| `browse` (`--view all-time\|trending\|hot`, `--page N`, 200 per page, pages start at 0) | `/api/skills/<view>/<page>` | no |
+| `info` | `/api/download/<owner>/<repo>/<skill>`, or `/api/v1/skills/<id>` when a token is set (adds `installs`) | no |
+| `audit` | `/api/v1/skills/audit/<id>` | no |
+| `official`, `browse --source owner/repo` | `/api/v1/skills/curated`, `/api/v1/skills` | yes |
+
+A token is a Vercel OIDC token in `SKILLS_API_TOKEN` (or `VERCEL_OIDC_TOKEN`). Without one, the token commands exit 7. `SKILLS_API_URL` and `SKILLS_DOWNLOAD_URL` change the host, as in the `skills` CLI. `search` needs a query of two characters or more. An `audit` of a skill nobody has audited gives an empty `audits` list.
+
+#### How skills are fetched
+
+A GitHub skill (`owner/repo`, `owner/repo@skill`, a skills.sh URL, or a GitHub URL) is fetched from skills.sh first. synca reads the repository tree from the GitHub API (`GITHUB_TOKEN` or `GH_TOKEN` raises the 60 requests an hour limit; `GITHUB_API_URL` moves the host) to find the skill folder and its Git tree id, then downloads the files from `skills.sh/api/download/<owner>/<repo>/<skill>`. It uses the snapshot only when it holds every installable file the tree lists for that folder. Otherwise, and for non-GitHub URLs, an explicit ref, or a network error, it runs `git clone --depth 1` as before. The tree id goes in the lock file as `skillFolderHash`, the same value `npx skills` writes. `SYNCA_NO_REGISTRY=1` forces `git clone` everywhere.
+
+`sync skills` and `sync all` run the same fetch first. A remote skill that the lock file lists but that is missing on disk is restored (plan action `fetch_skill`, reason `restore`), then the usual cross-agent sync links it. `--update` also reinstalls a remote skill whose source changed (`fetch_skill`, reason `update`). `--no-registry` skips the step and uses no network. If the registry or a source cannot be reached, synca prints `registry: skipped: ...` on stderr and syncs the rest. Local skills are never touched by this step.
+
+`update` clones each source once and compares the skill folder with the version in the lock file. It plans a reinstall (`copy_skill`, links, `record_origin`) for the skills that changed, and writes `up to date:`, `update:` and `skipped:` lines to `notes`. Well-known (domain) sources and skills without a recorded version are skipped with a reason. `update` without `--dry-run` applies the plan. `restore` does the same for skills that are in the lock file but not on disk.
+
+### Providers
+
+```bash
+synca providers list                       # every agent skills.sh supports
+synca providers list --scope project --json
+```
+
+`providers list` shows the 79 agents the `skills` CLI can install to, not only the six synca syncs to. Each row has the skills directory the agent reads in this scope (`path`), whether it exists (`present`), how many skills it holds, `universal` (it reads the shared `.agents/skills`), and `managed` (synca syncs to it). For a managed agent `path` is the directory synca writes, which in a project can differ from the one the skills CLI uses (OpenCode and Cursor use `.opencode/skills` and `.cursor/skills`). The table is embedded from `skills@1.7.4` and needs no network. synca still syncs only to its six agents; the rest are listed for information.
+
 ### MCP servers
 
 ```bash
+synca mcp search filesystem --json
+synca mcp browse --limit 20
+synca mcp info ai.2kw/mcp-server --json
+synca mcp install ai.2kw/mcp-server --env AI_2KW_API_KEY=... --dry-run
 synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
 synca mcp add hosted-server --transport http --url https://example.com/mcp
 synca mcp add stream-server --transport sse --url https://example.com/sse
@@ -157,6 +217,12 @@ synca mcp remove my-server --scope user --dry-run
 synca mcp remove my-server --scope user --yes
 synca mcp remove my-server --agents cursor --keep-hub
 ```
+
+`mcp search`, `browse`, `info` and `install` read the official MCP Registry (`registry.modelcontextprotocol.io`) and need no token. `search` matches the server name only (the registry's limit), `browse` follows registry name order rather than popularity, and `info` lists the packages and remotes of one version. `--version` defaults to `latest`. `MCP_REGISTRY_URL` changes the registry and `MCP_REGISTRY_TOKEN` adds a Bearer token for a subregistry. JSON output is `mcp-registry-search.json` for `search`, `mcp-registry-browse.json` for `browse` and `mcp-registry-info.json` for `info`; it prints env, header and variable names but never their values.
+
+`mcp install <name>` fetches the metadata and turns one variant into a server config; its plan and `--json` document are the same `manage-plan.json` as `mcp add`. The variant is chosen in this order: `--package npm|pypi|oci`; `--transport stdio` (same package order); `--transport http|sse` (the matching remote); otherwise npm, pypi, oci, then `streamable-http`, then `sse`. `--package` cannot be combined with `--transport http` or `sse`. npm becomes `npx -y <id>@<version>`, pypi `uvx <id>==<version>`, and oci `docker run -i --rm <id>:<version>`; registry runtime arguments go before the package, package arguments after it.
+
+The installed key is the last segment of the registry name (`ai.2kw/mcp-server` is `mcp-server`); `--name` overrides it. Applying over an existing key needs `--force`, while a dry-run adds a note instead of failing. `--env KEY=VAL` fills a declared variable before its literal value and default; `--arg NAME=VAL` fills an argument (a named flag uses its name without dashes, a positional one uses its `valueHint` or `argN`). Required env vars, variables and arguments without a value exit 2 and list only names. Remote servers arrive without headers in the stored config, so a required header is refused with exit 2 and optional headers are skipped with a note. `--dry-run` still fetches the registry, it only writes nothing. sse keeps the same rule as `mcp add`: it becomes `http` unless the URL ends in `/sse`, and the plan says so.
 
 `mcp add` and `mcp remove` both accept `--dry-run`. `mcp remove` deletes the server from the hub and from agent configs, so off a TTY it exits 6 unless you pass `--yes`. With `--keep-hub --agents a,b` it removes the server from those agent configs only and keeps it in the hub; that unlink is reversible (the next `sync mcp` adds it back) and needs no `--yes`. `--keep-hub` without `--agents` is a usage error.
 

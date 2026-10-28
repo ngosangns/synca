@@ -11,9 +11,9 @@ Do not edit `~/.agents/skills/synca` by hand. Edit this repo's `skills/synca/SKI
 
 ## Mutate rule
 
-Read-only: `skills list`, `mcp list`, `hooks list`, `version`, `schema`, `doctor`, `skill check`, and any command with `--dry-run`. The bundled helpers `scripts/status.sh` and `scripts/plan.sh` are also read-only.
+Read-only: `skills list`, `skills search`, `skills browse`, `skills official`, `skills info`, `skills audit`, `skills use`, `skills discover`, `providers list`, `mcp list`, `mcp search`, `mcp browse`, `mcp info`, `hooks list`, `version`, `schema`, `doctor`, `skill check`, and any command with `--dry-run`. The bundled helpers `scripts/status.sh` and `scripts/plan.sh` are also read-only.
 
-Run a mutating command only when the user asked for that action in this task: `skills install`, `skills remove`, `mcp add`, `mcp remove`, `hooks add`, `hooks remove`, `hooks untrust`, `hooks sync`, `sync` without `--dry-run`, `provider clear`, `skill install`, `update`. Pass `--dry-run` first on the plan commands.
+Run a mutating command only when the user asked for that action in this task: `skills install`, `skills remove`, `skills update`, `skills restore`, `skills init`, `mcp add`, `mcp remove`, `mcp install`, `hooks add`, `hooks remove`, `hooks untrust`, `hooks sync`, `sync` without `--dry-run`, `provider clear`, `skill install`, `update`. Pass `--dry-run` first on the plan commands.
 
 These are destructive and need `--yes` when stdin is not a TTY: `skills remove --purge`, `mcp remove`, `provider clear`, `sync` with `--on-conflict keep-source` or `keep-target`, and `hooks sync --on-conflict keep-source`. `provider clear` needs `--yes` even on a TTY. A dry-run does not need `--yes`.
 
@@ -54,11 +54,32 @@ Review a plan without writing:
 Install a skill for every agent:
 
 ```bash
-synca skills install <path|owner/repo|git-url> --dry-run
-synca skills install <path|owner/repo|git-url>
+synca skills install <path|owner/repo|owner/repo@skill|git-url> --dry-run
+synca skills install <path|owner/repo|owner/repo@skill|git-url>
 ```
 
-Register an MCP server for every agent:
+Find a skill on skills.sh, check it, and keep remote skills current:
+
+```bash
+synca skills search "<query>" --json
+synca skills audit <owner/repo/skill> --json
+synca skills update --dry-run --json
+```
+
+GitHub skills come from skills.sh with a `git clone` fallback. `sync skills` and `sync all` first restore remote skills missing on disk (`fetch_skill` actions); `--update` also refreshes changed ones and `--no-registry` skips the step. `skills list --json` marks each skill `origin: remote|local`. `skills official` and `skills browse --source` need `SKILLS_API_TOKEN` and exit 7 without it.
+
+Find an MCP server in the official registry and install it for every agent:
+
+```bash
+synca mcp search "<query>" --json
+synca mcp info <namespace/name> --json
+synca mcp install <namespace/name> --env API_KEY=... --dry-run --json
+synca mcp install <namespace/name> --env API_KEY=...
+```
+
+`install` picks npm, pypi or oci first, then a streamable-http or sse remote; `--package` and `--transport stdio|http|sse` override that. `--arg NAME=VAL` fills arguments, `--name` overrides the key, and an existing key needs `--force`. Required env vars, variables and arguments and remotes with required headers exit 2 with names only. The registry is read over the network even with `--dry-run`. `MCP_REGISTRY_URL` and `MCP_REGISTRY_TOKEN` change it.
+
+Register an MCP server without the registry:
 
 ```bash
 synca mcp add <name> --transport stdio --command "npx -y @pkg/server" --dry-run
@@ -135,7 +156,7 @@ Hook JSON shapes:
 
 ```bash
 synca skills list|install|remove
-synca mcp list|add|remove
+synca mcp list|add|remove|search|browse|info|install
 synca hooks list|add|remove|trust|untrust|sync
 synca sync skills|mcp|hooks|all [--dry-run] [--on-conflict skip|keep-source|keep-target] [--key name] [--agents a,b] [--yes] [--strict] [--no-hooks] [--json]
 synca provider clear <name> [--yes] [--dry-run] [--json]
@@ -167,7 +188,7 @@ Installed at `~/.agents/skills/synca/scripts/` (or `<skill-dir>/scripts/` in the
 
 `mcp list` masks every env value as `••••••`. A URL password and a secret-looking arg (`--token=…`, an `Authorization` header) are masked the same way. `env_keys` stay visible. Do not pass `--reveal` unless the user asked for the value.
 
-`mcp add --env KEY=VAL --dry-run` prints the key with a masked value. A hook command that embeds a secret is rejected at `hooks add`.
+`mcp add --env KEY=VAL --dry-run` prints the key with a masked value; `mcp install` never prints env, header or variable values, even in errors. A hook command that embeds a secret is rejected at `hooks add`.
 
 ## Failures
 

@@ -3,7 +3,7 @@
   "type": "array",
   "items": {
     "type": "object",
-    "required": ["key", "display_name", "description", "scope", "presence", "mismatch"],
+    "required": ["key", "display_name", "description", "scope", "presence", "mismatch", "origin", "source", "source_type"],
     "properties": {
       "key": {"type": "string"},
       "display_name": {"type": "string"},
@@ -25,7 +25,10 @@
           }
         }
       },
-      "mismatch": {"type": "boolean"}
+      "mismatch": {"type": "boolean"},
+      "origin": {"enum": ["remote", "local"]},
+      "source": {"type": ["string", "null"]},
+      "source_type": {"type": ["string", "null"]}
     }
   }
 }

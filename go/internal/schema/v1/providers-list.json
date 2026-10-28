@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "source",
+    "scope",
+    "total",
+    "providers"
+  ],
+  "properties": {
+    "source": {
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "user",
+        "project"
+      ]
+    },
+    "total": {
+      "type": "integer"
+    },
+    "providers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "project_dir",
+          "global_dir",
+          "path",
+          "universal",
+          "managed",
+          "synca_agent",
+          "present",
+          "skills"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_dir": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "global_dir": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "universal": {
+            "type": "boolean"
+          },
+          "managed": {
+            "type": "boolean"
+          },
+          "synca_agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "present": {
+            "type": "boolean"
+          },
+          "skills": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

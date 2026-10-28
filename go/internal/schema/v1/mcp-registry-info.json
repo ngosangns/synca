@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "server"
+  ],
+  "properties": {
+    "server": {
+      "type": "object",
+      "required": [
+        "name",
+        "title",
+        "description",
+        "version",
+        "status",
+        "isLatest",
+        "statusChangedAt",
+        "publishedAt",
+        "updatedAt",
+        "repositoryUrl",
+        "websiteUrl",
+        "packageTypes",
+        "remoteTypes",
+        "packages",
+        "remotes",
+        "official"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "isLatest": {
+          "type": "boolean"
+        },
+        "statusChangedAt": {
+          "type": "string"
+        },
+        "publishedAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "repositoryUrl": {
+          "type": "string"
+        },
+        "websiteUrl": {
+          "type": "string"
+        },
+        "packageTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remoteTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "packages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "registryType",
+              "registryBaseUrl",
+              "identifier",
+              "version",
+              "runtimeHint",
+              "transport",
+              "envKeys"
+            ],
+            "properties": {
+              "registryType": {
+                "type": "string"
+              },
+              "registryBaseUrl": {
+                "type": "string"
+              },
+              "identifier": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "runtimeHint": {
+                "type": "string"
+              },
+              "transport": {
+                "type": "string"
+              },
+              "envKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "remotes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "type",
+              "url",
+              "headerNames",
+              "variables"
+            ],
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "headerNames": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "variables": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "official": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "status",
+            "isLatest",
+            "statusChangedAt",
+            "publishedAt",
+            "updatedAt"
+          ],
+          "properties": {
+            "status": {
+              "type": "string"
+            },
+            "isLatest": {
+              "type": "boolean"
+            },
+            "statusChangedAt": {
+              "type": "string"
+            },
+            "publishedAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

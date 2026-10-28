@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "cursor",
+    "count",
+    "nextCursor",
+    "servers"
+  ],
+  "properties": {
+    "cursor": {
+      "type": "string"
+    },
+    "count": {
+      "type": "integer"
+    },
+    "nextCursor": {
+      "type": "string"
+    },
+    "servers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/summary"
+      }
+    }
+  },
+  "$defs": {
+    "summary": {
+      "type": "object",
+      "required": [
+        "name",
+        "title",
+        "description",
+        "version",
+        "status",
+        "isLatest",
+        "statusChangedAt",
+        "publishedAt",
+        "updatedAt",
+        "repositoryUrl",
+        "websiteUrl",
+        "packageTypes",
+        "remoteTypes"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "isLatest": {
+          "type": "boolean"
+        },
+        "statusChangedAt": {
+          "type": "string"
+        },
+        "publishedAt": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string"
+        },
+        "repositoryUrl": {
+          "type": "string"
+        },
+        "websiteUrl": {
+          "type": "string"
+        },
+        "packageTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "remoteTypes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

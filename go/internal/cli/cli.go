@@ -95,7 +95,7 @@ func (f *flags) boolVal(name string) *bool {
 	return nil
 }
 
-var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true, "reveal": true, "strict": true, "no-hooks": true, "keep-hub": true}
+var commonBool = map[string]bool{"json": true, "dry-run": true, "purge": true, "yes": true, "check": true, "force": true, "help": true, "version": true, "reveal": true, "strict": true, "no-hooks": true, "keep-hub": true, "contents": true, "no-registry": true, "update": true}
 
 func agentsFilter(f *flags) ([]core.AgentKind, error) {
 	s := f.str("agents", "")
@@ -165,6 +165,8 @@ func Run(args []string) error {
 		return runSync(rest)
 	case "provider":
 		return runProvider(rest)
+	case "providers":
+		return runProviders(rest)
 	case "doctor":
 		return runDoctor(rest)
 	case "skill":
@@ -193,10 +195,11 @@ func printHelp() {
 
 USAGE:
   synca skills <list|install|remove> [flags]
-  synca mcp <list|add|remove> [flags]
+  synca mcp <list|add|remove|search|browse|info|install> [flags]
   synca hooks <list|add|remove|trust|untrust|sync> [flags]
   synca sync <skills|mcp|hooks|all> [flags]
   synca provider clear <name> [--scope --cwd --yes --dry-run]
+  synca providers list [--scope --cwd --json]
   synca doctor [--scope --cwd --json]
   synca skill <install|check> [--dest DIR]
   synca update [--check] [--json] [--force]
@@ -246,6 +249,7 @@ func printSkillsHelp() {
   synca skills install <source> [--scope --cwd --agents --dry-run --json]
   synca skills remove <name> [--scope --cwd --agents --purge --yes --dry-run --json]
 `)
+	printRegistryHelp()
 }
 
 func printMcpHelp() {
@@ -253,9 +257,37 @@ func printMcpHelp() {
   synca mcp list [--scope user|project] [--cwd <dir>] [--json] [--reveal]
   synca mcp add <name> [--transport --command --url --env KEY=VAL --enabled --scope --cwd --agents --dry-run --json]
   synca mcp remove <name> [--scope --cwd --agents --keep-hub --yes --dry-run --json]
+  synca mcp search <query> [--limit N] [--cursor C] [--json]
+  synca mcp browse [--limit N] [--cursor C] [--json]
+  synca mcp info <name> [--version V] [--json]
+  synca mcp install <name> [--version V] [--name KEY] [--package npm|pypi|oci]
+                       [--transport stdio|http|sse] [--env KEY=VAL]...
+                       [--arg NAME=VAL]... [--enabled true|false]
+                       [--scope user|project] [--cwd <dir>] [--agents a,b]
+                       [--dry-run] [--force] [--json]
 
 --keep-hub removes the server from the selected agent configs and keeps it in
 the hub; the next sync adds it back. It needs --agents.
+
+search, browse, info and install read the official MCP registry
+(registry.modelcontextprotocol.io). search matches names only. browse follows
+registry name order, not popularity. Version defaults to latest.
+
+install picks a variant in this order: --package npm, pypi or oci; --transport
+stdio (same package order); --transport http or sse (matching remote); otherwise
+npm, pypi, oci, then streamable-http, then sse. --package cannot be combined with
+--transport http or sse. The installed key defaults to the last segment of the
+server name; --name overrides it. An existing key needs --force on apply; a
+dry-run only adds a note.
+
+--env overrides a declared value or default; --arg overrides an argument value.
+Required env vars, variables and arguments without a value fail with exit 2 and
+list only names. Remote servers with required headers cannot be installed yet
+(MCP headers are not stored); optional headers are skipped with a note.
+
+--dry-run still fetches the registry, it just writes nothing. JSON output never
+contains env, header or variable values. MCP_REGISTRY_URL changes the registry
+and MCP_REGISTRY_TOKEN adds a Bearer token for a subregistry.
 
 JSON masks every env value as •••••• unless --reveal. A URL password and a
 secret-looking arg (--token=…, an Authorization header) are masked the same way.
@@ -266,13 +298,16 @@ them. --env may be repeated.
 
 func printSyncHelp() {
 	fmt.Print(`USAGE:
-  synca sync <skills|mcp|hooks|all> [--scope --cwd --agents --dry-run --on-conflict --key --yes --strict --no-hooks --json]
+  synca sync <skills|mcp|hooks|all> [--scope --cwd --agents --dry-run --on-conflict --key --yes --strict --no-hooks --update --no-registry --json]
 
 --json prints one plan: dryRun, scope, onConflict, actions, conflicts.
 An apply adds applied and sets dryRun to false. Without --json the text plan is unchanged.
 sync all also syncs hooks (user scope) when ~/.agents/hooks.json exists, and adds a "hooks" key to the JSON.
 Hooks that no person approved (synca hooks trust) are skipped and listed; exit stays 0 unless --strict (exit 7).
 --no-hooks leaves hooks out of sync all.
+sync skills and sync all first restore the remote skills in the lock file that are missing on disk (fetch_skill),
+through skills.sh for GitHub sources and Git otherwise. --update also reinstalls remote skills whose source changed.
+--no-registry skips that step and uses no network. A registry problem is printed to stderr and does not stop the sync.
 keep-source and keep-target overwrite data and need --yes when stdin is not a TTY.
 --on-conflict skip leaves conflicts in place and exits 0.
 `)
@@ -293,6 +328,9 @@ func runSkills(args []string) error {
 		return nil
 	}
 	sub, rest := args[0], args[1:]
+	if handled, err := runRegistry(sub, rest); handled {
+		return err
+	}
 	f := parseFlags(rest, commonBool)
 	jsonOut := f.bools["json"]
 	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "dry-run", "purge", "yes", "json", "help")); bad != "" {
@@ -379,22 +417,32 @@ func runSkills(args []string) error {
 
 func runMcp(args []string) error {
 	if len(args) == 0 {
-		return failUsage(jsonIn(args), "usage: synca mcp <list|add|remove>", "see: synca mcp --help")
+		return failUsage(jsonIn(args), "usage: synca mcp <list|add|remove|search|browse|info|install>", "see: synca mcp --help")
 	}
 	if isHelp(args[0]) || (len(args) > 1 && hasHelp(args[1:])) {
 		printMcpHelp()
 		return nil
 	}
 	sub, rest := args[0], args[1:]
-	f := parseFlags(rest, commonBool)
+	f := parseFlags(rest, mcpBoolFlags())
 	jsonOut := f.bools["json"]
 	switch sub {
-	case "list", "add", "remove":
+	case "list", "add", "remove", "search", "browse", "info", "install":
 	default:
 		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
 	}
 	if bad := f.unknownFlag(mcpAllow(sub)); bad != "" {
 		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca mcp --help")
+	}
+	switch sub {
+	case "search":
+		return runMcpSearch(f, jsonOut)
+	case "browse":
+		return runMcpBrowse(f, jsonOut)
+	case "info":
+		return runMcpInfo(f, jsonOut)
+	case "install":
+		return runMcpInstall(f, jsonOut)
 	}
 	scope, err := scopeOf(f)
 	if err != nil {
@@ -494,6 +542,13 @@ func mcpAllow(sub string) map[string]bool {
 		return allow("scope", "cwd", "agents", "transport", "command", "url", "env", "enabled", "dry-run", "json", "help")
 	case "remove":
 		return allow("scope", "cwd", "agents", "keep-hub", "yes", "dry-run", "json", "help")
+	case "search", "browse":
+		return allow("limit", "cursor", "json", "help")
+	case "info":
+		return allow("version", "json", "help")
+	case "install":
+		return allow("version", "name", "transport", "package", "env", "arg", "enabled",
+			"scope", "cwd", "agents", "dry-run", "force", "json", "help")
 	default:
 		return allow("help")
 	}
@@ -532,7 +587,7 @@ func runSync(args []string) error {
 	sub, rest := args[0], args[1:]
 	f := parseFlags(rest, commonBool)
 	jsonOut := f.bools["json"]
-	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "dry-run", "on-conflict", "key", "yes", "json", "help", "strict", "no-hooks")); bad != "" {
+	if bad := f.unknownFlag(allow("scope", "cwd", "agents", "dry-run", "on-conflict", "key", "yes", "json", "help", "strict", "no-hooks", "no-registry", "update")); bad != "" {
 		return failUsage(jsonOut, "unknown flag "+quoteArg("--"+bad), "see: synca sync --help")
 	}
 	if sub == "hooks" {
@@ -569,6 +624,26 @@ func runSync(args []string) error {
 		return failUsage(jsonOut, fmt.Sprintf("invalid --on-conflict '%s' (use skip|keep-source|keep-target)", onConflict), "see: synca sync --help")
 	}
 
+	if (f.bools["no-registry"] || f.bools["update"]) && sub != "skills" && sub != "all" {
+		return failUsage(jsonOut, "--no-registry and --update only apply to sync skills and sync all", "see: synca sync --help")
+	}
+	var fetched *core.RegistrySyncResult
+	if (sub == "skills" || sub == "all") && !f.bools["no-registry"] {
+		key := f.str("key", "")
+		fetched, err = core.SyncFromRegistry(scope, cwd, filter, key, f.bools["update"], !dry)
+		if err != nil {
+			return asCommandErr(jsonOut, err)
+		}
+		for _, w := range fetched.Warnings {
+			fmt.Fprintln(os.Stderr, "registry:", w)
+		}
+		if !dry {
+			for _, line := range fetched.Log {
+				fmt.Fprintln(os.Stderr, " ", line)
+			}
+		}
+	}
+
 	var plan *core.SyncPlan
 	switch sub {
 	case "skills":
@@ -593,6 +668,9 @@ func runSync(args []string) error {
 		return asCommandErr(jsonOut, err)
 	}
 	plan.DryRun = dry
+	if fetched != nil && len(fetched.Actions) > 0 {
+		plan.Actions = append(append([]core.SyncAction{}, fetched.Actions...), plan.Actions...)
+	}
 	if !dry && (policy == core.ConflictKeepSource || policy == core.ConflictKeepTarget) && !f.bools["yes"] && !stdinIsTerminal() {
 		return failNeedsConfirm(jsonOut, "sync --on-conflict "+policy.String()+" overwrites skill or MCP data", "pass --yes")
 	}

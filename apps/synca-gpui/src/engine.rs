@@ -291,6 +291,845 @@ pub fn clear_provider(
     Ok(args)
 }
 
+/// Where a skill came from, as `skills list --json` reports it. An old binary
+/// omits the field, and a skill that was never recorded is local.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Origin {
+    Remote,
+    #[default]
+    Local,
+}
+
+impl Origin {
+    pub fn from_field(value: Option<&str>) -> Self {
+        match value {
+            Some(value) if value.trim().eq_ignore_ascii_case("remote") => Self::Remote,
+            _ => Self::Local,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Remote => "remote",
+            Self::Local => "local",
+        }
+    }
+}
+
+/// Tooltip text for the origin badge.
+pub fn origin_tip(origin: Origin, source: Option<&str>, source_type: Option<&str>) -> String {
+    match origin {
+        Origin::Local => "Installed from a local folder".into(),
+        Origin::Remote => {
+            let source = source.map(str::trim).filter(|text| !text.is_empty());
+            let kind = source_type.map(str::trim).filter(|text| !text.is_empty());
+            match (source, kind) {
+                (Some(source), Some(kind)) => format!("Installed from {source} ({kind})"),
+                (Some(source), None) => format!("Installed from {source}"),
+                (None, Some(kind)) => format!("Installed from a remote source ({kind})"),
+                (None, None) => "Installed from a remote source".into(),
+            }
+        }
+    }
+}
+
+/// The skills.sh views the Registry tab can show.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RegistryView {
+    Search,
+    Trending,
+    Hot,
+    AllTime,
+    Official,
+    /// The skills one repository holds (`skills discover`). It has no button of
+    /// its own; a result or a typed `owner/repo` opens it.
+    Repo,
+}
+
+impl RegistryView {
+    pub const ALL: [RegistryView; 5] = [
+        Self::Search,
+        Self::Trending,
+        Self::Hot,
+        Self::AllTime,
+        Self::Official,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Search => "search",
+            Self::Trending => "trending",
+            Self::Hot => "hot",
+            Self::AllTime => "all-time",
+            Self::Official => "official",
+            Self::Repo => "repo",
+        }
+    }
+
+    #[cfg(any(feature = "devtools", test))]
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .chain([Self::Repo])
+            .find(|view| view.key() == key)
+    }
+
+    /// The `--view` value of `skills browse`; Search and Official have none.
+    pub fn browse_name(self) -> Option<&'static str> {
+        match self {
+            Self::Trending => Some("trending"),
+            Self::Hot => Some("hot"),
+            Self::AllTime => Some("all-time"),
+            Self::Search | Self::Official | Self::Repo => None,
+        }
+    }
+}
+
+/// True for `owner/repo`, the shape `skills discover` takes from the search box.
+pub fn looks_like_repo(text: &str) -> bool {
+    let text = text.trim();
+    let mut parts = text.split('/');
+    let (Some(owner), Some(repo), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    let segment = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('-')
+            && part
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    };
+    segment(owner) && segment(repo)
+}
+
+/// The registry-shaped rows for a `skills discover` answer, so the Registry
+/// list and detail can show them like any other result.
+pub fn discovered_page(source: &str, found: Vec<DiscoveredSkill>) -> RegistryPage {
+    let skills: Vec<RegistrySkill> = found
+        .into_iter()
+        .map(|skill| RegistrySkill {
+            id: format!("{source}/{}", skill.slug),
+            source: source.to_string(),
+            name: skill.name,
+            url: format!("https://skills.sh/{source}/{}", skill.slug),
+            source_type: "github".into(),
+            slug: skill.slug,
+            ..RegistrySkill::default()
+        })
+        .collect();
+    RegistryPage {
+        total: skills.len(),
+        skills,
+        has_more: false,
+        page: 0,
+    }
+}
+
+/// A search needs at least this many characters (the CLI exits 2 below it).
+pub const SEARCH_MIN_CHARS: usize = 2;
+/// Results asked for in one search.
+pub const SEARCH_LIMIT: usize = 50;
+
+/// A value that goes on the command line as a positional argument. The CLI
+/// reads `--x` as a flag, so a leading dash is refused.
+fn positional(value: &str, what: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(format!("Missing {what}."));
+    }
+    if value.starts_with('-') {
+        return Err(format!("The {what} cannot start with a dash."));
+    }
+    Ok(value.to_string())
+}
+
+/// `skills search <query> --limit N --json`. Leading dashes are dropped so a
+/// query can never be read as a flag.
+pub fn registry_search_args(query: &str, limit: usize) -> Result<Vec<String>, String> {
+    let query = query.trim().trim_start_matches('-').trim();
+    if query.chars().count() < SEARCH_MIN_CHARS {
+        return Err(format!(
+            "Type at least {SEARCH_MIN_CHARS} characters to search."
+        ));
+    }
+    Ok(vec![
+        "skills".into(),
+        "search".into(),
+        query.into(),
+        "--limit".into(),
+        limit.to_string(),
+        "--json".into(),
+    ])
+}
+
+/// `skills browse --view V --page N --json`. Pages count from 0 and hold 200
+/// items; the CLI has no page-size flag.
+pub fn registry_browse_args(view: RegistryView, page: usize) -> Result<Vec<String>, String> {
+    let name = view
+        .browse_name()
+        .ok_or_else(|| "This view is not a browse list.".to_string())?;
+    Ok(vec![
+        "skills".into(),
+        "browse".into(),
+        "--view".into(),
+        name.into(),
+        "--page".into(),
+        page.to_string(),
+        "--json".into(),
+    ])
+}
+
+pub fn registry_official_args() -> Vec<String> {
+    vec!["skills".into(), "official".into(), "--json".into()]
+}
+
+/// `skills info <id> [--contents] --json`.
+pub fn registry_info_args(id: &str, contents: bool) -> Result<Vec<String>, String> {
+    let mut args = vec!["skills".into(), "info".into(), positional(id, "skill id")?];
+    if contents {
+        args.push("--contents".into());
+    }
+    args.push("--json".into());
+    Ok(args)
+}
+
+pub fn registry_audit_args(id: &str) -> Result<Vec<String>, String> {
+    Ok(vec![
+        "skills".into(),
+        "audit".into(),
+        positional(id, "skill id")?,
+        "--json".into(),
+    ])
+}
+
+/// `skills use <source> --skill <slug> --json`: the prompt a user pastes into an agent.
+pub fn registry_use_args(source: &str, slug: &str) -> Result<Vec<String>, String> {
+    Ok(vec![
+        "skills".into(),
+        "use".into(),
+        positional(source, "source")?,
+        "--skill".into(),
+        positional(slug, "skill name")?,
+        "--json".into(),
+    ])
+}
+
+/// `skills discover <source> --json`: the skills a repository holds.
+pub fn registry_discover_args(source: &str) -> Result<Vec<String>, String> {
+    Ok(vec![
+        "skills".into(),
+        "discover".into(),
+        positional(source, "source")?,
+        "--json".into(),
+    ])
+}
+
+/// `owner/repo@slug`, the form `skills install` takes for one skill of a repository.
+pub fn source_at(source: &str, slug: &str) -> Result<String, String> {
+    let source = positional(source, "source")?;
+    let slug = positional(slug, "skill name")?;
+    Ok(format!("{source}@{slug}"))
+}
+
+/// The `<source>@<skill>` form of `skills install`. A well-known site has no
+/// install path yet.
+pub fn registry_install_source(skill: &RegistrySkill) -> Result<String, String> {
+    if skill.source_type == "well-known" {
+        return Err(format!(
+            "Installing from a well-known site ({}) is not supported yet.",
+            skill.source
+        ));
+    }
+    source_at(&skill.source, &skill.slug)
+}
+
+/// `skills install <source> … --json`, the registry install that prints a manage plan.
+pub fn registry_install_args(
+    scope: Scope,
+    dir: Option<&str>,
+    source: &str,
+    dry_run: bool,
+) -> Result<Vec<String>, String> {
+    let mut args = install_args(scope, dir, source, dry_run)?;
+    args.push("--json".into());
+    Ok(args)
+}
+
+/// `skills update [names…]`. With `dry_run` it is the check for updates;
+/// without it the CLI applies at once.
+pub fn update_args(
+    scope: Scope,
+    dir: Option<&str>,
+    names: &[String],
+    dry_run: bool,
+) -> Result<Vec<String>, String> {
+    let mut args = vec!["skills".into(), "update".into()];
+    for name in names.iter().filter(|name| !name.is_empty()) {
+        args.push(positional(name, "skill name")?);
+    }
+    args.extend(scope_args(scope, dir)?);
+    if dry_run {
+        args.push("--dry-run".into());
+    }
+    args.push("--json".into());
+    Ok(args)
+}
+
+/// `skills restore`: reinstall every remote skill the lock file records.
+pub fn restore_args(scope: Scope, dir: Option<&str>, dry_run: bool) -> Result<Vec<String>, String> {
+    let mut args = vec!["skills".into(), "restore".into()];
+    args.extend(scope_args(scope, dir)?);
+    if dry_run {
+        args.push("--dry-run".into());
+    }
+    args.push("--json".into());
+    Ok(args)
+}
+
+/// `providers list [--scope S [--cwd D]] --json`: every agent the skills.sh
+/// CLI can install to, with the folder it uses in the requested scope.
+pub fn providers_args(scope: Scope, dir: Option<&str>) -> Result<Vec<String>, String> {
+    let mut args = vec!["providers".into(), "list".into()];
+    args.extend(scope_args(scope, dir)?);
+    args.push("--json".into());
+    Ok(args)
+}
+
+/// One agent of the skills.sh `agents` table. Every field is optional on the
+/// wire, so a newer or older CLI still parses.
+#[derive(Clone, Debug, PartialEq, Default, Deserialize)]
+#[serde(default)]
+pub struct ProviderInfo {
+    pub id: String,
+    pub name: String,
+    pub project_dir: Option<String>,
+    pub global_dir: Option<String>,
+    /// The folder for the requested scope; `None` when it is unknown.
+    pub path: Option<String>,
+    /// Reads the shared `.agents/skills` folder.
+    pub universal: bool,
+    /// Synca syncs to this agent.
+    pub managed: bool,
+    /// The id Synca uses in `--agents` when `managed`.
+    pub synca_agent: Option<String>,
+    /// `path` exists on disk.
+    pub present: bool,
+    pub skills: u64,
+}
+
+impl ProviderInfo {
+    /// What to print in the row: the resolved folder, else the folder
+    /// skills.sh documents for the scope (`project` picks the project folder,
+    /// which is relative to a project root).
+    pub fn location(&self, project: bool) -> Option<&str> {
+        let documented = if project {
+            self.project_dir.as_deref()
+        } else {
+            self.global_dir.as_deref()
+        };
+        [self.path.as_deref(), documented]
+            .into_iter()
+            .flatten()
+            .find(|text| !text.trim().is_empty())
+    }
+
+    /// The label shown to the user: the display name, else the id.
+    pub fn title(&self) -> &str {
+        if self.name.trim().is_empty() {
+            &self.id
+        } else {
+            &self.name
+        }
+    }
+
+    /// Case-insensitive match of `needle` (already lower case) on name or id.
+    pub fn matches(&self, needle: &str) -> bool {
+        needle.is_empty()
+            || self.name.to_lowercase().contains(needle)
+            || self.id.to_lowercase().contains(needle)
+    }
+
+    fn rank(&self) -> u8 {
+        if self.managed {
+            0
+        } else if self.present {
+            1
+        } else {
+            2
+        }
+    }
+}
+
+/// `providers list --json`, in display order: managed agents first, then the
+/// installed ones, then the rest, each group by name.
+pub fn parse_providers(text: &str) -> Result<Vec<ProviderInfo>, String> {
+    let value = document(text)?;
+    let items = value
+        .get("providers")
+        .and_then(|item| item.as_array())
+        .ok_or_else(|| "synca returned no provider list.".to_string())?;
+    let mut providers: Vec<ProviderInfo> = items
+        .iter()
+        .filter_map(|item| serde_json::from_value::<ProviderInfo>(item.clone()).ok())
+        .filter(|provider| !provider.id.trim().is_empty())
+        .collect();
+    providers.sort_by_cached_key(|provider| {
+        (
+            provider.rank(),
+            provider.title().to_lowercase(),
+            provider.id.clone(),
+        )
+    });
+    Ok(providers)
+}
+
+/// "79 providers, 12 installed, 6 managed by Synca".
+pub fn providers_summary(providers: &[ProviderInfo]) -> String {
+    let installed = providers.iter().filter(|item| item.present).count();
+    let managed = providers.iter().filter(|item| item.managed).count();
+    let noun = if providers.len() == 1 {
+        "provider"
+    } else {
+        "providers"
+    };
+    format!(
+        "{} {noun}, {installed} installed, {managed} managed by Synca",
+        providers.len()
+    )
+}
+
+/// Shown when the installed `synca` has no `providers` command.
+pub const PROVIDERS_OUTDATED: &str = "Update the synca CLI to list all providers";
+
+/// The text shown when `providers list` fails. An older binary has no such
+/// command and answers with a usage error.
+pub fn providers_failure(message: &str) -> String {
+    if message.contains("unknown command") {
+        PROVIDERS_OUTDATED.into()
+    } else {
+        message.to_string()
+    }
+}
+
+/// One skill as the skills.sh registry lists it.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RegistrySkill {
+    pub id: String,
+    pub source: String,
+    pub slug: String,
+    pub name: String,
+    pub installs: u64,
+    pub source_type: String,
+    pub install_url: Option<String>,
+    pub url: String,
+    pub official: bool,
+    pub duplicate: bool,
+    pub weekly_installs: Vec<u64>,
+    pub installs_yesterday: Option<u64>,
+    pub change: Option<i64>,
+}
+
+/// One page of search or browse results.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RegistryPage {
+    pub skills: Vec<RegistrySkill>,
+    pub total: usize,
+    pub has_more: bool,
+    pub page: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OfficialOwner {
+    pub owner: String,
+    pub total_installs: u64,
+    pub skills: Vec<RegistrySkill>,
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct OfficialList {
+    pub owners: Vec<OfficialOwner>,
+    pub total_owners: usize,
+    pub total_skills: usize,
+}
+
+/// A row of the Registry list: an owner heading (Official view) or a skill.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RegistryRow {
+    Owner {
+        name: String,
+        installs: u64,
+        skills: usize,
+    },
+    Skill(usize),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegistryFile {
+    pub path: String,
+    pub size: u64,
+    pub contents: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegistryInfo {
+    pub installs: Option<u64>,
+    pub hash: Option<String>,
+    pub files: Vec<RegistryFile>,
+}
+
+impl RegistryInfo {
+    /// The `SKILL.md` snapshot, if the registry has one.
+    pub fn skill_md(&self) -> Option<&RegistryFile> {
+        self.files
+            .iter()
+            .find(|file| file.path.eq_ignore_ascii_case("SKILL.md"))
+            .or_else(|| {
+                self.files
+                    .iter()
+                    .find(|file| file.path.to_ascii_lowercase().ends_with("/skill.md"))
+            })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuditStatus {
+    Pass,
+    Warn,
+    Fail,
+    Unknown,
+}
+
+impl AuditStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AuditRow {
+    pub provider: String,
+    pub status: AuditStatus,
+    pub summary: String,
+    pub audited_at: String,
+    pub risk_level: Option<String>,
+    pub categories: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiscoveredSkill {
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub slug: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UsePrompt {
+    pub name: String,
+    pub prompt: String,
+}
+
+/// The JSON document of a successful call. A contract error document becomes
+/// its message and hint, and anything else that is not JSON a plain message.
+fn document(text: &str) -> Result<Value, String> {
+    if let Some(message) = contract_failure(text) {
+        return Err(message);
+    }
+    serde_json::from_str::<Value>(text.trim())
+        .map_err(|_| "synca printed something that is not JSON.".to_string())
+}
+
+fn field_text(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(|item| item.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn field_opt(value: &Value, key: &str) -> Option<String> {
+    Some(field_text(value, key)).filter(|text| !text.is_empty())
+}
+
+fn as_count(item: &Value) -> Option<u64> {
+    item.as_u64()
+        .or_else(|| item.as_f64().map(|number| number.max(0.) as u64))
+}
+
+fn field_count(value: &Value, key: &str) -> Option<u64> {
+    as_count(value.get(key)?)
+}
+
+fn registry_skill(value: &Value) -> Option<RegistrySkill> {
+    let mut source = field_text(value, "source");
+    let mut slug = field_text(value, "slug");
+    let id = field_opt(value, "id")
+        .or_else(|| (!source.is_empty() && !slug.is_empty()).then(|| format!("{source}/{slug}")))?;
+    if slug.is_empty() {
+        slug = id.rsplit('/').next().unwrap_or("").to_string();
+    }
+    if source.is_empty() {
+        source = id
+            .rsplit_once('/')
+            .map(|(head, _)| head.to_string())
+            .unwrap_or_default();
+    }
+    let name = field_opt(value, "name").unwrap_or_else(|| slug.clone());
+    let url = field_opt(value, "url").unwrap_or_else(|| format!("https://skills.sh/{id}"));
+    Some(RegistrySkill {
+        name,
+        installs: field_count(value, "installs").unwrap_or(0),
+        source_type: field_opt(value, "sourceType").unwrap_or_else(|| "github".into()),
+        install_url: field_opt(value, "installUrl"),
+        url,
+        official: value
+            .get("official")
+            .and_then(|item| item.as_bool())
+            .unwrap_or(false),
+        duplicate: value
+            .get("duplicate")
+            .and_then(|item| item.as_bool())
+            .unwrap_or(false),
+        weekly_installs: value
+            .get("weeklyInstalls")
+            .and_then(|item| item.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| as_count(item).unwrap_or(0))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        installs_yesterday: field_count(value, "installsYesterday"),
+        change: value.get("change").and_then(|item| item.as_i64()),
+        id,
+        source,
+        slug,
+    })
+}
+
+fn registry_skills(value: Option<&Value>) -> Vec<RegistrySkill> {
+    value
+        .and_then(|item| item.as_array())
+        .map(|items| items.iter().filter_map(registry_skill).collect())
+        .unwrap_or_default()
+}
+
+/// `skills search --json`.
+pub fn parse_search(text: &str) -> Result<RegistryPage, String> {
+    let value = document(text)?;
+    let skills = registry_skills(value.get("skills"));
+    let total = field_count(&value, "count").unwrap_or(skills.len() as u64) as usize;
+    Ok(RegistryPage {
+        skills,
+        total,
+        has_more: false,
+        page: 0,
+    })
+}
+
+/// `skills browse --json`.
+pub fn parse_browse(text: &str) -> Result<RegistryPage, String> {
+    let value = document(text)?;
+    let skills = registry_skills(value.get("skills"));
+    let total = field_count(&value, "total").unwrap_or(skills.len() as u64) as usize;
+    Ok(RegistryPage {
+        has_more: value
+            .get("hasMore")
+            .and_then(|item| item.as_bool())
+            .unwrap_or(false),
+        page: field_count(&value, "page").unwrap_or(0) as usize,
+        skills,
+        total,
+    })
+}
+
+/// `skills official --json`.
+pub fn parse_official(text: &str) -> Result<OfficialList, String> {
+    let value = document(text)?;
+    let owners: Vec<OfficialOwner> = value
+        .get("owners")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(OfficialOwner {
+                        owner: field_opt(item, "owner")?,
+                        total_installs: field_count(item, "totalInstalls").unwrap_or(0),
+                        skills: registry_skills(item.get("skills")),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let skills: usize = owners.iter().map(|owner| owner.skills.len()).sum();
+    Ok(OfficialList {
+        total_owners: field_count(&value, "totalOwners").unwrap_or(owners.len() as u64) as usize,
+        total_skills: field_count(&value, "totalSkills").unwrap_or(skills as u64) as usize,
+        owners,
+    })
+}
+
+/// Flat skill list plus the rows that draw it, one owner heading before each group.
+pub fn official_rows(list: &OfficialList) -> (Vec<RegistrySkill>, Vec<RegistryRow>) {
+    let mut skills = Vec::new();
+    let mut rows = Vec::new();
+    for owner in &list.owners {
+        rows.push(RegistryRow::Owner {
+            name: owner.owner.clone(),
+            installs: owner.total_installs,
+            skills: owner.skills.len(),
+        });
+        for skill in &owner.skills {
+            rows.push(RegistryRow::Skill(skills.len()));
+            skills.push(skill.clone());
+        }
+    }
+    (skills, rows)
+}
+
+/// `skills info --json`.
+pub fn parse_info(text: &str) -> Result<RegistryInfo, String> {
+    let value = document(text)?;
+    let files = value
+        .get("files")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(RegistryFile {
+                        path: field_opt(item, "path")?,
+                        size: field_count(item, "size").unwrap_or(0),
+                        contents: item
+                            .get("contents")
+                            .and_then(|contents| contents.as_str())
+                            .map(str::to_string),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(RegistryInfo {
+        installs: field_count(&value, "installs"),
+        hash: field_opt(&value, "hash"),
+        files,
+    })
+}
+
+/// `skills audit --json`. An empty list means the registry has no audits.
+pub fn parse_audit(text: &str) -> Result<Vec<AuditRow>, String> {
+    let value = document(text)?;
+    Ok(value
+        .get("audits")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| AuditRow {
+                    provider: field_opt(item, "provider")
+                        .or_else(|| field_opt(item, "slug"))
+                        .unwrap_or_else(|| "unknown".into()),
+                    status: match field_text(item, "status").to_lowercase().as_str() {
+                        "pass" => AuditStatus::Pass,
+                        "warn" => AuditStatus::Warn,
+                        "fail" => AuditStatus::Fail,
+                        _ => AuditStatus::Unknown,
+                    },
+                    summary: field_text(item, "summary"),
+                    audited_at: field_text(item, "auditedAt"),
+                    risk_level: field_opt(item, "riskLevel"),
+                    categories: item
+                        .get("categories")
+                        .and_then(|list| list.as_array())
+                        .map(|list| {
+                            list.iter()
+                                .filter_map(|entry| entry.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// `skills use --json`.
+pub fn parse_use(text: &str) -> Result<UsePrompt, String> {
+    let value = document(text)?;
+    let prompt = value
+        .get("prompt")
+        .and_then(|item| item.as_str())
+        .filter(|prompt| !prompt.trim().is_empty())
+        .ok_or_else(|| "synca returned no prompt.".to_string())?;
+    Ok(UsePrompt {
+        name: field_text(&value, "name"),
+        prompt: prompt.to_string(),
+    })
+}
+
+/// `skills discover --json`.
+pub fn parse_discover(text: &str) -> Result<Vec<DiscoveredSkill>, String> {
+    let value = document(text)?;
+    Ok(value
+        .get("skills")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let slug = field_opt(item, "slug").or_else(|| field_opt(item, "name"))?;
+                    Some(DiscoveredSkill {
+                        name: field_opt(item, "name").unwrap_or_else(|| slug.clone()),
+                        description: field_text(item, "description"),
+                        path: field_text(item, "path"),
+                        slug,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
+/// The `notes` lines of a manage plan, such as `up to date: x`.
+pub fn plan_notes(output: &str) -> Vec<String> {
+    json_document(output)
+        .and_then(|value| {
+            value
+                .get("notes")
+                .and_then(|item| item.as_array())
+                .map(|notes| {
+                    notes
+                        .iter()
+                        .filter_map(|note| note.as_str())
+                        .map(|note| note.trim().to_string())
+                        .filter(|note| !note.is_empty())
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
+}
+
+/// `4082959` -> `4.1M`, `1200` -> `1.2k`, `950` -> `950`.
+pub fn format_installs(count: u64) -> String {
+    let (value, unit) = if count < 1_000 {
+        return count.to_string();
+    } else if count < 1_000_000 {
+        (count as f64 / 1_000., "k")
+    } else {
+        (count as f64 / 1_000_000., "M")
+    };
+    let text = format!("{value:.1}");
+    format!("{}{unit}", text.strip_suffix(".0").unwrap_or(&text))
+}
+
 /// Kind counts, then conflicts. The counts are sorted by size, then by name.
 type ParsedPlan = (Vec<(String, usize)>, Vec<Conflict>);
 
@@ -946,6 +1785,477 @@ mod tests {
         );
         assert!(!same.available);
         assert!(same.text.contains("up to date"));
+    }
+
+    fn skill(source: &str, slug: &str, kind: &str) -> RegistrySkill {
+        RegistrySkill {
+            id: format!("{source}/{slug}"),
+            source: source.into(),
+            slug: slug.into(),
+            name: slug.into(),
+            source_type: kind.into(),
+            ..RegistrySkill::default()
+        }
+    }
+
+    #[test]
+    fn origin_defaults_to_local_and_explains_itself() {
+        assert_eq!(Origin::from_field(None), Origin::Local);
+        assert_eq!(Origin::from_field(Some("local")), Origin::Local);
+        assert_eq!(Origin::from_field(Some("surprise")), Origin::Local);
+        assert_eq!(Origin::from_field(Some("remote")), Origin::Remote);
+        assert_eq!(Origin::Remote.label(), "remote");
+        assert_eq!(Origin::Local.label(), "local");
+        assert_eq!(
+            origin_tip(Origin::Remote, Some("vercel-labs/skills"), Some("github")),
+            "Installed from vercel-labs/skills (github)"
+        );
+        assert_eq!(
+            origin_tip(Origin::Remote, None, None),
+            "Installed from a remote source"
+        );
+        assert_eq!(
+            origin_tip(Origin::Local, Some("ignored"), None),
+            "Installed from a local folder"
+        );
+    }
+
+    #[test]
+    fn registry_args_follow_the_cli_contract() {
+        assert_eq!(
+            registry_search_args("  react  ", 50).unwrap(),
+            ["skills", "search", "react", "--limit", "50", "--json"]
+        );
+        assert_eq!(
+            registry_search_args("--owner x", 10).unwrap()[2],
+            "owner x",
+            "a leading dash never reaches the CLI as a flag"
+        );
+        assert!(registry_search_args("a", 10).is_err());
+        assert!(registry_search_args("  ", 10).is_err());
+        assert_eq!(
+            registry_browse_args(RegistryView::AllTime, 2).unwrap(),
+            [
+                "skills", "browse", "--view", "all-time", "--page", "2", "--json"
+            ]
+        );
+        assert!(
+            !registry_browse_args(RegistryView::Hot, 0)
+                .unwrap()
+                .iter()
+                .any(|arg| arg == "--per-page" || arg == "--source")
+        );
+        assert!(registry_browse_args(RegistryView::Search, 0).is_err());
+        assert!(registry_browse_args(RegistryView::Official, 0).is_err());
+        assert_eq!(registry_official_args(), ["skills", "official", "--json"]);
+        assert_eq!(
+            registry_info_args("o/r/s", true).unwrap(),
+            ["skills", "info", "o/r/s", "--contents", "--json"]
+        );
+        assert_eq!(
+            registry_info_args("o/r/s", false).unwrap(),
+            ["skills", "info", "o/r/s", "--json"]
+        );
+        assert!(registry_info_args("-x", false).is_err());
+        assert_eq!(
+            registry_audit_args("o/r/s").unwrap(),
+            ["skills", "audit", "o/r/s", "--json"]
+        );
+        assert_eq!(
+            registry_use_args("o/r", "s").unwrap(),
+            ["skills", "use", "o/r", "--skill", "s", "--json"]
+        );
+        assert_eq!(
+            registry_discover_args("vercel-labs/skills").unwrap(),
+            ["skills", "discover", "vercel-labs/skills", "--json"]
+        );
+        assert!(registry_discover_args("--x").is_err());
+        assert!(registry_use_args("o/r", "").is_err());
+    }
+
+    #[test]
+    fn registry_install_uses_source_at_slug_and_refuses_well_known() {
+        let github = skill("vercel-labs/skills", "find-skills", "github");
+        assert_eq!(
+            registry_install_source(&github).unwrap(),
+            "vercel-labs/skills@find-skills"
+        );
+        let well_known = skill("uizze.sh", "ui-taste", "well-known");
+        assert!(registry_install_source(&well_known).is_err());
+        let preview = registry_install_args(
+            Scope::Project,
+            Some("/work"),
+            "vercel-labs/skills@find-skills",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            preview,
+            [
+                "skills",
+                "install",
+                "vercel-labs/skills@find-skills",
+                "--scope",
+                "project",
+                "--cwd",
+                "/work",
+                "--dry-run",
+                "--json"
+            ]
+        );
+        let apply =
+            registry_install_args(Scope::User, None, "vercel-labs/skills@find-skills", false)
+                .unwrap();
+        assert!(!apply.iter().any(|arg| arg == "--dry-run"));
+        assert_eq!(apply.last().map(String::as_str), Some("--json"));
+        assert!(registry_install_args(Scope::Project, None, "o/r@s", true).is_err());
+        assert_eq!(source_at("o/r", "s").unwrap(), "o/r@s");
+        assert!(source_at("o/r", "-s").is_err());
+    }
+
+    #[test]
+    fn update_and_restore_args_check_then_apply() {
+        let check = update_args(Scope::User, None, &[], true).unwrap();
+        assert_eq!(
+            check,
+            ["skills", "update", "--scope", "user", "--dry-run", "--json"]
+        );
+        let one = update_args(
+            Scope::Project,
+            Some("/work"),
+            &["find-skills".to_string()],
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            one,
+            [
+                "skills",
+                "update",
+                "find-skills",
+                "--scope",
+                "project",
+                "--cwd",
+                "/work",
+                "--json"
+            ]
+        );
+        assert!(update_args(Scope::User, None, &["--all".to_string()], true).is_err());
+        assert!(update_args(Scope::Project, None, &[], true).is_err());
+        assert_eq!(
+            restore_args(Scope::User, None, true).unwrap(),
+            [
+                "skills",
+                "restore",
+                "--scope",
+                "user",
+                "--dry-run",
+                "--json"
+            ]
+        );
+        assert!(
+            !restore_args(Scope::User, None, false)
+                .unwrap()
+                .iter()
+                .any(|arg| arg == "--dry-run")
+        );
+    }
+
+    #[test]
+    fn search_and_browse_fixtures_parse() {
+        let page = parse_search(include_str!("../fixtures/registry-search.json")).unwrap();
+        assert_eq!(page.skills.len(), 2);
+        assert_eq!(page.total, 2);
+        assert!(!page.has_more);
+        assert_eq!(page.skills[0].source, "vercel-labs/agent-skills");
+        assert_eq!(page.skills[0].installs, 846089);
+        assert_eq!(page.skills[0].source_type, "github");
+        assert!(page.skills[0].weekly_installs.is_empty());
+
+        let browse = parse_browse(include_str!("../fixtures/registry-browse.json")).unwrap();
+        assert_eq!(browse.page, 0);
+        assert!(browse.has_more);
+        assert!(browse.total > browse.skills.len());
+        assert_eq!(browse.skills[0].source_type, "well-known");
+        assert_eq!(browse.skills[0].id, "uizze.sh/ui-taste");
+        assert!(registry_install_source(&browse.skills[0]).is_err());
+    }
+
+    #[test]
+    fn registry_skill_reads_optional_trend_fields() {
+        let text = r#"{"query":"x","searchType":"semantic","count":1,"skills":[{"id":"o/r/s","source":"o/r","slug":"s","name":"s","installs":12,"sourceType":"github","installUrl":null,"url":"https://skills.sh/o/r/s","official":true,"duplicate":false,"weeklyInstalls":[1,2,3],"installsYesterday":5,"change":-2},{"nope":1}]}"#;
+        let page = parse_search(text).unwrap();
+        assert_eq!(page.skills.len(), 1, "a row without an id is skipped");
+        let row = &page.skills[0];
+        assert!(row.official && !row.duplicate);
+        assert!(row.install_url.is_none());
+        assert_eq!(row.weekly_installs, [1, 2, 3]);
+        assert_eq!(row.installs_yesterday, Some(5));
+        assert_eq!(row.change, Some(-2));
+    }
+
+    #[test]
+    fn official_list_and_unauthorized_error() {
+        let list = parse_official(include_str!("../fixtures/registry-official.json")).unwrap();
+        assert_eq!(list.total_owners, 1);
+        assert_eq!(list.total_skills, 2);
+        let (skills, rows) = official_rows(&list);
+        assert_eq!(skills.len(), 2);
+        assert_eq!(
+            rows,
+            [
+                RegistryRow::Owner {
+                    name: "vercel-labs".into(),
+                    installs: 5_100_000,
+                    skills: 2
+                },
+                RegistryRow::Skill(0),
+                RegistryRow::Skill(1),
+            ]
+        );
+        let error = parse_official(include_str!(
+            "../fixtures/registry-official-unauthorized.json"
+        ))
+        .unwrap_err();
+        assert!(error.starts_with("the official list needs a skills.sh API token"));
+        assert!(error.contains("\nhint: set SKILLS_API_TOKEN"));
+        assert!(parse_search("not json").is_err());
+    }
+
+    #[test]
+    fn info_audit_and_use_fixtures_parse() {
+        let info = parse_info(include_str!("../fixtures/registry-info.json")).unwrap();
+        assert_eq!(info.installs, None);
+        assert!(info.hash.is_some());
+        assert_eq!(info.skill_md().unwrap().path, "SKILL.md");
+        assert!(
+            info.skill_md()
+                .unwrap()
+                .contents
+                .as_deref()
+                .unwrap()
+                .starts_with("---\nname: find-skills")
+        );
+        let bare = parse_info(
+            r#"{"id":"o/r/s","installs":42,"hash":null,"files":[{"path":"a/skill.md","size":3}]}"#,
+        )
+        .unwrap();
+        assert_eq!(bare.installs, Some(42));
+        assert!(bare.skill_md().unwrap().contents.is_none());
+        let missing = parse_info(r#"{"error":{"code":"unavailable","exit":3,"message":"not found on skills.sh: not_found"}}"#)
+            .unwrap_err();
+        assert_eq!(missing, "not found on skills.sh: not_found");
+
+        let audits = parse_audit(include_str!("../fixtures/registry-audit.json")).unwrap();
+        assert_eq!(audits.len(), 2);
+        assert_eq!(audits[0].status, AuditStatus::Pass);
+        assert_eq!(audits[0].provider, "Gen Agent Trust Hub");
+        assert_eq!(audits[0].risk_level.as_deref(), Some("SAFE"));
+        assert_eq!(audits[0].categories.len(), 3);
+        let mixed = parse_audit(
+            r#"{"audits":[{"provider":"A","slug":"a","status":"warn","summary":"s","auditedAt":"t"},{"provider":"B","slug":"b","status":"fail","summary":"","auditedAt":"t"},{"provider":"C","slug":"c","status":"??","summary":"","auditedAt":"t"}]}"#,
+        )
+        .unwrap();
+        let statuses: Vec<AuditStatus> = mixed.iter().map(|row| row.status).collect();
+        assert_eq!(
+            statuses,
+            [AuditStatus::Warn, AuditStatus::Fail, AuditStatus::Unknown]
+        );
+        assert!(mixed[0].risk_level.is_none() && mixed[0].categories.is_empty());
+        assert!(parse_audit(r#"{"audits":[]}"#).unwrap().is_empty());
+
+        let prompt = parse_use(include_str!("../fixtures/skills-use.json")).unwrap();
+        assert_eq!(prompt.name, "find-skills");
+        assert!(prompt.prompt.starts_with("You are being given a Skill"));
+        assert!(parse_use(r#"{"name":"x","prompt":"  "}"#).is_err());
+
+        let found = parse_discover(include_str!("../fixtures/skills-discover.json")).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].slug, "pr-labeling");
+        assert!(found[0].path.ends_with("pr-labeling"));
+        assert!(!found[1].description.is_empty());
+        assert!(
+            parse_discover(r#"{"skills":[{"description":"no name"}]}"#)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn manage_plans_tally_origin_actions_and_keep_notes() {
+        let (chips, conflicts) = parse_plan(include_str!("../fixtures/install-plan.json"));
+        assert!(conflicts.is_empty());
+        assert!(
+            chips
+                .iter()
+                .any(|(kind, count)| kind == "record_origin" && *count == 1)
+        );
+        assert!(chips.iter().any(|(kind, _)| kind == "copy_skill"));
+        let update = include_str!("../fixtures/update-plan.json");
+        let (chips, _) = parse_plan(update);
+        assert!(chips.iter().any(|(kind, _)| kind == "copy_skill"));
+        assert_eq!(
+            plan_notes(update),
+            [
+                "update: find-skills",
+                "up to date: other",
+                "skipped: mine (no remote origin)"
+            ]
+        );
+        assert!(plan_notes("not json").is_empty());
+        let (empty, _) = parse_plan(
+            r#"{"dryRun":true,"scope":"user","actions":[],"notes":["no skills with a remote origin"]}"#,
+        );
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn a_typed_repo_opens_the_discover_list() {
+        assert!(looks_like_repo("vercel-labs/skills"));
+        assert!(looks_like_repo(" a.b/c_d "));
+        assert!(!looks_like_repo("react"));
+        assert!(!looks_like_repo("a/b/c"));
+        assert!(!looks_like_repo("a/"));
+        assert!(!looks_like_repo("-x/y"));
+        assert!(!looks_like_repo("two words/x"));
+        let found = parse_discover(include_str!("../fixtures/skills-discover.json")).unwrap();
+        let page = discovered_page("vercel-labs/skills", found);
+        assert_eq!(page.total, 2);
+        assert_eq!(page.skills[0].id, "vercel-labs/skills/pr-labeling");
+        assert_eq!(page.skills[0].source, "vercel-labs/skills");
+        assert_eq!(
+            registry_install_source(&page.skills[0]).unwrap(),
+            "vercel-labs/skills@pr-labeling"
+        );
+        assert_eq!(RegistryView::from_key("repo"), Some(RegistryView::Repo));
+        assert!(!RegistryView::ALL.contains(&RegistryView::Repo));
+        assert_eq!(RegistryView::from_key("nope"), None);
+    }
+
+    #[test]
+    fn providers_args_follow_the_scope() {
+        assert_eq!(
+            providers_args(Scope::User, None).unwrap(),
+            ["providers", "list", "--scope", "user", "--json"]
+        );
+        assert_eq!(
+            providers_args(Scope::Project, Some("/proj")).unwrap(),
+            [
+                "providers",
+                "list",
+                "--scope",
+                "project",
+                "--cwd",
+                "/proj",
+                "--json"
+            ]
+        );
+        assert!(providers_args(Scope::Project, None).is_err());
+        assert!(providers_args(Scope::Project, Some("")).is_err());
+    }
+
+    #[test]
+    fn providers_parse_and_sort_managed_then_installed_then_rest() {
+        let providers = parse_providers(include_str!("../fixtures/providers-list.json")).unwrap();
+        let ids: Vec<&str> = providers.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "claude-code",
+                "cursor",
+                "kiro-cli",
+                "cline",
+                "goose",
+                "amp",
+                "eve",
+                "zencoder"
+            ]
+        );
+        let claude = &providers[0];
+        assert!(claude.managed && claude.present && !claude.universal);
+        assert_eq!(claude.synca_agent.as_deref(), Some("claude"));
+        assert_eq!(claude.skills, 12);
+        assert_eq!(claude.location(false), Some("/Users/x/.claude/skills"));
+        assert!(providers[1].universal && providers[1].managed);
+        assert_eq!(providers[1].synca_agent.as_deref(), Some("cursor"));
+
+        let eve = providers.iter().find(|item| item.id == "eve").unwrap();
+        assert!(eve.path.is_none() && eve.global_dir.is_none());
+        assert_eq!(eve.location(false), None);
+        assert_eq!(eve.location(true), Some("agent/skills"));
+        assert!(!eve.present && eve.skills == 0);
+
+        // Missing optional fields fall back to defaults; unknown ones are ignored.
+        let sparse = providers.iter().find(|item| item.id == "zencoder").unwrap();
+        assert!(!sparse.managed && !sparse.present && !sparse.universal);
+        assert_eq!(sparse.location(false), Some("~/.zencoder/skills"));
+        assert_eq!(sparse.skills, 0);
+        assert_eq!(sparse.location(true), Some(".zencoder/skills"));
+        assert!(providers.iter().any(|item| item.id == "goose"));
+    }
+
+    #[test]
+    fn providers_summary_counts_installed_and_managed() {
+        let providers = parse_providers(include_str!("../fixtures/providers-list.json")).unwrap();
+        assert_eq!(
+            providers_summary(&providers),
+            "8 providers, 5 installed, 3 managed by Synca"
+        );
+        assert_eq!(
+            providers_summary(&providers[..1]),
+            "1 provider, 1 installed, 1 managed by Synca"
+        );
+        assert_eq!(
+            providers_summary(&[]),
+            "0 providers, 0 installed, 0 managed by Synca"
+        );
+    }
+
+    #[test]
+    fn providers_filter_matches_name_or_id_ignoring_case() {
+        let providers = parse_providers(include_str!("../fixtures/providers-list.json")).unwrap();
+        let hits = |needle: &str| -> Vec<&str> {
+            providers
+                .iter()
+                .filter(|item| item.matches(&needle.to_lowercase()))
+                .map(|item| item.id.as_str())
+                .collect()
+        };
+        assert_eq!(hits("CLAUDE"), ["claude-code"]);
+        assert_eq!(hits("kiro"), ["kiro-cli"]);
+        assert_eq!(hits("cli"), ["kiro-cli", "cline"]);
+        assert_eq!(hits("").len(), providers.len());
+        assert!(hits("nothing like this").is_empty());
+    }
+
+    #[test]
+    fn providers_parse_rejects_errors_and_missing_lists() {
+        assert_eq!(
+            parse_providers(include_str!("../fixtures/error.json")).unwrap_err(),
+            "unknown command \"nope\"\nhint: see: synca schema"
+        );
+        assert!(parse_providers("{\"scope\":\"user\"}").is_err());
+        assert!(parse_providers("not json").is_err());
+        assert!(parse_providers("{\"providers\":[]}").unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_old_binary_asks_for_an_update() {
+        let old = r#"{"error":{"code":"usage","exit":2,"message":"unknown command 'providers' (see: synca help)","hint":"see: synca help"}}"#;
+        let message = parse_providers(old).unwrap_err();
+        assert_eq!(
+            providers_failure(&message),
+            "Update the synca CLI to list all providers"
+        );
+        assert_eq!(providers_failure("disk full"), "disk full");
+    }
+
+    #[test]
+    fn installs_read_short() {
+        assert_eq!(format_installs(950), "950");
+        assert_eq!(format_installs(1_200), "1.2k");
+        assert_eq!(format_installs(24_000), "24k");
+        assert_eq!(format_installs(4_082_959), "4.1M");
     }
 
     #[test]

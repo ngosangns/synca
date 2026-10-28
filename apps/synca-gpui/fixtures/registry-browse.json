@@ -1,0 +1,45 @@
+{
+  "view": "trending",
+  "page": 0,
+  "perPage": 3,
+  "total": 9985,
+  "hasMore": true,
+  "skills": [
+    {
+      "id": "uizze.sh/ui-taste",
+      "source": "uizze.sh",
+      "slug": "ui-taste",
+      "name": "ui-taste",
+      "installs": 24479,
+      "sourceType": "well-known",
+      "installUrl": "https://uizze.sh",
+      "url": "https://skills.sh/uizze.sh/ui-taste",
+      "official": false,
+      "duplicate": false
+    },
+    {
+      "id": "designed-by-ai/skills/design-mobile-apps",
+      "source": "designed-by-ai/skills",
+      "slug": "design-mobile-apps",
+      "name": "design-mobile-apps",
+      "installs": 21235,
+      "sourceType": "github",
+      "installUrl": "https://github.com/designed-by-ai/skills",
+      "url": "https://skills.sh/designed-by-ai/skills/design-mobile-apps",
+      "official": false,
+      "duplicate": false
+    },
+    {
+      "id": "heygen-com/hyperframes/hyperframes-cli",
+      "source": "heygen-com/hyperframes",
+      "slug": "hyperframes-cli",
+      "name": "hyperframes-cli",
+      "installs": 20881,
+      "sourceType": "github",
+      "installUrl": "https://github.com/heygen-com/hyperframes",
+      "url": "https://skills.sh/heygen-com/hyperframes/hyperframes-cli",
+      "official": false,
+      "duplicate": false
+    }
+  ]
+}

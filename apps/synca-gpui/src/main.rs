@@ -7,6 +7,8 @@ mod engine;
 mod markdown_view;
 #[cfg(feature = "devtools")]
 mod perf;
+mod providers;
+mod registry;
 
 use engine::{Conflict, PROVIDERS, Policy, Scope, Target};
 use std::cell::RefCell;
@@ -43,7 +45,8 @@ gpui::actions!(
         ToggleActivity,
         ToggleSettings,
         InstallSkillTab,
-        InstallMcpTab
+        InstallMcpTab,
+        InstallRegistryTab
     ]
 );
 
@@ -69,6 +72,7 @@ enum McpTransportKind {
 enum InstallTab {
     Skill,
     Mcp,
+    Registry,
 }
 
 impl InstallTab {
@@ -76,15 +80,16 @@ impl InstallTab {
         match self {
             InstallTab::Skill => "skill",
             InstallTab::Mcp => "mcp",
+            InstallTab::Registry => "registry",
         }
     }
 
     /// Unknown keys fall back to the Skill tab.
     fn from_key(key: &str) -> Self {
-        if key == "mcp" {
-            InstallTab::Mcp
-        } else {
-            InstallTab::Skill
+        match key {
+            "mcp" => InstallTab::Mcp,
+            "registry" => InstallTab::Registry,
+            _ => InstallTab::Skill,
         }
     }
 
@@ -92,6 +97,7 @@ impl InstallTab {
         match self {
             InstallTab::Skill => "Choose a local or remote source, then preview the dry-run.",
             InstallTab::Mcp => "Define a connection, then preview the config.",
+            InstallTab::Registry => "Find skills on skills.sh, then preview the install.",
         }
     }
 }
@@ -193,6 +199,12 @@ enum Apply {
         key: Option<String>,
     },
     Install(String),
+    /// A skills.sh install, `owner/repo@skill`.
+    Registry(String),
+    /// Update the named skills, or every remote skill when empty.
+    Update(Vec<String>),
+    /// Reinstall every remote skill the lock file records.
+    Restore,
     AddMcp {
         name: String,
         transport: String,
@@ -225,11 +237,18 @@ struct Entry {
     /// bytes / 4 for an MCP entry.
     tokens: Option<usize>,
     mismatch: bool,
+    /// Where a skill was installed from. MCP entries are always local.
+    origin: engine::Origin,
+    /// The lock file's source (`owner/repo`) and its type; `None` when local.
+    source: Option<String>,
+    source_type: Option<String>,
 }
 
 struct PlanView {
     title: String,
     output: String,
+    /// The plan's `notes` lines, such as `up to date: x`.
+    notes: Vec<String>,
     conflicts: Vec<Conflict>,
     chips: Vec<(String, usize)>,
     apply: Apply,
@@ -252,9 +271,10 @@ const ROW_OVERSCAN: f32 = 96.;
 /// Column header under a section that has rows. An empty section skips it.
 const TABLE_HEAD_H: f32 = 22.;
 /// Fixed metric columns so the header and every row share one grid.
+const COL_ORIGIN_W: f32 = 40.;
 const COL_DOT_W: f32 = 8.;
-const COL_SYNC_W: f32 = 56.;
-const COL_TOKEN_W: f32 = 64.;
+const COL_SYNC_W: f32 = 36.;
+const COL_TOKEN_W: f32 = 52.;
 
 /// Which column the sidebar table is ordered by. `None` keeps load order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -304,6 +324,8 @@ struct InventoryCache {
     status: Vec<SharedString>,
     /// Right-aligned row pair: synced-agent counter, then token estimate.
     counts: Vec<(SharedString, SharedString)>,
+    /// The origin badge and its tooltip; `None` for MCP rows.
+    origin: Vec<Option<(engine::Origin, SharedString)>>,
     /// Sort keys, parallel to `entries`. Missing values sort last.
     synced_n: Vec<Option<usize>>,
     tokens_n: Vec<Option<usize>>,
@@ -368,6 +390,21 @@ impl InventoryCache {
         self.counts = entries
             .iter()
             .map(|entry| (entry_sync_label(entry), entry_tokens_label(entry)))
+            .collect();
+        self.origin = entries
+            .iter()
+            .map(|entry| {
+                (entry.kind == Kind::Skill).then(|| {
+                    (
+                        entry.origin,
+                        SharedString::from(engine::origin_tip(
+                            entry.origin,
+                            entry.source.as_deref(),
+                            entry.source_type.as_deref(),
+                        )),
+                    )
+                })
+            })
             .collect();
         self.synced_n = entries.iter().map(|entry| entry.synced).collect();
         self.tokens_n = entries.iter().map(|entry| entry.tokens).collect();
@@ -677,6 +714,14 @@ struct SyncaWindow {
     /// Arrow keys move the sidebar selection while this handle is focused.
     list_focus: FocusHandle,
     list_scroll: ScrollHandle,
+    /// The Registry tab of the Install dialog.
+    registry: registry::RegistryState,
+    registry_input: Entity<TextInput>,
+    _registry_sub: Subscription,
+    /// Settings → All skills.sh providers.
+    providers: providers::ProvidersState,
+    providers_input: Entity<TextInput>,
+    _providers_sub: Subscription,
 }
 
 impl SyncaWindow {
@@ -753,6 +798,46 @@ impl SyncaWindow {
                 _ => {}
             },
         );
+        let registry_input = cx.new(|cx| {
+            TextInput::new(window, cx).placeholder("Search skills.sh, or type owner/repo")
+        });
+        let _registry_sub = cx.subscribe_in(
+            &registry_input,
+            window,
+            |this, _, event: &InputEvent, _, cx| match event {
+                InputEvent::Changed => {
+                    let text = this.registry_input.read(cx).text().to_string();
+                    if text != this.registry.query {
+                        this.registry.query = text;
+                        this.registry_query_changed(cx);
+                    }
+                    cx.notify();
+                }
+                InputEvent::Submit => {
+                    this.registry.query = this.registry_input.read(cx).text().to_string();
+                    let typed = this.registry.query.trim().to_string();
+                    if engine::looks_like_repo(&typed) {
+                        this.registry_open_repo(&typed, cx);
+                    } else {
+                        this.registry_search_now(cx);
+                    }
+                    cx.notify();
+                }
+                _ => {}
+            },
+        );
+        let providers_input =
+            cx.new(|cx| TextInput::new(window, cx).placeholder("Filter providers by name or id"));
+        let _providers_sub = cx.subscribe_in(
+            &providers_input,
+            window,
+            |this, _, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Changed) {
+                    let text = this.providers_input.read(cx).text().to_string();
+                    this.providers_set_query(text, cx);
+                }
+            },
+        );
         let mut window_state = Self {
             entries: Vec::new(),
             entries_gen: 0,
@@ -823,6 +908,12 @@ impl SyncaWindow {
             busy: true,
             list_focus: cx.focus_handle().tab_stop(true),
             list_scroll: ScrollHandle::new(),
+            registry: registry::RegistryState::new(),
+            registry_input,
+            _registry_sub,
+            providers: providers::ProvidersState::new(),
+            providers_input,
+            _providers_sub,
         };
         window_state.reload(cx);
         window_state.load_activity();
@@ -891,6 +982,8 @@ impl SyncaWindow {
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) {
+        // The provider folders depend on the scope and the workspace.
+        self.providers_invalidate(cx);
         if self.scope == Scope::Project && self.dir().is_none() {
             self.entries.clear();
             self.entries_gen = self.entries_gen.wrapping_add(1);
@@ -1036,6 +1129,7 @@ impl SyncaWindow {
         } else {
             Panel::Settings
         };
+        self.providers_activate(cx);
         self.persist_panel(cx);
         self.publish_menus(cx);
         cx.notify();
@@ -1064,6 +1158,7 @@ impl SyncaWindow {
             KeyBinding::new("cmd-,", ToggleSettings, None),
             KeyBinding::new("cmd-1", InstallSkillTab, None),
             KeyBinding::new("cmd-2", InstallMcpTab, None),
+            KeyBinding::new("cmd-3", InstallRegistryTab, None),
         ]);
         let app: &mut App = cx;
         let activity = entity.clone();
@@ -1077,6 +1172,12 @@ impl SyncaWindow {
         let mcp_tab = entity.clone();
         app.on_action(move |_: &InstallMcpTab, app| {
             mcp_tab.update(app, |this, cx| this.pick_install_tab(InstallTab::Mcp, cx));
+        });
+        let registry_tab = entity.clone();
+        app.on_action(move |_: &InstallRegistryTab, app| {
+            registry_tab.update(app, |this, cx| {
+                this.pick_install_tab(InstallTab::Registry, cx)
+            });
         });
         app.on_action(move |_: &ToggleSettings, app| {
             entity.update(app, |this, cx| this.toggle_settings(cx));
@@ -1156,6 +1257,7 @@ impl SyncaWindow {
                             let (chips, conflicts) = engine::parse_plan(&text);
                             this.plan = Some(PlanView {
                                 title,
+                                notes: engine::plan_notes(&text),
                                 output: text,
                                 conflicts,
                                 chips,
@@ -1227,15 +1329,55 @@ impl SyncaWindow {
         }
     }
 
+    /// `skills update --dry-run`: the check for updates. An empty `names`
+    /// covers every remote skill. Apply runs the same command without the dry run.
+    fn plan_updates(&mut self, names: Vec<String>, cx: &mut Context<Self>) {
+        match engine::update_args(self.scope, self.dir(), &names, true) {
+            Ok(args) => {
+                let title = match names.as_slice() {
+                    [] => "check updates".to_string(),
+                    [one] => format!("update skill · {one}"),
+                    many => format!("update {} skills", many.len()),
+                };
+                self.run(
+                    engine::with_agents(args, &self.disabled),
+                    "dry-run",
+                    cx,
+                    After::Plan(title, Apply::Update(names)),
+                );
+            }
+            Err(error) => self.toast(error, cx),
+        }
+    }
+
+    /// `skills restore --dry-run`: what the lock file would reinstall.
+    fn plan_restore(&mut self, cx: &mut Context<Self>) {
+        match engine::restore_args(self.scope, self.dir(), true) {
+            Ok(args) => self.run(
+                engine::with_agents(args, &self.disabled),
+                "dry-run",
+                cx,
+                After::Plan("restore from lock".into(), Apply::Restore),
+            ),
+            Err(error) => self.toast(error, cx),
+        }
+    }
+
     /// Opens the Install dialog on `tab`.
     fn open_install(&mut self, tab: InstallTab, cx: &mut Context<Self>) {
         self.onboarding = Some(tab);
+        if tab == InstallTab::Registry {
+            self.registry_activate(cx);
+        }
         cx.notify();
     }
 
     fn pick_install_tab(&mut self, tab: InstallTab, cx: &mut Context<Self>) {
         if self.onboarding.is_some() && self.onboarding != Some(tab) {
             self.onboarding = Some(tab);
+            if tab == InstallTab::Registry {
+                self.registry_activate(cx);
+            }
             cx.notify();
         } else {
             cx.propagate();
@@ -2121,6 +2263,9 @@ impl PlanView {
                 key: key.clone(),
             },
             Apply::Install(source) => Apply::Install(source.clone()),
+            Apply::Registry(source) => Apply::Registry(source.clone()),
+            Apply::Update(names) => Apply::Update(names.clone()),
+            Apply::Restore => Apply::Restore,
             Apply::AddMcp {
                 name,
                 transport,
@@ -2143,6 +2288,7 @@ impl Clone for PlanView {
         Self {
             title: self.title.clone(),
             output: self.output.clone(),
+            notes: self.notes.clone(),
             conflicts: self.conflicts.clone(),
             chips: self.chips.clone(),
             apply: Self::clone_apply(&self.apply),
@@ -2184,6 +2330,9 @@ fn apply_now(
     let built = match &plan.apply {
         Apply::Sync { target, key } => engine::sync_apply(scope, dir, *target, key.as_deref()),
         Apply::Install(source) => engine::install_args(scope, dir, source, false),
+        Apply::Registry(source) => engine::registry_install_args(scope, dir, source, false),
+        Apply::Update(names) => engine::update_args(scope, dir, names, false),
+        Apply::Restore => engine::restore_args(scope, dir, false),
         Apply::AddMcp {
             name,
             transport,
@@ -2405,7 +2554,11 @@ impl Render for SyncaWindow {
             };
             let strip = tab_strip_equal(
                 "install-tabs",
-                [("skill", "skill", "Skill"), ("mcp", "plug", "MCP server")],
+                [
+                    ("skill", "skill", "Skill"),
+                    ("mcp", "plug", "MCP server"),
+                    ("registry", "globe", "Registry"),
+                ],
                 tab.key(),
                 cx.listener(|this, value: &SharedString, _, cx| {
                     this.pick_install_tab(InstallTab::from_key(value), cx);
@@ -2415,6 +2568,7 @@ impl Render for SyncaWindow {
             let body = match tab {
                 InstallTab::Skill => install_body(self, start, cx),
                 InstallTab::Mcp => mcp_body(self, start, cx),
+                InstallTab::Registry => registry::body(self, start, cx),
             };
             let mut dialog = Dialog::new("synca-onboarding", "Install", close).detail(tab.detail());
             // Ely's card is a fixed 440px; a narrow window gets the full-width form.
@@ -2476,37 +2630,67 @@ fn sync_actions(cx: &mut Context<SyncaWindow>) -> impl IntoElement + use<> {
         .px(px(SIDEBAR_INSET))
         .py(px(SIDEBAR_INSET))
         .flex()
-        .items_center()
+        .flex_col()
         .gap(px(4.))
         .border_t_1()
         .border_color(theme.border)
-        .child(sync_cell(sidebar_button(
-            "install",
-            "download",
-            "Install…",
-            "Install a skill or add an MCP server",
-            Some("⌘1 Skill · ⌘2 MCP"),
-            cx.listener(|this, _, _, cx| this.open_install(InstallTab::Skill, cx)),
-        )))
-        .child(sync_cell(sidebar_button(
-            "reload",
-            "refresh",
-            "Reload",
-            "Reload",
-            None,
-            cx.listener(|this, _, _, cx| this.reload(cx)),
-        )))
-        .child(sync_cell(sidebar_button(
-            "sync-all",
-            "sync",
-            "Sync all",
-            "Sync all (preview first)",
-            None,
-            cx.listener(|this, _, _, cx| this.plan_sync(Target::All, None, cx)),
-        )))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(sync_cell(sidebar_button(
+                    "install",
+                    "download",
+                    "Install…",
+                    "Install a skill, add an MCP server, or search skills.sh",
+                    Some("⌘1 Skill · ⌘2 MCP · ⌘3 Registry"),
+                    cx.listener(|this, _, _, cx| this.open_install(InstallTab::Skill, cx)),
+                )))
+                .child(sync_cell(sidebar_button(
+                    "reload",
+                    "refresh",
+                    "Reload",
+                    "Reload",
+                    None,
+                    cx.listener(|this, _, _, cx| this.reload(cx)),
+                )))
+                .child(sync_cell(sidebar_button(
+                    "sync-all",
+                    "sync",
+                    "Sync all",
+                    "Sync all (preview first)",
+                    None,
+                    cx.listener(|this, _, _, cx| this.plan_sync(Target::All, None, cx)),
+                ))),
+        )
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(sync_cell(sidebar_button(
+                    "check-updates",
+                    "search",
+                    "Check updates",
+                    "Check skills installed from skills.sh for newer versions (preview first)",
+                    None,
+                    cx.listener(|this, _, _, cx| this.plan_updates(Vec::new(), cx)),
+                )))
+                .child(sync_cell(sidebar_button(
+                    "restore-lock",
+                    "restart",
+                    "Restore from lock",
+                    "Reinstall the skills the lock file records (preview first)",
+                    None,
+                    cx.listener(|this, _, _, cx| this.plan_restore(cx)),
+                ))),
+        )
 }
 
-/// One third of the footer row.
+/// One equal share of a footer row.
 fn sync_cell(element: impl IntoElement) -> impl IntoElement {
     div().flex_1().min_w(px(0.)).child(element)
 }
@@ -2879,6 +3063,7 @@ fn list_body(
     let state_badge = entry
         .mismatch
         .then(|| chip("Out of sync", Tone::Warn).into_any_element());
+    let origin_badge = (entry.kind == Kind::Skill).then(|| detail_origin_badge(index, entry));
     let kind_label = if entry.kind == Kind::Skill {
         "Skill"
     } else {
@@ -2951,6 +3136,7 @@ fn list_body(
                                         entry.title.clone(),
                                     )),
                             )
+                            .children(origin_badge)
                             .children(state_badge),
                     )
                     .child(
@@ -3341,7 +3527,22 @@ fn entry_actions(body: gpui::Div, entry: &Entry, cx: &mut Context<SyncaWindow>) 
     let divider = || div().w(px(1.)).h(px(20.)).mx_1().bg(theme.border);
     let row = div().w_full().flex().items_center().gap_2().flex_wrap();
     if kind == Kind::Skill {
-        let sync_name = name;
+        let sync_name = name.clone();
+        let update = (entry.origin == engine::Origin::Remote).then(|| {
+            let tip = match entry.source.as_deref() {
+                Some(source) => format!("Check {source} for a newer version (preview first)"),
+                None => "Check for a newer version (preview first)".to_string(),
+            };
+            tipped_button(
+                "update-one",
+                Some("refresh"),
+                "Update",
+                tip,
+                ButtonVariant::Secondary,
+                false,
+                cx.listener(move |this, _, _, cx| this.plan_updates(vec![name.clone()], cx)),
+            )
+        });
         body.child(
             row.child(button(
                 "sync-one",
@@ -3351,6 +3552,7 @@ fn entry_actions(body: gpui::Div, entry: &Entry, cx: &mut Context<SyncaWindow>) 
                     this.plan_sync(Target::Skills, Some(sync_name.clone()), cx)
                 }),
             ))
+            .children(update)
             .child(quiet_button(
                 "unlink",
                 "unlink",
@@ -4081,7 +4283,7 @@ fn settings_body(
                 ))
             }),
     );
-    body = body.child(section_label("Providers"));
+    body = body.child(section_label("Synced by Synca"));
     for (index, (id, title)) in PROVIDERS.iter().enumerate() {
         let enabled = !window.disabled.iter().any(|item| item == id);
         let provider = (*id).to_string();
@@ -4163,8 +4365,11 @@ fn settings_body(
                         )),
                 ),
         );
+        if let Some(detail) = providers::managed_detail(window, id) {
+            body = body.child(div().w_full().pb_1().child(detail));
+        }
     }
-    body
+    providers::section(window, body, cx)
 }
 
 fn install_body(
@@ -4464,6 +4669,19 @@ fn plan_body(
     for (kind, count) in &plan.chips {
         body = body.child(field(kind, count.to_string()));
     }
+    if !plan.notes.is_empty() {
+        let theme = theme();
+        let mut notes = div().flex().flex_col().gap_1().pt_1();
+        for note in &plan.notes {
+            notes = notes.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted)
+                    .child(SharedString::from(note.clone())),
+            );
+        }
+        body = body.child(section_label("Notes")).child(notes);
+    }
     for (index, conflict) in plan.conflicts.iter().enumerate() {
         let label = format!(
             "{} {}",
@@ -4497,12 +4715,26 @@ fn plan_body(
             ));
         }
     }
-    body = body.child(button(
-        "apply",
-        "check",
-        "Apply",
-        cx.listener(|this, _, _, cx| this.apply_plan(cx)),
-    ));
+    let nothing = matches!(plan.apply, Apply::Update(_) | Apply::Restore)
+        && plan.chips.is_empty()
+        && plan.conflicts.is_empty();
+    body = if nothing {
+        body.child(InlineMessage::new(
+            Severity::Info,
+            "Nothing to apply. Everything is up to date.",
+        ))
+    } else {
+        let tip = format!("Apply this plan: {}", plan.title);
+        body.child(tipped_button(
+            "apply",
+            Some("check"),
+            "Apply",
+            tip,
+            ButtonVariant::Primary,
+            false,
+            cx.listener(|this, _, _, cx| this.apply_plan(cx)),
+        ))
+    };
     let clean = window
         .plan_clean
         .clone()
@@ -4554,6 +4786,14 @@ struct SkillRow {
     presence: Vec<SkillPresence>,
     #[serde(default)]
     mismatch: bool,
+    /// `"remote"` or `"local"`. A binary from before the skills.sh backend
+    /// omits all three fields, and a skill with no lock entry is local.
+    #[serde(default)]
+    origin: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    source_type: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -4758,6 +4998,9 @@ fn load_entries(
                     synced,
                     tokens,
                     mismatch: row.mismatch,
+                    origin: engine::Origin::from_field(row.origin.as_deref()),
+                    source: row.source.filter(|text| !text.trim().is_empty()),
+                    source_type: row.source_type.filter(|text| !text.trim().is_empty()),
                 });
             }
         }
@@ -4794,6 +5037,9 @@ fn load_entries(
                     synced,
                     tokens,
                     mismatch: row.mismatch,
+                    origin: engine::Origin::Local,
+                    source: None,
+                    source_type: None,
                 });
             }
         }
@@ -5064,6 +5310,7 @@ fn table_head(kind: Kind, sort: ListSort, cx: &mut Context<SyncaWindow>) -> gpui
                     .flex()
                     .items_center()
                     .gap(px(8.))
+                    .child(origin_head(kind))
                     .child(div().w(px(COL_DOT_W)).flex_none())
                     .child(sort_head(
                         format!("sort-{prefix}-sync"),
@@ -5083,6 +5330,30 @@ fn table_head(kind: Kind, sort: ListSort, cx: &mut Context<SyncaWindow>) -> gpui
                     )),
             ),
     )
+}
+
+/// The header over the origin badges. MCP rows have no badge, but keep the
+/// column so both tables share one grid.
+fn origin_head(kind: Kind) -> impl IntoElement {
+    let head = div()
+        .id("origin-head")
+        .w(px(COL_ORIGIN_W))
+        .flex_none()
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(11.))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(theme().muted);
+    if kind == Kind::Skill {
+        head.tooltip(Tooltip::text(
+            "Remote: installed from skills.sh or another remote source. Local: installed from a folder.",
+        ))
+        .child("Origin")
+    } else {
+        head
+    }
 }
 
 fn sort_head(
@@ -5148,6 +5419,7 @@ fn sort_tip(column: SortColumn, sort: ListSort) -> String {
 
 fn metric_cells(
     index: usize,
+    origin: Option<(engine::Origin, SharedString)>,
     mismatch: bool,
     status: SharedString,
     sync: SharedString,
@@ -5170,9 +5442,89 @@ fn metric_cells(
         .gap(px(8.))
         .text_xs()
         .text_color(theme.muted)
+        .child(origin_cell(index, origin))
         .child(dot)
         .child(metric_text(sync, COL_SYNC_W))
         .child(metric_text(tokens, COL_TOKEN_W))
+}
+
+/// The `remote` / `local` badge of a skill row inside its fixed column. An
+/// MCP row keeps the empty column.
+fn origin_cell(index: usize, origin: Option<(engine::Origin, SharedString)>) -> gpui::Div {
+    let cell = div()
+        .w(px(COL_ORIGIN_W))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center();
+    let Some((origin, tip)) = origin else {
+        return cell;
+    };
+    let theme = theme();
+    let remote = origin == engine::Origin::Remote;
+    cell.child(
+        div()
+            .id(SharedString::from(format!("row-origin-{index}")))
+            .px(px(4.))
+            .rounded_sm()
+            .text_size(px(10.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .bg(if remote { theme.selected } else { theme.raised })
+            .text_color(if remote { theme.accent } else { theme.muted })
+            .tooltip(Tooltip::text(tip))
+            .child(origin.label()),
+    )
+}
+
+/// The badge near a skill's title in the detail pane.
+fn detail_origin_badge(index: usize, entry: &Entry) -> gpui::AnyElement {
+    let tip = engine::origin_tip(
+        entry.origin,
+        entry.source.as_deref(),
+        entry.source_type.as_deref(),
+    );
+    div()
+        .id(SharedString::from(format!("detail-origin-{index}")))
+        .flex_none()
+        .tooltip(Tooltip::text(tip))
+        .child(chip(
+            entry.origin.label(),
+            if entry.origin == engine::Origin::Remote {
+                Tone::Accent
+            } else {
+                Tone::Neutral
+            },
+        ))
+        .into_any_element()
+}
+
+/// A labelled button with a tooltip on a wrapper, so a disabled button still
+/// explains itself.
+fn tipped_button(
+    id: impl Into<SharedString>,
+    glyph: Option<&'static str>,
+    label: impl Into<SharedString>,
+    tip: impl Into<SharedString>,
+    variant: ButtonVariant,
+    disabled: bool,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> gpui::AnyElement {
+    let id: SharedString = id.into();
+    let tip: SharedString = tip.into();
+    let mut button = Button::new(ElementId::Name(id.clone()), label)
+        .variant(variant)
+        .size(ControlSize::Sm)
+        .disabled(disabled)
+        .on_click(on_click);
+    if let Some(glyph) = glyph {
+        button = button.icon(ns_ui::icon_name(glyph));
+    }
+    div()
+        .id(ElementId::Name(SharedString::from(format!("{id}-tip"))))
+        .flex_none()
+        .tooltip(Tooltip::text(tip))
+        .child(button)
+        .into_any_element()
 }
 
 fn metric_text(text: SharedString, width: f32) -> gpui::Div {
@@ -5245,6 +5597,7 @@ fn inventory_group(
             .tooltip(cache.titles[index].clone(), Some(cache.meta[index].clone()))
             .trailing(metric_cells(
                 index,
+                cache.origin[index].clone(),
                 cache.mismatch[index],
                 cache.status[index].clone(),
                 sync,
@@ -5428,7 +5781,21 @@ fn main() {
 /// Names `dev` handles. `spec()` lists these, and the match fallthrough checks them.
 #[cfg(feature = "devtools")]
 const DEV_COMMANDS: &[&str] = &[
-    "install", "close", "key", "tab", "select", "menu", "state", "scope", "fail", "panel", "mcp",
+    "install",
+    "close",
+    "key",
+    "drag",
+    "tab",
+    "select",
+    "menu",
+    "state",
+    "scope",
+    "fail",
+    "panel",
+    "mcp",
+    "registry",
+    "providers",
+    "updates",
     "perf",
 ];
 
@@ -5437,6 +5804,8 @@ struct SyncaSelection<'a> {
     index: usize,
     key: &'a str,
     kind: &'a str,
+    /// `remote` or `local` for a skill, `None` for an MCP entry.
+    origin: Option<&'a str>,
 }
 
 #[cfg(feature = "devtools")]
@@ -5450,12 +5819,17 @@ struct SyncaDevState<'a> {
     screen: &'a str,
     selection: Option<SyncaSelection<'a>>,
     busy: bool,
+    registry: serde_json::Value,
+    providers: serde_json::Value,
+    plan: Option<serde_json::Value>,
 }
 
 #[cfg(feature = "devtools")]
-fn synca_screen(panel: Panel, route: Route, install_open: bool) -> &'static str {
-    if install_open {
-        return "install";
+fn synca_screen(panel: Panel, route: Route, install: Option<InstallTab>) -> &'static str {
+    match install {
+        Some(InstallTab::Registry) => return "registry",
+        Some(_) => return "install",
+        None => {}
     }
     match panel {
         Panel::Activity => "activity",
@@ -5475,6 +5849,7 @@ fn synca_state_value(state: &SyncaDevState<'_>) -> serde_json::Value {
             "index": item.index,
             "key": item.key,
             "kind": item.kind,
+            "origin": item.origin,
         })
     });
     serde_json::json!({
@@ -5487,6 +5862,9 @@ fn synca_state_value(state: &SyncaDevState<'_>) -> serde_json::Value {
         "screen": state.screen,
         "selection": selection,
         "busy": state.busy,
+        "registry": state.registry,
+        "providers": state.providers,
+        "plan": state.plan,
     })
 }
 
@@ -5499,7 +5877,51 @@ fn synca_state_schema() -> serde_json::Value {
             "selection_rows": {"type": "array", "items": {"type": "integer", "minimum": 0}},
             "entries": {"type": "integer", "minimum": 0},
             "project": {"type": ["string", "null"]},
-            "query": {"type": "string"}
+            "query": {"type": "string"},
+            "registry": {
+                "type": "object",
+                "properties": {
+                    "open": {"type": "boolean"},
+                    "view": {"enum": ["search", "trending", "hot", "all-time", "official", "repo"]},
+                    "query": {"type": "string"},
+                    "repo": {"type": "string"},
+                    "status": {"enum": ["idle", "loading", "ready", "error"]},
+                    "error": {"type": ["string", "null"]},
+                    "count": {"type": "integer", "minimum": 0},
+                    "total": {"type": "integer", "minimum": 0},
+                    "page": {"type": "integer", "minimum": 0},
+                    "has_more": {"type": "boolean"},
+                    "loading_more": {"type": "boolean"},
+                    "summary": {"type": "string"},
+                    "selected": {"type": ["string", "null"]},
+                    "detail": {"type": "object"},
+                    "seq": {"type": "integer", "minimum": 0}
+                }
+            },
+            "providers": {
+                "type": "object",
+                "properties": {
+                    "open": {"type": "boolean"},
+                    "status": {"enum": ["idle", "loading", "ready", "error"]},
+                    "error": {"type": ["string", "null"]},
+                    "query": {"type": "string"},
+                    "count": {"type": "integer", "minimum": 0},
+                    "managed": {"type": "integer", "minimum": 0},
+                    "present": {"type": "integer", "minimum": 0},
+                    "shown": {"type": "integer", "minimum": 0},
+                    "scope": {"enum": ["user", "project"]},
+                    "fallback": {"type": "boolean"},
+                    "seq": {"type": "integer", "minimum": 0}
+                }
+            },
+            "plan": {
+                "type": ["object", "null"],
+                "properties": {
+                    "title": {"type": "string"},
+                    "actions": {"type": "integer", "minimum": 0},
+                    "notes": {"type": "array", "items": {"type": "string"}}
+                }
+            }
         }),
         &[
             "scope",
@@ -5508,6 +5930,8 @@ fn synca_state_schema() -> serde_json::Value {
             "entries",
             "project",
             "query",
+            "registry",
+            "providers",
         ],
     )
 }
@@ -5584,7 +6008,7 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
             "name",
             "string",
             false,
-            "\"skill\" or \"mcp\". Unknown names fall back to skill.",
+            "\"skill\", \"mcp\", or \"registry\". Unknown names fall back to skill.",
         ),
         ns_ui::DevCommand::new("select", "Select a sidebar entry.", true)
             .arg(
@@ -5639,6 +6063,75 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
             "string",
             false,
             "\"stdio\", \"http\", \"sse\", or \"json\". Default stdio.",
+        ),
+        ns_ui::DevCommand::new(
+            "registry",
+            "Open the Install dialog on the Registry tab; this loads a list from skills.sh, which is read-only. Optionally set the view, the query, the selected result, or a repository.",
+            true,
+        )
+        .arg(
+            "view",
+            "string",
+            false,
+            "\"search\", \"trending\", \"hot\", \"all-time\", or \"official\". Default: keep the current view.",
+        )
+        .arg(
+            "query",
+            "string",
+            false,
+            "Text for the search box. Two or more characters run a search.",
+        )
+        .arg(
+            "select",
+            "integer",
+            false,
+            "Index of the loaded result to select, which also reads its snapshot and audits.",
+        )
+        .arg(
+            "repo",
+            "string",
+            false,
+            "owner/repo: list the skills that repository holds (skills discover).",
+        )
+        .arg(
+            "more",
+            "boolean",
+            false,
+            "When true, load the next browse page.",
+        ),
+        ns_ui::DevCommand::new(
+            "providers",
+            "Open Settings on the All skills.sh providers list (synca providers list, read-only) and optionally set its filter.",
+            true,
+        )
+        .arg(
+            "query",
+            "string",
+            false,
+            "Text for the providers filter box (name or id). Empty clears it.",
+        )
+        .arg(
+            "reload",
+            "boolean",
+            false,
+            "When true, ask the CLI for the list again.",
+        ),
+        ns_ui::DevCommand::new(
+            "updates",
+            "Open the plan route with a dry run: \"check\" (skills update --dry-run) or \"restore\" (skills restore --dry-run). Nothing is applied.",
+            true,
+        )
+        .arg(
+            "name",
+            "string",
+            false,
+            "\"check\" (default) or \"restore\".",
+        )
+        .arg(
+            "skill",
+            "string",
+            false,
+            "Check one skill key instead of every remote skill.",
         ),
         ns_ui::DevCommand::new(
             "perf",
@@ -5817,6 +6310,7 @@ impl ns_ui::DevControl for SyncaWindow {
                         } else {
                             "mcp"
                         },
+                        origin: (entry.kind == Kind::Skill).then(|| entry.origin.label()),
                     })
                 });
                 Ok(synca_state_value(&SyncaDevState {
@@ -5826,9 +6320,24 @@ impl ns_ui::DevControl for SyncaWindow {
                     entries: self.entries.len(),
                     project: self.active_project.as_deref(),
                     query: self.query.as_str(),
-                    screen: synca_screen(self.panel, self.route, self.onboarding.is_some()),
+                    screen: synca_screen(self.panel, self.route, self.onboarding),
                     selection,
                     busy: self.busy,
+                    registry: registry::state_value(
+                        &self.registry,
+                        self.onboarding == Some(InstallTab::Registry),
+                    ),
+                    providers: providers::state_value(
+                        &self.providers,
+                        self.panel == Panel::Settings,
+                    ),
+                    plan: self.plan.as_ref().map(|plan| {
+                        serde_json::json!({
+                            "title": plan.title,
+                            "actions": plan.chips.iter().map(|(_, count)| count).sum::<usize>(),
+                            "notes": plan.notes,
+                        })
+                    }),
                 }))
             }
             "scope" => {
@@ -5863,6 +6372,7 @@ impl ns_ui::DevControl for SyncaWindow {
                     Some("settings") => Panel::Settings,
                     _ => Panel::Closed,
                 };
+                self.providers_activate(cx);
                 cx.notify();
                 Ok(serde_json::json!({ "panel": request.get("name") }))
             }
@@ -5885,6 +6395,90 @@ impl ns_ui::DevControl for SyncaWindow {
                 cx.notify();
                 Ok(serde_json::json!({ "dialog": "mcp", "tab": "mcp" }))
             }
+            "registry" => {
+                let text = |name: &str| request.get(name).and_then(|value| value.as_str());
+                let view = match text("view") {
+                    Some(name) => Some(match engine::RegistryView::from_key(name) {
+                        Some(engine::RegistryView::Repo) | None => {
+                            return Err(format!(
+                                "unknown view \"{name}\"; use search, trending, hot, all-time, or official"
+                            ));
+                        }
+                        Some(view) => view,
+                    }),
+                    None => None,
+                };
+                if let Some(repo) = text("repo") {
+                    if !engine::looks_like_repo(repo) {
+                        return Err(format!("\"{repo}\" is not owner/repo"));
+                    }
+                    self.onboarding = Some(InstallTab::Registry);
+                    self.registry_open_repo(repo, cx);
+                } else {
+                    registry::dev_open(self, view, text("query"), cx);
+                }
+                if request.get("more").and_then(|value| value.as_bool()) == Some(true) {
+                    if self.registry.has_more && !self.registry.loading_more {
+                        self.registry_load(true, cx);
+                    } else {
+                        return Err("there is no further page to load".into());
+                    }
+                }
+                if let Some(index) = request.get("select").and_then(|value| value.as_u64()) {
+                    let index = index as usize;
+                    if index >= self.registry.skills.len() {
+                        return Err(format!(
+                            "no result {index}; {} loaded (the list may still be loading)",
+                            self.registry.skills.len()
+                        ));
+                    }
+                    self.registry_select(index, cx);
+                }
+                cx.notify();
+                Ok(serde_json::json!({
+                    "dialog": "install",
+                    "tab": "registry",
+                    "view": self.registry.view.key(),
+                }))
+            }
+            "providers" => {
+                self.panel = Panel::Settings;
+                if let Some(query) = request.get("query").and_then(|value| value.as_str()) {
+                    let text = query.to_string();
+                    self.providers_input
+                        .update(cx, |input, cx| input.set_text(text.clone(), cx));
+                    self.providers_set_query(text, cx);
+                }
+                if request.get("reload").and_then(|value| value.as_bool()) == Some(true) {
+                    self.providers_invalidate(cx);
+                } else {
+                    self.providers_activate(cx);
+                }
+                cx.notify();
+                Ok(serde_json::json!({
+                    "panel": "settings",
+                    "query": self.providers.query,
+                }))
+            }
+            "updates" => {
+                match request
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("check")
+                {
+                    "restore" => self.plan_restore(cx),
+                    "check" => {
+                        let names: Vec<String> = request
+                            .get("skill")
+                            .and_then(|value| value.as_str())
+                            .map(|name| vec![name.to_string()])
+                            .unwrap_or_default();
+                        self.plan_updates(names, cx);
+                    }
+                    other => return Err(format!("unknown name \"{other}\"; use check or restore")),
+                }
+                Ok(serde_json::json!({ "dry_run": true }))
+            }
             "perf" => {
                 let (label, frames) = perf::arguments(request)?;
                 perf::start(self, label, frames, cx)
@@ -5896,10 +6490,13 @@ impl ns_ui::DevControl for SyncaWindow {
 
 #[cfg(all(test, feature = "devtools"))]
 mod dev_contract_tests {
+    use super::providers::ProvidersState;
+    use super::registry::RegistryState;
     use super::{
         DEV_COMMANDS, Panel, Route, SyncaDevState, SyncaSelection, SyncaWindow, reject_unknown,
         synca_screen, synca_state_value,
     };
+    use crate::InstallTab;
     use ns_ui::DevControl;
 
     #[test]
@@ -5948,19 +6545,45 @@ mod dev_contract_tests {
     }
 
     #[test]
+    fn the_providers_command_is_listed_with_its_arguments() {
+        let spec = SyncaWindow::spec();
+        let command = spec
+            .commands
+            .iter()
+            .find(|command| command.name == "providers")
+            .expect("providers command");
+        let args: Vec<&str> = command.args.iter().map(|arg| arg.name.as_str()).collect();
+        assert_eq!(args, ["query", "reload"]);
+        let properties = &spec.state_schema["properties"]["providers"]["properties"];
+        for key in ["count", "managed", "present", "query"] {
+            assert!(properties.get(key).is_some(), "{key}");
+        }
+        assert!(
+            spec.state_schema["required"]
+                .as_array()
+                .expect("required")
+                .iter()
+                .any(|item| item == "providers")
+        );
+    }
+
+    #[test]
     fn screen_follows_the_install_dialog_then_the_panel_then_the_route() {
-        assert_eq!(synca_screen(Panel::Activity, Route::List, true), "install");
+        let skill = Some(InstallTab::Skill);
+        assert_eq!(synca_screen(Panel::Activity, Route::List, skill), "install");
         assert_eq!(
-            synca_screen(Panel::Activity, Route::List, false),
-            "activity"
+            synca_screen(Panel::Activity, Route::List, Some(InstallTab::Mcp)),
+            "install"
         );
         assert_eq!(
-            synca_screen(Panel::Settings, Route::Plan, false),
-            "settings"
+            synca_screen(Panel::Closed, Route::List, Some(InstallTab::Registry)),
+            "registry"
         );
-        assert_eq!(synca_screen(Panel::Closed, Route::List, false), "list");
-        assert_eq!(synca_screen(Panel::Closed, Route::Plan, false), "plan");
-        assert_eq!(synca_screen(Panel::Closed, Route::Update, false), "update");
+        assert_eq!(synca_screen(Panel::Activity, Route::List, None), "activity");
+        assert_eq!(synca_screen(Panel::Settings, Route::Plan, None), "settings");
+        assert_eq!(synca_screen(Panel::Closed, Route::List, None), "list");
+        assert_eq!(synca_screen(Panel::Closed, Route::Plan, None), "plan");
+        assert_eq!(synca_screen(Panel::Closed, Route::Update, None), "update");
     }
 
     #[test]
@@ -5978,8 +6601,14 @@ mod dev_contract_tests {
                     index: 2,
                     key: "skill:demo",
                     kind: "skill",
+                    origin: Some("remote"),
                 }),
                 busy: true,
+                registry: crate::registry::state_value(&RegistryState::new(), true),
+                providers: crate::providers::state_value(&ProvidersState::new(), true),
+                plan: Some(
+                    serde_json::json!({"title": "check updates", "actions": 1, "notes": ["update: demo"]}),
+                ),
             }),
             "synca",
         );
@@ -5993,6 +6622,20 @@ mod dev_contract_tests {
         assert_eq!(stamped["selection"]["index"], 2);
         assert_eq!(stamped["selection"]["key"], "skill:demo");
         assert_eq!(stamped["selection"]["kind"], "skill");
+        assert_eq!(stamped["selection"]["origin"], "remote");
+        assert_eq!(stamped["registry"]["open"], true);
+        assert_eq!(stamped["registry"]["view"], "trending");
+        assert_eq!(stamped["registry"]["status"], "idle");
+        assert_eq!(stamped["registry"]["count"], 0);
+        assert!(stamped["registry"]["selected"].is_null());
+        assert_eq!(stamped["registry"]["detail"]["info"], "idle");
+        assert_eq!(stamped["providers"]["open"], true);
+        assert_eq!(stamped["providers"]["status"], "idle");
+        assert_eq!(stamped["providers"]["count"], 0);
+        assert_eq!(stamped["providers"]["managed"], 0);
+        assert_eq!(stamped["providers"]["present"], 0);
+        assert_eq!(stamped["providers"]["query"], "");
+        assert_eq!(stamped["plan"]["title"], "check updates");
         assert_eq!(stamped["busy"], true);
         assert_eq!(stamped["protocol"], 1);
         assert_eq!(stamped["app"], "synca");
@@ -6008,6 +6651,9 @@ mod dev_contract_tests {
                 screen: "activity",
                 selection: None,
                 busy: false,
+                registry: crate::registry::state_value(&RegistryState::new(), false),
+                providers: crate::providers::state_value(&ProvidersState::new(), false),
+                plan: None,
             }),
             "synca",
         );
@@ -6019,6 +6665,9 @@ mod dev_contract_tests {
         );
         assert!(empty["project"].is_null());
         assert!(empty["selection"].is_null());
+        assert!(empty["plan"].is_null());
+        assert_eq!(empty["registry"]["open"], false);
+        assert_eq!(empty["providers"]["open"], false);
         assert_eq!(empty["screen"], "activity");
         assert_eq!(empty["busy"], false);
     }
@@ -6104,6 +6753,49 @@ mod view_tests {
     }
 
     #[test]
+    fn skill_origin_defaults_to_local_when_the_cli_omits_it() {
+        let json = include_str!("../fixtures/skills-list-origin.json");
+        let (rows, skipped) = parse_rows::<SkillRow>("skill", json).unwrap();
+        assert!(skipped.is_empty(), "{skipped:?}");
+        assert_eq!(rows.len(), 3);
+        let origin = |row: &SkillRow| engine::Origin::from_field(row.origin.as_deref());
+        assert_eq!(origin(&rows[0]), engine::Origin::Remote);
+        assert_eq!(rows[0].source.as_deref(), Some("vercel-labs/skills"));
+        assert_eq!(rows[0].source_type.as_deref(), Some("github"));
+        assert_eq!(origin(&rows[1]), engine::Origin::Local);
+        assert!(rows[1].source.is_none() && rows[1].source_type.is_none());
+        assert_eq!(rows[2].key, "old-binary-row");
+        assert_eq!(origin(&rows[2]), engine::Origin::Local, "no origin field");
+    }
+
+    #[test]
+    fn origin_badge_fits_the_fixed_row_grid() {
+        // 320pt sidebar; the label still keeps room after the five fixed columns.
+        let trailing = COL_ORIGIN_W + COL_DOT_W + COL_SYNC_W + COL_TOKEN_W + 3. * 8.;
+        let chrome = 2. * SIDEBAR_INSET + 2. * 8. + 16. + 2. * 8.;
+        assert!(
+            320. - chrome - trailing >= 80.,
+            "name room {}",
+            320. - chrome - trailing
+        );
+        assert!(COL_ORIGIN_W >= 40., "fits the word remote");
+    }
+
+    #[test]
+    fn plan_notes_and_origin_actions_reach_the_plan_view() {
+        let text = include_str!("../fixtures/update-plan.json");
+        let (chips, conflicts) = engine::parse_plan(text);
+        assert!(conflicts.is_empty());
+        assert!(chips.iter().any(|(kind, _)| kind == "record_origin"));
+        assert_eq!(engine::plan_notes(text).len(), 3);
+        let clone = Apply::Update(vec!["a".into()]);
+        match PlanView::clone_apply(&clone) {
+            Apply::Update(names) => assert_eq!(names, ["a"]),
+            _ => panic!("update plan must clone as an update"),
+        }
+    }
+
+    #[test]
     fn skill_json_reads_source() {
         assert_eq!(
             SyncaWindow::json_skill_source(r#"{"source":"owner/repo"}"#).unwrap(),
@@ -6145,7 +6837,7 @@ mod view_tests {
 
     #[test]
     fn install_tabs_round_trip_and_unknown_falls_back_to_skill() {
-        for tab in [InstallTab::Skill, InstallTab::Mcp] {
+        for tab in [InstallTab::Skill, InstallTab::Mcp, InstallTab::Registry] {
             assert_eq!(InstallTab::from_key(tab.key()), tab);
         }
         assert_eq!(InstallTab::from_key("nonsense"), InstallTab::Skill);
@@ -6154,6 +6846,8 @@ mod view_tests {
     #[test]
     fn each_install_tab_has_its_own_detail() {
         assert_ne!(InstallTab::Skill.detail(), InstallTab::Mcp.detail());
+        assert_ne!(InstallTab::Registry.detail(), InstallTab::Mcp.detail());
+        assert_ne!(InstallTab::Registry.detail(), InstallTab::Skill.detail());
     }
 
     #[test]

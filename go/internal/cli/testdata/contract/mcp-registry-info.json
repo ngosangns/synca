@@ -1,0 +1,41 @@
+{
+  "server": {
+    "name": "ai.2kw/mcp-server",
+    "title": "2kw.ai",
+    "description": "EU-hosted AI platform",
+    "version": "8.0.3",
+    "status": "active",
+    "isLatest": true,
+    "statusChangedAt": "2026-10-25T22:46:43.86716Z",
+    "publishedAt": "2026-10-25T22:46:43.86716Z",
+    "updatedAt": "2026-10-25T22:46:43.86716Z",
+    "repositoryUrl": "",
+    "websiteUrl": "https://2kw.ai",
+    "packageTypes": [
+      "npm"
+    ],
+    "remoteTypes": [],
+    "packages": [
+      {
+        "registryType": "npm",
+        "registryBaseUrl": "https://registry.npmjs.org",
+        "identifier": "@2kw/ai-mcp-server",
+        "version": "8.0.3",
+        "runtimeHint": "",
+        "transport": "stdio",
+        "envKeys": [
+          "AI_2KW_API_KEY",
+          "AI_2KW_BASE_URL"
+        ]
+      }
+    ],
+    "remotes": [],
+    "official": {
+      "status": "active",
+      "isLatest": true,
+      "statusChangedAt": "2026-10-25T22:46:43.86716Z",
+      "publishedAt": "2026-10-25T22:46:43.86716Z",
+      "updatedAt": "2026-10-25T22:46:43.86716Z"
+    }
+  }
+}

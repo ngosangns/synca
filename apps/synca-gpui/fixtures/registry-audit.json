@@ -1,0 +1,27 @@
+{
+  "id": "vercel-labs/skills/find-skills",
+  "source": "vercel-labs/skills",
+  "slug": "find-skills",
+  "audits": [
+    {
+      "provider": "Gen Agent Trust Hub",
+      "slug": "agent-trust-hub",
+      "status": "pass",
+      "summary": "This skill facilitates the discovery and installation of agent extensions using a dedicated command-line interface. It includes guidance on verifying the reputation of external packages, which aligns with secure development practices for package management.",
+      "auditedAt": "2026-09-15T08:00:05.922Z",
+      "riskLevel": "SAFE",
+      "categories": [
+        "COMMAND_EXECUTION",
+        "EXTERNAL_DOWNLOADS",
+        "INDIRECT_PROMPT_INJECTION"
+      ]
+    },
+    {
+      "provider": "Socket",
+      "slug": "socket",
+      "status": "pass",
+      "summary": "No alerts",
+      "auditedAt": "2026-09-15T08:00:19.647Z"
+    }
+  ]
+}

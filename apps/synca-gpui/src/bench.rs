@@ -57,6 +57,13 @@ fn inventory(count: usize) -> Vec<Entry> {
                 synced: Some(if stale { 2 } else { 3 }),
                 tokens: Some(120 + index % 4_800),
                 mismatch: stale,
+                origin: if kind == Kind::Skill && index % 3 == 0 {
+                    crate::engine::Origin::Remote
+                } else {
+                    crate::engine::Origin::Local
+                },
+                source: (index % 3 == 0).then(|| "vercel-labs/skills".to_string()),
+                source_type: (index % 3 == 0).then(|| "github".to_string()),
             }
         })
         .collect()
@@ -220,6 +227,7 @@ fn perf_bench_large() {
     let long_markdown = document(256 * 1024);
     let items = tree();
     let plan = PlanView {
+        notes: Vec::new(),
         title: "Synthetic sync preview".into(),
         output: "\u{1b}[33mconflict\u{1b}[0m skill entry across providers\n".repeat(4_000),
         conflicts: (0..500)

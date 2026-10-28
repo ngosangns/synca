@@ -1,0 +1,42 @@
+{
+  "cursor": "io.example/one:1.0.0",
+  "count": 2,
+  "nextCursor": "io.example/two:2.0.0",
+  "servers": [
+    {
+      "name": "ac.example/remote-files",
+      "title": "Remote files",
+      "description": "Filesystem access over HTTP",
+      "version": "0.4.0",
+      "status": "active",
+      "isLatest": true,
+      "statusChangedAt": "2025-06-01T00:00:00Z",
+      "publishedAt": "2025-06-01T00:00:00Z",
+      "updatedAt": "2025-06-02T00:00:00Z",
+      "repositoryUrl": "",
+      "websiteUrl": "",
+      "packageTypes": [],
+      "remoteTypes": [
+        "streamable-http"
+      ]
+    },
+    {
+      "name": "io.example/two",
+      "title": "",
+      "description": "Second server",
+      "version": "2.0.0",
+      "status": "active",
+      "isLatest": true,
+      "statusChangedAt": "2025-05-01T00:00:00Z",
+      "publishedAt": "2025-05-01T00:00:00Z",
+      "updatedAt": "2025-05-01T00:00:00Z",
+      "repositoryUrl": "https://github.com/example/two",
+      "websiteUrl": "",
+      "packageTypes": [
+        "npm",
+        "pypi"
+      ],
+      "remoteTypes": []
+    }
+  ]
+}

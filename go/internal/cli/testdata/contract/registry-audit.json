@@ -1,0 +1,23 @@
+{
+  "id": "vercel-labs/skills/find-skills",
+  "source": "vercel-labs/skills",
+  "slug": "find-skills",
+  "audits": [
+    {
+      "provider": "Socket",
+      "slug": "socket",
+      "status": "pass",
+      "summary": "No alerts",
+      "auditedAt": "2026-09-15T08:00:19.647Z"
+    },
+    {
+      "provider": "Gen Agent Trust Hub",
+      "slug": "agent-trust-hub",
+      "status": "warn",
+      "summary": "Runs shell commands",
+      "auditedAt": "2026-09-15T08:00:05.922Z",
+      "riskLevel": "MEDIUM",
+      "categories": ["COMMAND_EXECUTION"]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "id": "vercel-labs/skills/find-skills",
+  "source": "vercel-labs/skills",
+  "slug": "find-skills",
+  "installs": null,
+  "hash": "b146008599c31057cef1c145774cea5d5afb30e8f43fa802e47a4b461419aaaf",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 5472,
+      "contents": "---\nname: find-skills\ndescription: Helps users discover and install agent skills when they ask questions like \"how do I do X\", \"find a skill for X\", \"is there a skill that can...\", or express interest"
+    }
+  ]
+}

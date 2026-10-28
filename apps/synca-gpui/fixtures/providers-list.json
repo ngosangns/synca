@@ -1,0 +1,98 @@
+{
+  "source": "skills@1.7.4 agents table",
+  "scope": "user",
+  "total": 8,
+  "providers": [
+    {
+      "id": "amp",
+      "name": "Amp",
+      "project_dir": ".agents/skills",
+      "global_dir": "~/.config/agents/skills",
+      "path": "/Users/x/.config/agents/skills",
+      "universal": true,
+      "managed": false,
+      "synca_agent": null,
+      "present": false,
+      "skills": 0
+    },
+    {
+      "id": "claude-code",
+      "name": "Claude Code",
+      "project_dir": ".claude/skills",
+      "global_dir": "~/.claude/skills",
+      "path": "/Users/x/.claude/skills",
+      "universal": false,
+      "managed": true,
+      "synca_agent": "claude",
+      "present": true,
+      "skills": 12
+    },
+    {
+      "id": "cline",
+      "name": "cline",
+      "project_dir": ".agents/skills",
+      "global_dir": "~/.agents/skills",
+      "path": "/Users/x/.agents/skills",
+      "universal": true,
+      "managed": false,
+      "synca_agent": null,
+      "present": true,
+      "skills": 7
+    },
+    {
+      "id": "cursor",
+      "name": "Cursor",
+      "project_dir": ".agents/skills",
+      "global_dir": "~/.cursor/skills",
+      "path": "/Users/x/.cursor/skills",
+      "universal": true,
+      "managed": true,
+      "synca_agent": "cursor",
+      "present": true,
+      "skills": 12
+    },
+    {
+      "id": "eve",
+      "name": "Eve",
+      "project_dir": "agent/skills",
+      "global_dir": null,
+      "path": null,
+      "universal": false,
+      "managed": false,
+      "synca_agent": null,
+      "present": false,
+      "skills": 0
+    },
+    {
+      "id": "goose",
+      "name": "Goose",
+      "project_dir": ".goose/skills",
+      "global_dir": "~/.config/goose/skills",
+      "path": "/Users/x/.config/goose/skills",
+      "universal": false,
+      "managed": false,
+      "synca_agent": null,
+      "present": true,
+      "skills": 1,
+      "added_later": "a field this window does not know"
+    },
+    {
+      "id": "kiro-cli",
+      "name": "Kiro CLI",
+      "project_dir": ".kiro/skills",
+      "global_dir": "~/.kiro/skills",
+      "path": "/Users/x/.kiro/skills",
+      "universal": false,
+      "managed": true,
+      "synca_agent": "kiro",
+      "present": true,
+      "skills": 12
+    },
+    {
+      "id": "zencoder",
+      "name": "Zencoder",
+      "project_dir": ".zencoder/skills",
+      "global_dir": "~/.zencoder/skills"
+    }
+  ]
+}

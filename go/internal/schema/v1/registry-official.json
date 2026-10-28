@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "owners",
+    "totalOwners",
+    "totalSkills",
+    "generatedAt"
+  ],
+  "properties": {
+    "owners": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "owner",
+          "totalInstalls",
+          "featuredRepo",
+          "featuredSkill",
+          "skills"
+        ],
+        "properties": {
+          "owner": {
+            "type": "string"
+          },
+          "totalInstalls": {
+            "type": "integer"
+          },
+          "featuredRepo": {
+            "type": "string"
+          },
+          "featuredSkill": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "source",
+                "slug",
+                "name",
+                "installs",
+                "sourceType",
+                "installUrl",
+                "url",
+                "official",
+                "duplicate"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "slug": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "installs": {
+                  "type": "integer"
+                },
+                "sourceType": {
+                  "enum": [
+                    "github",
+                    "well-known"
+                  ]
+                },
+                "installUrl": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "url": {
+                  "type": "string"
+                },
+                "official": {
+                  "type": "boolean"
+                },
+                "duplicate": {
+                  "type": "boolean"
+                },
+                "weeklyInstalls": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                },
+                "installsYesterday": {
+                  "type": "integer"
+                },
+                "change": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "totalOwners": {
+      "type": "integer"
+    },
+    "totalSkills": {
+      "type": "integer"
+    },
+    "generatedAt": {
+      "type": "string"
+    }
+  }
+}

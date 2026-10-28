@@ -15,7 +15,9 @@
           "kind": {
             "enum": [
               "copy_skill",
+              "forget_origin",
               "purge_canonical_skill",
+              "record_origin",
               "remove_mcp_agent",
               "remove_mcp_hub",
               "symlink_skill",
@@ -32,7 +34,8 @@
           "skill_key": {"type": "string"},
           "agent": {"type": "string"},
           "hub": {"type": "string"},
-          "server": {"type": "string"}
+          "server": {"type": "string"},
+          "source": {"type": "string"}
         }
       }
     },

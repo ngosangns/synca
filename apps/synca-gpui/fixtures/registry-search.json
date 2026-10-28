@@ -1,0 +1,31 @@
+{
+  "query": "react",
+  "searchType": "fuzzy",
+  "count": 2,
+  "skills": [
+    {
+      "id": "vercel-labs/agent-skills/vercel-react-best-practices",
+      "source": "vercel-labs/agent-skills",
+      "slug": "vercel-react-best-practices",
+      "name": "vercel-react-best-practices",
+      "installs": 846089,
+      "sourceType": "github",
+      "installUrl": "https://github.com/vercel-labs/agent-skills",
+      "url": "https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices",
+      "official": false,
+      "duplicate": false
+    },
+    {
+      "id": "designed-by-ai/skills/design-mobile-apps",
+      "source": "designed-by-ai/skills",
+      "slug": "design-mobile-apps",
+      "name": "design-mobile-apps",
+      "installs": 1074375,
+      "sourceType": "github",
+      "installUrl": "https://github.com/designed-by-ai/skills",
+      "url": "https://skills.sh/designed-by-ai/skills/design-mobile-apps",
+      "official": false,
+      "duplicate": false
+    }
+  ]
+}

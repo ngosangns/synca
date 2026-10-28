@@ -13,6 +13,17 @@
       "path": "/tmp/cursor/mcp.json",
       "agent": "cursor",
       "server": "demo"
+    },
+    {
+      "kind": "record_origin",
+      "path": "/tmp/agents/.skill-lock.json",
+      "skill_key": "alpha",
+      "source": "o/r"
+    },
+    {
+      "kind": "forget_origin",
+      "path": "/tmp/agents/.skill-lock.json",
+      "skill_key": "beta"
     }
   ],
   "notes": []

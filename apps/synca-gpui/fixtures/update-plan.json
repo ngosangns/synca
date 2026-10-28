@@ -1,0 +1,9 @@
+{
+  "dryRun": true,
+  "scope": "user",
+  "actions": [
+    {"kind": "copy_skill", "from": "/tmp/repo/skills/find-skills", "to": "/h/.agents/skills/find-skills", "skill_key": "find-skills"},
+    {"kind": "record_origin", "path": "/h/.agents/.skill-lock.json", "skill_key": "find-skills", "source": "vercel-labs/skills"}
+  ],
+  "notes": ["update: find-skills", "up to date: other", "skipped: mine (no remote origin)"]
+}

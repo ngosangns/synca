@@ -20,7 +20,10 @@
         "content_hash": "abc123"
       }
     ],
-    "mismatch": false
+    "mismatch": false,
+    "origin": "remote",
+    "source": "vercel-labs/skills",
+    "source_type": "github"
   },
   {
     "key": "beta",
@@ -36,6 +39,9 @@
         "content_hash": "dangling"
       }
     ],
-    "mismatch": true
+    "mismatch": true,
+    "origin": "local",
+    "source": null,
+    "source_type": null
   }
 ]

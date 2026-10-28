@@ -1,0 +1,637 @@
+{
+ "source": "skills@1.7.4 agents table (dist/cli.mjs)",
+ "agents": [
+  {
+   "id": "adal",
+   "name": "AdaL",
+   "project_dir": ".adal/skills",
+   "global_dir": "~/.adal/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "aider-desk",
+   "name": "AiderDesk",
+   "project_dir": ".aider-desk/skills",
+   "global_dir": "~/.aider-desk/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "amp",
+   "name": "Amp",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.config/agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "antigravity",
+   "name": "Antigravity",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.gemini/antigravity/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "antigravity-cli",
+   "name": "Antigravity CLI",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.gemini/antigravity-cli/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "astrbot",
+   "name": "AstrBot",
+   "project_dir": "data/skills",
+   "global_dir": "~/.astrbot/data/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "augment",
+   "name": "Augment",
+   "project_dir": ".augment/skills",
+   "global_dir": "~/.augment/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "autohand-code",
+   "name": "Autohand Code CLI",
+   "project_dir": ".autohand/skills",
+   "global_dir": "~/.autohand/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "claude-code",
+   "name": "Claude Code",
+   "project_dir": ".claude/skills",
+   "global_dir": "~/.claude/skills",
+   "universal": false,
+   "synca_agent": "claude"
+  },
+  {
+   "id": "cline",
+   "name": "Cline",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "codestudio",
+   "name": "Code Studio",
+   "project_dir": ".codestudio/skills",
+   "global_dir": "~/.codestudio/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "codearts-agent",
+   "name": "CodeArts Agent",
+   "project_dir": ".codeartsdoer/skills",
+   "global_dir": "~/.codeartsdoer/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "codebuddy",
+   "name": "CodeBuddy",
+   "project_dir": ".codebuddy/skills",
+   "global_dir": "~/.codebuddy/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "codemaker",
+   "name": "Codemaker",
+   "project_dir": ".codemaker/skills",
+   "global_dir": "~/.codemaker/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "codex",
+   "name": "Codex",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "command-code",
+   "name": "Command Code",
+   "project_dir": ".commandcode/skills",
+   "global_dir": "~/.commandcode/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "continue",
+   "name": "Continue",
+   "project_dir": ".continue/skills",
+   "global_dir": "~/.continue/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "cortex",
+   "name": "Cortex Code",
+   "project_dir": ".cortex/skills",
+   "global_dir": "~/.snowflake/cortex/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "crush",
+   "name": "Crush",
+   "project_dir": ".crush/skills",
+   "global_dir": "~/.config/crush/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "cursor",
+   "name": "Cursor",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.cursor/skills",
+   "universal": true,
+   "synca_agent": "cursor"
+  },
+  {
+   "id": "deepagents",
+   "name": "Deep Agents",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.deepagents/agent/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "devin",
+   "name": "Devin for Terminal",
+   "project_dir": ".devin/skills",
+   "global_dir": "~/.config/devin/skills",
+   "universal": false,
+   "synca_agent": "devin"
+  },
+  {
+   "id": "dexto",
+   "name": "Dexto",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "droid",
+   "name": "Droid",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.factory/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "eve",
+   "name": "Eve",
+   "project_dir": "agent/skills",
+   "global_dir": null,
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "firebender",
+   "name": "Firebender",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.firebender/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "forgecode",
+   "name": "ForgeCode",
+   "project_dir": ".forge/skills",
+   "global_dir": "~/.forge/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "fx",
+   "name": "fx",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "gemini-cli",
+   "name": "Gemini CLI",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.gemini/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "github-copilot",
+   "name": "GitHub Copilot",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.copilot/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "goose",
+   "name": "Goose",
+   "project_dir": ".goose/skills",
+   "global_dir": "~/.config/goose/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "grok",
+   "name": "Grok Build",
+   "project_dir": ".grok/skills",
+   "global_dir": "~/.grok/skills",
+   "universal": false,
+   "synca_agent": "grok"
+  },
+  {
+   "id": "hermes-agent",
+   "name": "Hermes Agent",
+   "project_dir": ".hermes/skills",
+   "global_dir": "~/.hermes/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "bob",
+   "name": "IBM Bob",
+   "project_dir": ".bob/skills",
+   "global_dir": "~/.bob/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "iflow-cli",
+   "name": "iFlow CLI",
+   "project_dir": ".iflow/skills",
+   "global_dir": "~/.iflow/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "inference-sh",
+   "name": "inference.sh",
+   "project_dir": ".inferencesh/skills",
+   "global_dir": "~/.inferencesh/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "jazz",
+   "name": "Jazz",
+   "project_dir": ".jazz/skills",
+   "global_dir": "~/.jazz/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "junie",
+   "name": "Junie",
+   "project_dir": ".junie/skills",
+   "global_dir": "~/.junie/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "kilo",
+   "name": "Kilo Code",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.kilo/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "kimchi",
+   "name": "Kimchi",
+   "project_dir": ".kimchi/skills",
+   "global_dir": "~/.config/kimchi/harness/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "kimi-code-cli",
+   "name": "Kimi Code CLI",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "kiro-cli",
+   "name": "Kiro CLI",
+   "project_dir": ".kiro/skills",
+   "global_dir": "~/.kiro/skills",
+   "universal": false,
+   "synca_agent": "kiro"
+  },
+  {
+   "id": "kode",
+   "name": "Kode",
+   "project_dir": ".kode/skills",
+   "global_dir": "~/.kode/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "lingma",
+   "name": "Lingma",
+   "project_dir": ".lingma/skills",
+   "global_dir": "~/.lingma/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "loaf",
+   "name": "Loaf",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "mcpjam",
+   "name": "MCPJam",
+   "project_dir": ".mcpjam/skills",
+   "global_dir": "~/.mcpjam/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "minimax-code",
+   "name": "MiniMax Code",
+   "project_dir": ".minimax/skills",
+   "global_dir": "~/.minimax/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "mistral-vibe",
+   "name": "Mistral Vibe",
+   "project_dir": ".vibe/skills",
+   "global_dir": "~/.vibe/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "moxby",
+   "name": "Moxby",
+   "project_dir": ".moxby/skills",
+   "global_dir": "~/.moxby/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "mux",
+   "name": "Mux",
+   "project_dir": ".mux/skills",
+   "global_dir": "~/.mux/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "neovate",
+   "name": "Neovate",
+   "project_dir": ".neovate/skills",
+   "global_dir": "~/.neovate/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "ona",
+   "name": "Ona",
+   "project_dir": ".ona/skills",
+   "global_dir": "~/.ona/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "openclaw",
+   "name": "OpenClaw",
+   "project_dir": "skills",
+   "global_dir": "~/.openclaw/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "opencode",
+   "name": "OpenCode",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.config/opencode/skills",
+   "universal": true,
+   "synca_agent": "opencode"
+  },
+  {
+   "id": "openhands",
+   "name": "OpenHands",
+   "project_dir": ".openhands/skills",
+   "global_dir": "~/.openhands/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "pi",
+   "name": "Pi",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "pochi",
+   "name": "Pochi",
+   "project_dir": ".pochi/skills",
+   "global_dir": "~/.pochi/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "posit-assistant",
+   "name": "Posit Assistant",
+   "project_dir": ".posit/assistant/skills",
+   "global_dir": "~/.posit/assistant/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "promptscript",
+   "name": "PromptScript",
+   "project_dir": ".agents/skills",
+   "global_dir": null,
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "qoder",
+   "name": "Qoder",
+   "project_dir": ".qoder/skills",
+   "global_dir": "~/.qoder/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "qoder-cn",
+   "name": "Qoder CN",
+   "project_dir": ".qoder/skills",
+   "global_dir": "~/.qoder-cn/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "qwen-code",
+   "name": "Qwen Code",
+   "project_dir": ".qwen/skills",
+   "global_dir": "~/.qwen/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "reasonix",
+   "name": "Reasonix",
+   "project_dir": ".reasonix/skills",
+   "global_dir": "~/.reasonix/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "replit",
+   "name": "Replit",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.config/agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "roo",
+   "name": "Roo Code",
+   "project_dir": ".roo/skills",
+   "global_dir": "~/.roo/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "rovodev",
+   "name": "Rovo Dev",
+   "project_dir": ".rovodev/skills",
+   "global_dir": "~/.rovodev/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "sarvam-code",
+   "name": "Sarvam Code",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "tabnine-cli",
+   "name": "Tabnine CLI",
+   "project_dir": ".tabnine/agent/skills",
+   "global_dir": "~/.tabnine/agent/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "terramind",
+   "name": "Terramind",
+   "project_dir": ".terramind/skills",
+   "global_dir": "~/.terramind/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "tinycloud",
+   "name": "Tinycloud",
+   "project_dir": ".tinycloud/skills",
+   "global_dir": "~/.tinycloud/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "trae",
+   "name": "Trae",
+   "project_dir": ".trae/skills",
+   "global_dir": "~/.trae/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "trae-cn",
+   "name": "Trae CN",
+   "project_dir": ".trae/skills",
+   "global_dir": "~/.trae-cn/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "universal",
+   "name": "Universal",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.config/agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "warp",
+   "name": "Warp",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "windsurf",
+   "name": "Windsurf",
+   "project_dir": ".windsurf/skills",
+   "global_dir": "~/.codeium/windsurf/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "zcode",
+   "name": "ZCode",
+   "project_dir": ".zcode/skills",
+   "global_dir": "~/.zcode/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "zed",
+   "name": "Zed",
+   "project_dir": ".agents/skills",
+   "global_dir": "~/.agents/skills",
+   "universal": true,
+   "synca_agent": null
+  },
+  {
+   "id": "zencoder",
+   "name": "Zencoder",
+   "project_dir": ".zencoder/skills",
+   "global_dir": "~/.zencoder/skills",
+   "universal": false,
+   "synca_agent": null
+  },
+  {
+   "id": "zenflow",
+   "name": "Zenflow",
+   "project_dir": ".zencoder/skills",
+   "global_dir": "~/.zencoder/skills",
+   "universal": false,
+   "synca_agent": null
+  }
+ ]
+}

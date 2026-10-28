@@ -1,0 +1,19 @@
+{
+  "query": "pdf",
+  "searchType": "fuzzy",
+  "count": 1,
+  "skills": [
+    {
+      "id": "anthropics/skills/pdf",
+      "source": "anthropics/skills",
+      "slug": "pdf",
+      "name": "pdf",
+      "installs": 218410,
+      "sourceType": "github",
+      "installUrl": "https://github.com/anthropics/skills",
+      "url": "https://skills.sh/anthropics/skills/pdf",
+      "official": false,
+      "duplicate": false
+    }
+  ]
+}

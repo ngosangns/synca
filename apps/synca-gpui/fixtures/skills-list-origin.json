@@ -1,0 +1,5 @@
+[
+  {"key":"find-skills","display_name":"find-skills","description":"Find skills","scope":"user","presence":[{"agent":"agents","path":"/h/.agents/skills/find-skills","is_symlink":false,"symlink_target":null,"content_hash":"h1"}],"mismatch":false,"origin":"remote","source":"vercel-labs/skills","source_type":"github"},
+  {"key":"mine","display_name":"mine","description":null,"scope":"user","presence":[],"mismatch":false,"origin":"local","source":null,"source_type":null},
+  {"key":"old-binary-row","display_name":"old","description":"no origin fields","scope":"user","presence":[],"mismatch":false}
+]

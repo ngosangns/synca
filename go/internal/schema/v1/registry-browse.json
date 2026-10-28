@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "view",
+    "page",
+    "perPage",
+    "total",
+    "hasMore",
+    "skills"
+  ],
+  "properties": {
+    "view": {
+      "enum": [
+        "all-time",
+        "trending",
+        "hot"
+      ]
+    },
+    "page": {
+      "type": "integer"
+    },
+    "perPage": {
+      "type": "integer"
+    },
+    "total": {
+      "type": "integer"
+    },
+    "hasMore": {
+      "type": "boolean"
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "slug",
+          "name",
+          "installs",
+          "sourceType",
+          "installUrl",
+          "url",
+          "official",
+          "duplicate"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "installs": {
+            "type": "integer"
+          },
+          "sourceType": {
+            "enum": [
+              "github",
+              "well-known"
+            ]
+          },
+          "installUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "official": {
+            "type": "boolean"
+          },
+          "duplicate": {
+            "type": "boolean"
+          },
+          "weeklyInstalls": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "installsYesterday": {
+            "type": "integer"
+          },
+          "change": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

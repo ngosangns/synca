@@ -1,0 +1,42 @@
+{
+  "query": "filesystem",
+  "cursor": "",
+  "count": 2,
+  "nextCursor": "io.github.modelcontextprotocol/filesystem:2025.7.1",
+  "servers": [
+    {
+      "name": "io.github.modelcontextprotocol/filesystem",
+      "title": "Filesystem",
+      "description": "Read and write files inside allowed directories",
+      "version": "2025.7.1",
+      "status": "active",
+      "isLatest": true,
+      "statusChangedAt": "2025-07-30T00:00:00Z",
+      "publishedAt": "2025-07-30T00:00:00Z",
+      "updatedAt": "2025-07-30T00:00:00Z",
+      "repositoryUrl": "https://github.com/modelcontextprotocol/servers",
+      "websiteUrl": "",
+      "packageTypes": [
+        "npm"
+      ],
+      "remoteTypes": []
+    },
+    {
+      "name": "ac.example/remote-files",
+      "title": "Remote files",
+      "description": "Filesystem access over HTTP",
+      "version": "0.4.0",
+      "status": "active",
+      "isLatest": false,
+      "statusChangedAt": "2025-06-01T00:00:00Z",
+      "publishedAt": "2025-06-01T00:00:00Z",
+      "updatedAt": "2025-06-02T00:00:00Z",
+      "repositoryUrl": "",
+      "websiteUrl": "https://example.ac/files",
+      "packageTypes": [],
+      "remoteTypes": [
+        "streamable-http"
+      ]
+    }
+  ]
+}

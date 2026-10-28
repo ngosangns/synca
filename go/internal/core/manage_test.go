@@ -156,16 +156,40 @@ func TestMcpFromCLIMapsRemoteAndLocalAliases(t *testing.T) {
 		t.Error("expected error for bogus transport")
 	}
 }
-func TestNormalizeSkillSource(t *testing.T) {
-	cases := map[string]struct{ remote, requested string }{
-		"vercel-labs/agent-skills":                               {"https://github.com/vercel-labs/agent-skills.git", ""},
-		"https://skills.sh/vercel-labs/agent-skills/find-skills": {"https://github.com/vercel-labs/agent-skills.git", "find-skills"},
-		"https://github.com/vercel-labs/agent-skills.git":        {"https://github.com/vercel-labs/agent-skills.git", ""},
+func TestParseSource(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		in                      string
+		url, source, typ, skill string
+		local                   bool
+		bad                     bool
+	}{
+		{in: "vercel-labs/agent-skills", url: "https://github.com/vercel-labs/agent-skills.git", source: "vercel-labs/agent-skills", typ: "github"},
+		{in: "vercel-labs/agent-skills@find-skills", url: "https://github.com/vercel-labs/agent-skills.git", source: "vercel-labs/agent-skills", typ: "github", skill: "find-skills"},
+		{in: "https://skills.sh/vercel-labs/agent-skills/find-skills", url: "https://github.com/vercel-labs/agent-skills.git", source: "vercel-labs/agent-skills", typ: "github", skill: "find-skills"},
+		{in: "https://skills.sh/vercel-labs/agent-skills", url: "https://github.com/vercel-labs/agent-skills.git", source: "vercel-labs/agent-skills", typ: "github"},
+		{in: "https://github.com/vercel-labs/agent-skills.git", url: "https://github.com/vercel-labs/agent-skills.git", source: "vercel-labs/agent-skills", typ: "github"},
+		{in: "git@github.com:o/r.git", url: "https://github.com/o/r.git", source: "o/r", typ: "github"},
+		{in: "https://gitlab.com/o/r.git", url: "https://gitlab.com/o/r.git", source: "https://gitlab.com/o/r.git", typ: "git"},
+		{in: dir, local: true},
+		{in: "https://skills.sh/p/some-pack", bad: true},
+		{in: "--upload-pack=evil", bad: true},
+		{in: "  ", bad: true},
 	}
-	for input, want := range cases {
-		remote, requested := normalizeSkillSource(input)
-		if remote != want.remote || requested != want.requested {
-			t.Errorf("normalizeSkillSource(%q) = %q, %q; want %q, %q", input, remote, requested, want.remote, want.requested)
+	for _, tc := range cases {
+		got, err := ParseSource(tc.in)
+		if tc.bad {
+			if err == nil {
+				t.Errorf("ParseSource(%q) accepted", tc.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("ParseSource(%q): %v", tc.in, err)
+			continue
+		}
+		if got.Local != tc.local || got.URL != tc.url || got.Source != tc.source || got.Type != tc.typ || got.Skill != tc.skill {
+			t.Errorf("ParseSource(%q) = %+v", tc.in, got)
 		}
 	}
 }
