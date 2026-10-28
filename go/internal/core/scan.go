@@ -43,6 +43,9 @@ func ScanSkills(scope Scope, cwd string) []SkillEntry {
 			continue
 		}
 		for _, name := range names {
+			if isSyncaTemp(name) {
+				continue
+			}
 			path := filepath.Join(root.Path, name)
 			linfo, lerr := os.Lstat(path)
 			isSymlink := lerr == nil && linfo.Mode()&os.ModeSymlink != 0
@@ -131,6 +134,12 @@ func ScanSkills(scope Scope, cwd string) []SkillEntry {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
+}
+
+// isSyncaTemp reports a staging or set-aside entry left by an interrupted
+// write. It is not a skill.
+func isSyncaTemp(name string) bool {
+	return strings.HasPrefix(name, ".synca-") || strings.Contains(name, ".synca-old-")
 }
 
 func agentOrder(name string) int {

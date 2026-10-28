@@ -4510,14 +4510,47 @@ fn plan_body(
     body.child(div().pt_2().child(output_block("plan-out", &clean)))
 }
 
+/// The CLI prints `null` for a missing description. `#[serde(default)]` only
+/// covers an absent field, so a null must map to the default by hand.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+/// Parses a `--json` list row by row. A row that does not fit is reported and
+/// skipped, so one odd entry never hides the rest of the list.
+fn parse_rows<T: serde::de::DeserializeOwned>(
+    what: &str,
+    stdout: &str,
+) -> Result<(Vec<T>, Vec<String>), serde_json::Error> {
+    let values: Vec<serde_json::Value> = serde_json::from_str(stdout)?;
+    let mut rows = Vec::with_capacity(values.len());
+    let mut skipped = Vec::new();
+    for value in values {
+        let name = value
+            .get("key")
+            .and_then(|key| key.as_str())
+            .unwrap_or("?")
+            .to_string();
+        match serde_json::from_value::<T>(value) {
+            Ok(row) => rows.push(row),
+            Err(error) => skipped.push(format!("Skipped {what} {name}: {error}")),
+        }
+    }
+    Ok((rows, skipped))
+}
+
 #[derive(Deserialize)]
 struct SkillRow {
     key: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     display_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     description: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     presence: Vec<SkillPresence>,
     #[serde(default)]
     mismatch: bool,
@@ -4693,8 +4726,9 @@ fn load_entries(
     let skills = ns_ui::run_tool("synca", &skills_args);
     let mcps = ns_ui::run_tool("synca", &mcp_args);
     let mut entries = Vec::new();
-    match serde_json::from_str::<Vec<SkillRow>>(&skills.stdout) {
-        Ok(rows) => {
+    match parse_rows::<SkillRow>("skill", &skills.stdout) {
+        Ok((rows, skipped)) => {
+            errors.extend(skipped);
             for row in rows {
                 let (links, hub_path, synced) = agent_links(row.presence.iter().map(|item| {
                     (
@@ -4733,8 +4767,9 @@ fn load_entries(
             }
         }
     }
-    match serde_json::from_str::<Vec<McpRow>>(&mcps.stdout) {
-        Ok(rows) => {
+    match parse_rows::<McpRow>("mcp", &mcps.stdout) {
+        Ok((rows, skipped)) => {
+            errors.extend(skipped);
             for row in rows {
                 let tokens = mcp_row_tokens(&row);
                 let (links, _, synced) = agent_links(row.presence.iter().map(|item| {
@@ -6049,6 +6084,23 @@ mod view_tests {
             shown,
             vec!["/s/references", "/s/references/a.md", "/s/SKILL.md"]
         );
+    }
+
+    #[test]
+    fn skill_list_accepts_null_description_and_skips_bad_rows() {
+        let json = r#"[
+            {"key":"a","display_name":"a","description":null,"presence":[],"mismatch":false},
+            {"key":"b","description":"ok","presence":[{"agent":"agents","path":"/p","content_hash":"h","symlink_target":null}]},
+            {"key":"c","presence":"not a list"}
+        ]"#;
+        let (rows, skipped) = parse_rows::<SkillRow>("skill", json).unwrap();
+        let keys: Vec<&str> = rows.iter().map(|row| row.key.as_str()).collect();
+        assert_eq!(keys, vec!["a", "b"]);
+        assert_eq!(rows[0].description, "");
+        assert_eq!(rows[1].description, "ok");
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].starts_with("Skipped skill c:"), "{skipped:?}");
+        assert!(parse_rows::<SkillRow>("skill", "not json").is_err());
     }
 
     #[test]

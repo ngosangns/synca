@@ -333,7 +333,7 @@ func runSkills(args []string) error {
 		}
 		plan, log, err := core.InstallSkill(scope, cwdOf(f), f.pos[0], filter, f.bools["dry-run"])
 		if err != nil {
-			return asCommandErr(jsonOut, err)
+			return applyFailed(jsonOut, log, err)
 		}
 		return finishManage(plan, log, f.bools["dry-run"], jsonOut)
 	case "remove":
@@ -368,7 +368,7 @@ func runSkills(args []string) error {
 		if !dry {
 			log, err = core.ApplyManagePlan(plan, nil)
 			if err != nil {
-				return asCommandErr(jsonOut, err)
+				return applyFailed(jsonOut, log, err)
 			}
 		}
 		return finishManage(plan, log, dry, jsonOut)
@@ -450,7 +450,7 @@ func runMcp(args []string) error {
 		}
 		plan, log, err := core.AddMcp(scope, cwdOf(f), f.pos[0], norm, filter, f.bools["dry-run"])
 		if err != nil {
-			return asCommandErr(jsonOut, err)
+			return applyFailed(jsonOut, log, err)
 		}
 		return finishManage(plan, log, f.bools["dry-run"], jsonOut)
 	case "remove":
@@ -477,7 +477,7 @@ func runMcp(args []string) error {
 		if !dry {
 			log, err = core.ApplyManagePlan(plan, nil)
 			if err != nil {
-				return asCommandErr(jsonOut, err)
+				return applyFailed(jsonOut, log, err)
 			}
 		}
 		return finishManage(plan, log, dry, jsonOut)
@@ -617,7 +617,7 @@ func runSync(args []string) error {
 		decisions := core.NewDecisions(policy)
 		log, err := core.ApplyPlan(plan, cwd, scope, decisions)
 		if err != nil {
-			return asCommandErr(jsonOut, err)
+			return applyFailed(jsonOut, log, err)
 		}
 		var hd *hooksPlanDocument
 		var hp *core.HooksPlan
@@ -655,7 +655,7 @@ func runSync(args []string) error {
 	}
 	log, err := core.ApplyPlan(plan, cwd, scope, decisions)
 	if err != nil {
-		return asCommandErr(false, err)
+		return applyFailed(false, log, err)
 	}
 	for _, line := range log {
 		fmt.Println(" ", line)

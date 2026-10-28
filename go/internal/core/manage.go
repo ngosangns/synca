@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -383,71 +384,88 @@ func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind, keep
 	return plan, nil
 }
 
-// ApplyManagePlan.
+// ApplyManagePlan runs every action. A failed action is logged and the rest
+// still run, except that a skill whose copy failed gets no link. All failures
+// are returned together with the log.
 func ApplyManagePlan(plan *ManagePlan, mcpPayload *McpNormalized) ([]string, error) {
 	var log []string
+	var failures []error
+	failedSkills := map[string]bool{}
 	for _, a := range plan.Actions {
-		switch a.Kind {
-		case "copy_skill":
-			if parent := filepath.Dir(a.To); parent != "" {
-				if err := os.MkdirAll(parent, 0o755); err != nil {
-					return log, err
-				}
-			}
-			if _, err := os.Lstat(a.To); err == nil {
-				if err := RemovePath(a.To); err != nil {
-					return log, err
-				}
-			}
-			if err := CopyDirRecursive(a.From, a.To); err != nil {
-				return log, err
-			}
-			log = append(log, fmt.Sprintf("copied skill %s: %s -> %s", a.SkillKey, a.From, a.To))
-		case "symlink_skill":
-			if err := ForceSymlink(a.Link, a.Target, a.Agent, &log); err != nil {
-				return log, err
-			}
-		case "unlink_skill":
-			if _, err := os.Lstat(a.Path); err == nil {
-				if err := RemovePath(a.Path); err != nil {
-					return log, err
-				}
-				log = append(log, fmt.Sprintf("unlinked skill %s from %s: %s", a.SkillKey, a.Agent, a.Path))
-			}
-		case "purge_canonical_skill":
-			if _, err := os.Lstat(a.Path); err == nil {
-				if err := RemovePath(a.Path); err != nil {
-					return log, err
-				}
-				log = append(log, fmt.Sprintf("purged canonical skill %s: %s", a.SkillKey, a.Path))
-			}
-		case "upsert_mcp_hub":
-			if mcpPayload == nil {
-				return log, fmt.Errorf("mcp payload required for UpsertMcpHub")
-			}
-			if err := UpsertMcpJSONHub(a.Hub, a.Server, mcpPayload); err != nil {
-				return log, err
-			}
-			log = append(log, fmt.Sprintf("hub upsert %s in %s", a.Server, a.Hub))
-		case "write_mcp_agent":
-			if mcpPayload == nil {
-				return log, fmt.Errorf("mcp payload required for WriteMcpAgent")
-			}
-			if err := WriteMcpToAgent(a.Path, agentByName(a.Agent), a.Server, mcpPayload); err != nil {
-				return log, err
-			}
-			log = append(log, fmt.Sprintf("wrote mcp %s -> %s (%s)", a.Server, a.Path, a.Agent))
-		case "remove_mcp_hub":
-			if err := removeMcpFromJSONHub(a.Hub, a.Server); err != nil {
-				return log, err
-			}
-			log = append(log, fmt.Sprintf("hub remove %s from %s", a.Server, a.Hub))
-		case "remove_mcp_agent":
-			if err := removeMcpFromAgent(a.Path, a.Agent, a.Server); err != nil {
-				return log, err
-			}
-			log = append(log, fmt.Sprintf("removed mcp %s from %s (%s)", a.Server, a.Path, a.Agent))
+		if a.SkillKey != "" && failedSkills[a.SkillKey] && a.Kind == "symlink_skill" {
+			log = append(log, fmt.Sprintf("skipped symlink_skill for skill %s: the copy failed", a.SkillKey))
+			continue
 		}
+		lines, err := applyManageAction(a, mcpPayload)
+		log = append(log, lines...)
+		if err != nil {
+			subject := a.SkillKey
+			if subject == "" {
+				subject = a.Server
+			}
+			if a.Kind == "copy_skill" {
+				failedSkills[a.SkillKey] = true
+			}
+			failures = append(failures, fmt.Errorf("%s %s: %w", a.Kind, subject, err))
+		}
+	}
+	if len(failures) > 0 {
+		return log, fmt.Errorf("%d of %d actions failed:\n%w", len(failures), len(plan.Actions), errors.Join(failures...))
+	}
+	return log, nil
+}
+
+func applyManageAction(a ManageAction, mcpPayload *McpNormalized) ([]string, error) {
+	var log []string
+	switch a.Kind {
+	case "copy_skill":
+		if err := replaceDirWithCopy(a.From, a.To); err != nil {
+			return log, err
+		}
+		log = append(log, fmt.Sprintf("copied skill %s: %s -> %s", a.SkillKey, a.From, a.To))
+	case "symlink_skill":
+		err := ForceSymlink(a.Link, a.Target, a.Agent, &log)
+		return log, err
+	case "unlink_skill":
+		if _, err := os.Lstat(a.Path); err == nil {
+			if err := RemovePath(a.Path); err != nil {
+				return log, err
+			}
+			log = append(log, fmt.Sprintf("unlinked skill %s from %s: %s", a.SkillKey, a.Agent, a.Path))
+		}
+	case "purge_canonical_skill":
+		if _, err := os.Lstat(a.Path); err == nil {
+			if err := RemovePath(a.Path); err != nil {
+				return log, err
+			}
+			log = append(log, fmt.Sprintf("purged canonical skill %s: %s", a.SkillKey, a.Path))
+		}
+	case "upsert_mcp_hub":
+		if mcpPayload == nil {
+			return log, fmt.Errorf("mcp payload required for UpsertMcpHub")
+		}
+		if err := UpsertMcpJSONHub(a.Hub, a.Server, mcpPayload); err != nil {
+			return log, err
+		}
+		log = append(log, fmt.Sprintf("hub upsert %s in %s", a.Server, a.Hub))
+	case "write_mcp_agent":
+		if mcpPayload == nil {
+			return log, fmt.Errorf("mcp payload required for WriteMcpAgent")
+		}
+		if err := WriteMcpToAgent(a.Path, agentByName(a.Agent), a.Server, mcpPayload); err != nil {
+			return log, err
+		}
+		log = append(log, fmt.Sprintf("wrote mcp %s -> %s (%s)", a.Server, a.Path, a.Agent))
+	case "remove_mcp_hub":
+		if err := removeMcpFromJSONHub(a.Hub, a.Server); err != nil {
+			return log, err
+		}
+		log = append(log, fmt.Sprintf("hub remove %s from %s", a.Server, a.Hub))
+	case "remove_mcp_agent":
+		if err := removeMcpFromAgent(a.Path, a.Agent, a.Server); err != nil {
+			return log, err
+		}
+		log = append(log, fmt.Sprintf("removed mcp %s from %s (%s)", a.Server, a.Path, a.Agent))
 	}
 	return log, nil
 }
@@ -496,14 +514,20 @@ func removeMcpFromAgent(path, agent, server string) error {
 	case "grok":
 		return removeMcpFromGrokToml(path, server)
 	case "opencode":
-		root := readJSONFile(path)
+		root, err := readJSONObject(path)
+		if err != nil {
+			return err
+		}
 		obj, ok := root["mcp"].(map[string]any)
 		if !ok || !deleteNormalized(obj, server) {
 			return nil
 		}
 		return writeJSONPretty(path, root)
 	default:
-		root := readJSONFile(path)
+		root, err := readJSONObject(path)
+		if err != nil {
+			return err
+		}
 		obj, ok := root["mcpServers"].(map[string]any)
 		if !ok || !deleteNormalized(obj, server) {
 			return nil
@@ -532,7 +556,7 @@ func removeMcpFromGrokToml(path, server string) error {
 	if err := toml.NewEncoder(&sb).Encode(root); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0o644)
+	return atomicWriteFile(path, []byte(sb.String()), 0o644)
 }
 
 // ---------- convenience wrappers ----------

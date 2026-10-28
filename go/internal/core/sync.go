@@ -2,7 +2,9 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -343,9 +345,14 @@ func findMcpAgent(p []McpPresence, a AgentKind) *McpPresence {
 	return nil
 }
 
-// ApplyPlan.
+// ApplyPlan runs every action. A failed action does not stop the others: it is
+// logged, later steps for the same skill are skipped (a link to a missing copy
+// would replace the agent's real directory), and all failures are returned
+// together with the log of what did happen.
 func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecisions) ([]string, error) {
 	var log []string
+	var failures []error
+	failedSkills := map[string]bool{}
 	skills := ScanSkills(scope, cwd)
 	skillByKey := map[string]*SkillEntry{}
 	for i := range skills {
@@ -378,85 +385,83 @@ func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecis
 		}
 	}
 
-	for _, a := range plan.Actions {
+	apply := func(a SyncAction) ([]string, error) {
+		var out []string
 		switch a.Kind {
 		case "conflict_skill":
-			switch decisions.ForSkill(a.SkillKey) {
-			case ConflictSkip:
-				log = append(log, fmt.Sprintf("conflict skipped (skill): %s", a.SkillKey))
-			default:
-				entry := skillByKey[a.SkillKey]
-				if entry == nil {
-					log = append(log, fmt.Sprintf("conflict skill missing from inventory: %s", a.SkillKey))
-					continue
-				}
-				lines, err := resolveSkillConflict(scope, cwd, entry, decisions.ForSkill(a.SkillKey))
-				if err != nil {
-					return log, err
-				}
-				log = append(log, lines...)
+			if decisions.ForSkill(a.SkillKey) == ConflictSkip {
+				return append(out, fmt.Sprintf("conflict skipped (skill): %s", a.SkillKey)), nil
 			}
+			entry := skillByKey[a.SkillKey]
+			if entry == nil {
+				return append(out, fmt.Sprintf("conflict skill missing from inventory: %s", a.SkillKey)), nil
+			}
+			return resolveSkillConflict(scope, cwd, entry, decisions.ForSkill(a.SkillKey))
 		case "conflict_mcp":
-			switch decisions.ForMcp(a.Server) {
-			case ConflictSkip:
-				log = append(log, fmt.Sprintf("conflict skipped (mcp): %s", a.Server))
-			default:
-				entry := mcpByKey[a.Server]
-				if entry == nil {
-					log = append(log, fmt.Sprintf("conflict mcp missing from inventory: %s", a.Server))
-					continue
-				}
-				lines, err := resolveMcpConflict(scope, cwd, entry, decisions.ForMcp(a.Server))
-				if err != nil {
-					return log, err
-				}
-				log = append(log, lines...)
+			if decisions.ForMcp(a.Server) == ConflictSkip {
+				return append(out, fmt.Sprintf("conflict skipped (mcp): %s", a.Server)), nil
 			}
+			entry := mcpByKey[a.Server]
+			if entry == nil {
+				return append(out, fmt.Sprintf("conflict mcp missing from inventory: %s", a.Server)), nil
+			}
+			return resolveMcpConflict(scope, cwd, entry, decisions.ForMcp(a.Server))
 		case "skip_same", "skip_mcp_same":
-			log = append(log, fmt.Sprintf("skip %s: %s", a.Path, a.Reason))
+			out = append(out, fmt.Sprintf("skip %s: %s", a.Path, a.Reason))
 		case "ensure_canonical_copy":
 			src := a.From
 			if s, ok := skillSource[a.SkillKey]; ok {
 				src = s
 			}
-			if parent := filepath.Dir(a.To); parent != "" {
-				if err := os.MkdirAll(parent, 0o755); err != nil {
-					return log, err
-				}
+			if err := replaceDirWithCopy(src, a.To); err != nil {
+				return out, err
 			}
-			if _, err := os.Lstat(a.To); err == nil {
-				if err := RemovePath(a.To); err != nil {
-					return log, err
-				}
-			}
-			if err := CopyDirRecursive(src, a.To); err != nil {
-				return log, err
-			}
-			log = append(log, fmt.Sprintf("copied %s -> %s", src, a.To))
+			out = append(out, fmt.Sprintf("copied %s -> %s", src, a.To))
 		case "symlink_skill":
-			if err := ForceSymlink(a.Link, a.Target, a.Agent, &log); err != nil {
-				return log, err
-			}
+			err := ForceSymlink(a.Link, a.Target, a.Agent, &out)
+			return out, err
 		case "ensure_mcp_hub":
 			norm := mcpSource[a.Server]
 			if norm == nil {
-				log = append(log, fmt.Sprintf("no source mcp for %s", a.Server))
-				continue
+				return append(out, fmt.Sprintf("no source mcp for %s", a.Server)), nil
 			}
 			if err := UpsertMcpJSONHub(a.Hub, a.Server, norm); err != nil {
-				return log, err
+				return out, err
 			}
-			log = append(log, fmt.Sprintf("hub upsert %s in %s", a.Server, a.Hub))
+			out = append(out, fmt.Sprintf("hub upsert %s in %s", a.Server, a.Hub))
 		case "write_mcp_server":
 			norm := mcpSource[a.Server]
 			if norm == nil {
-				continue
+				return out, nil
 			}
 			if err := WriteMcpToAgent(a.Path, agentByName(a.Agent), a.Server, norm); err != nil {
-				return log, err
+				return out, err
 			}
-			log = append(log, fmt.Sprintf("wrote mcp %s -> %s (%s)", a.Server, a.Path, a.Agent))
+			out = append(out, fmt.Sprintf("wrote mcp %s -> %s (%s)", a.Server, a.Path, a.Agent))
 		}
+		return out, nil
+	}
+
+	for _, a := range plan.Actions {
+		if a.SkillKey != "" && failedSkills[a.SkillKey] {
+			log = append(log, fmt.Sprintf("skipped %s for skill %s: an earlier step failed", a.Kind, a.SkillKey))
+			continue
+		}
+		lines, err := apply(a)
+		log = append(log, lines...)
+		if err != nil {
+			subject := a.SkillKey
+			if subject == "" {
+				subject = a.Server
+			}
+			if a.SkillKey != "" {
+				failedSkills[a.SkillKey] = true
+			}
+			failures = append(failures, fmt.Errorf("%s %s: %w", a.Kind, subject, err))
+		}
+	}
+	if len(failures) > 0 {
+		return log, fmt.Errorf("%d of %d actions failed:\n%w", len(failures), len(plan.Actions), errors.Join(failures...))
 	}
 	return log, nil
 }
@@ -535,12 +540,7 @@ func resolveSkillConflict(scope Scope, cwd string, entry *SkillEntry, policy Con
 	}
 	winnerIsCanon := canonSame(winnerReal, canonSkill) || winnerReal == canonSkill
 	if !winnerIsCanon {
-		if _, err := os.Lstat(canonSkill); err == nil {
-			if err := RemovePath(canonSkill); err != nil {
-				return log, err
-			}
-		}
-		if err := CopyDirRecursive(winnerReal, canonSkill); err != nil {
+		if err := replaceDirWithCopy(winnerReal, canonSkill); err != nil {
 			return log, err
 		}
 		log = append(log, fmt.Sprintf("conflict skill %s: keep %s → canonical %s", entry.Key, winner.Agent, canonSkill))
@@ -613,8 +613,10 @@ func ForceSymlink(link, target, agent string, log *[]string) error {
 	if rel, ok := pathdiffRelative(link, target); ok {
 		linkTarget = rel
 	}
-	if _, err := os.Lstat(link); err == nil {
-		if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+	// The old entry is moved aside, not deleted, until the new link exists.
+	aside := ""
+	if fi, err := os.Lstat(link); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
 			if tgt, err := os.Readlink(link); err == nil {
 				resolved := tgt
 				if !filepath.IsAbs(resolved) {
@@ -626,12 +628,22 @@ func ForceSymlink(link, target, agent string, log *[]string) error {
 				}
 			}
 		}
-		if err := RemovePath(link); err != nil {
+		aside = fmt.Sprintf("%s.synca-old-%d", link, os.Getpid())
+		_ = RemovePath(aside)
+		if err := os.Rename(link, aside); err != nil {
 			return err
 		}
 	}
 	if err := os.Symlink(linkTarget, link); err != nil {
+		if aside != "" {
+			_ = os.Rename(aside, link)
+		}
 		return err
+	}
+	if aside != "" {
+		if err := RemovePath(aside); err != nil {
+			*log = append(*log, fmt.Sprintf("warning: could not remove %s: %v", aside, err))
+		}
 	}
 	*log = append(*log, fmt.Sprintf("symlink %s -> %s (%s)", link, linkTarget, agent))
 	return nil
@@ -674,13 +686,15 @@ func splitComps(p string) []string {
 	return strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' })
 }
 
+// CopyDirRecursive copies regular files and directories. Any walk or IO error
+// is returned; a partial copy is never reported as success.
 func CopyDirRecursive(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
 	return filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
-			return nil
+			return err
 		}
 		rel, err := filepath.Rel(src, p)
 		if err != nil {
@@ -705,28 +719,57 @@ func CopyDirRecursive(src, dst string) error {
 	})
 }
 
+// replaceDirWithCopy copies src into a staging directory beside dst, then swaps
+// it in. If the copy fails, dst is untouched. The old dst is removed only after
+// the swap.
+func replaceDirWithCopy(src, dst string) error {
+	parent := filepath.Dir(dst)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	stage, err := os.MkdirTemp(parent, ".synca-stage-*")
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(stage, 0o755); err != nil {
+		_ = os.RemoveAll(stage)
+		return err
+	}
+	if err := CopyDirRecursive(src, stage); err != nil {
+		_ = os.RemoveAll(stage)
+		return err
+	}
+	aside := ""
+	if _, err := os.Lstat(dst); err == nil {
+		aside = stage + ".old"
+		if err := os.Rename(dst, aside); err != nil {
+			_ = os.RemoveAll(stage)
+			return err
+		}
+	}
+	if err := os.Rename(stage, dst); err != nil {
+		if aside != "" {
+			_ = os.Rename(aside, dst)
+		}
+		_ = os.RemoveAll(stage)
+		return err
+	}
+	if aside != "" {
+		_ = RemovePath(aside)
+	}
+	return nil
+}
+
 // ---------- MCP writers ----------
 
 func UpsertMcpJSONHub(hub, server string, norm *McpNormalized) error {
-	if parent := filepath.Dir(hub); parent != "" {
-		if err := os.MkdirAll(parent, 0o755); err != nil {
-			return err
-		}
+	root, err := readJSONObject(hub)
+	if err != nil {
+		return err
 	}
-	root := map[string]any{}
-	if st, err := os.Stat(hub); err == nil && !st.IsDir() {
-		text, err := os.ReadFile(hub)
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(text, &root); err != nil {
-			return err
-		}
-	}
-	servers, ok := root["mcpServers"].(map[string]any)
-	if !ok {
-		servers = map[string]any{}
-		root["mcpServers"] = servers
+	servers, err := objectMember(root, "mcpServers", hub)
+	if err != nil {
+		return err
 	}
 	obj := NormalizedToJSON(norm)
 	mergeEnv(obj, servers[server])
@@ -810,14 +853,44 @@ func NormalizedToJSON(norm *McpNormalized) map[string]any {
 	return obj
 }
 
-func readJSONFile(path string) map[string]any {
-	root := map[string]any{}
-	if st, err := os.Stat(path); err == nil && !st.IsDir() {
-		if text, err := os.ReadFile(path); err == nil {
-			_ = json.Unmarshal(text, &root)
+// readJSONObject reads a JSON object file. A missing or empty file is an empty
+// object. Any other failure is returned, so a caller never overwrites a config
+// it could not parse.
+func readJSONObject(path string) (map[string]any, error) {
+	text, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return map[string]any{}, nil
 		}
+		return nil, err
 	}
-	return root
+	if strings.TrimSpace(string(text)) == "" {
+		return map[string]any{}, nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(text, &root); err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON (comments are not supported); fix it or move it aside: %w", path, err)
+	}
+	if root == nil {
+		root = map[string]any{}
+	}
+	return root, nil
+}
+
+// objectMember returns root[key] as an object, creating it when absent. A
+// member of another type is an error, not something to replace.
+func objectMember(root map[string]any, key, path string) (map[string]any, error) {
+	v, present := root[key]
+	if !present || v == nil {
+		m := map[string]any{}
+		root[key] = m
+		return m, nil
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("%s: %q is not an object", path, key)
+	}
+	return m, nil
 }
 
 func writeJSONPretty(path string, v any) error {
@@ -825,15 +898,17 @@ func writeJSONPretty(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return atomicWriteFile(path, data, 0o644)
 }
 
 func writeMcpServersJSON(path, server string, norm *McpNormalized) error {
-	root := readJSONFile(path)
-	servers, ok := root["mcpServers"].(map[string]any)
-	if !ok {
-		servers = map[string]any{}
-		root["mcpServers"] = servers
+	root, err := readJSONObject(path)
+	if err != nil {
+		return err
+	}
+	servers, err := objectMember(root, "mcpServers", path)
+	if err != nil {
+		return err
 	}
 	obj := NormalizedToJSON(norm)
 	mergeEnv(obj, servers[server])
@@ -869,11 +944,13 @@ func opencodeEntry(norm *McpNormalized) map[string]any {
 }
 
 func writeOpencode(path, server string, norm *McpNormalized) error {
-	root := readJSONFile(path)
-	mcp, ok := root["mcp"].(map[string]any)
-	if !ok {
-		mcp = map[string]any{}
-		root["mcp"] = mcp
+	root, err := readJSONObject(path)
+	if err != nil {
+		return err
+	}
+	mcp, err := objectMember(root, "mcp", path)
+	if err != nil {
+		return err
 	}
 	obj := opencodeEntry(norm)
 	// preserve env (either key spelling)
@@ -910,14 +987,13 @@ func writeGrokToml(path, server string, norm *McpNormalized) error {
 		}
 		if strings.TrimSpace(string(text)) != "" {
 			if _, err := toml.Decode(string(text), &root); err != nil {
-				return err
+				return fmt.Errorf("%s is not valid TOML; fix it or move it aside: %w", path, err)
 			}
 		}
 	}
-	servers, ok := root["mcp_servers"].(map[string]any)
-	if !ok {
-		servers = map[string]any{}
-		root["mcp_servers"] = servers
+	servers, err := objectMember(root, "mcp_servers", path)
+	if err != nil {
+		return err
 	}
 
 	existingEnv := map[string]string{}
@@ -968,7 +1044,7 @@ func writeGrokToml(path, server string, norm *McpNormalized) error {
 	if err := toml.NewEncoder(&sb).Encode(root); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(sb.String()), 0o644)
+	return atomicWriteFile(path, []byte(sb.String()), 0o644)
 }
 
 func MergePlans(a, b *SyncPlan) *SyncPlan {

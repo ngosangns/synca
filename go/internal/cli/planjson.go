@@ -2,6 +2,8 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ngosangns/synca/go/internal/core"
@@ -109,6 +111,16 @@ func finishManage(plan *core.ManagePlan, log []string, dry, jsonOut bool) error 
 	}
 	printManagePlan(plan)
 	return printPlanResult(log, dry, "")
+}
+
+// applyFailed reports an apply that failed part way. The log of what was done
+// and what failed goes to stderr, so stdout keeps its single error document in
+// JSON mode.
+func applyFailed(jsonOut bool, log []string, err error) error {
+	for _, line := range log {
+		fmt.Fprintln(os.Stderr, " ", line)
+	}
+	return asCommandErr(jsonOut, err)
 }
 
 // asCommandErr maps a core error onto a contract exit code.

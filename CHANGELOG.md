@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **macOS window:** a skill with no description (`"description": null` in `skills list --json`) no longer makes the whole list fail with "Failed to load skills". Rows are parsed one by one, and a row that does not fit is skipped with a toast that names it.
+- **Fault tolerance:** a sync or manage apply no longer stops at the first failed action. It runs the rest, skips later steps for a skill whose copy failed, and exits 5 with every failure listed (the log of what was done goes to stderr). Before, one bad agent config left later agents unsynced and hid what had already been written.
+- **Config safety:** MCP writers refuse a config that does not parse (JSON with comments, truncated JSON, a `mcpServers`/`mcp`/`mcp_servers` member of the wrong type, broken TOML) and leave it byte-identical. Before, they replaced it with a file holding only the new server. Writes are atomic and keep a symlinked config (dotfile managers) as a symlink.
+- **Skill copies:** copying a skill stages it beside the destination and swaps it in, so a failed copy keeps the old directory. A copy error is no longer ignored (unreadable files were skipped silently). Replacing a directory with a symlink moves the old one aside until the link exists and restores it on failure. Leftovers of an interrupted write (`.synca-*`, `*.synca-old-*`) are not listed as skills.
 - **macOS window:** the add-workspace control is a raised block. The workspace menu has no card padding; each row has its own padding.
 - **macOS window:** a wheel over the file tree, the file preview, or the workspace menu moves that scroller first. At its end, the same wheel moves the parent list.
 - **Docs:** new `docs/hooks.md` reference (hub schema, event and tool support per agent, trust, sync actions, lossy codes, JSON shapes, backup/lock paths). README now documents the full hooks flag set, JSON documents, per-agent hook files, and the `--strict`/`--no-hooks` rules; `ARCHITECTURE.md` and `REQUIREMENTS.md` were refreshed for the v0.3.0 command surface.
