@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **macOS window:** the add-workspace control is a raised block. The workspace menu has no card padding; each row has its own padding.
+- **macOS window:** a wheel over the file tree, the file preview, or the workspace menu moves that scroller first. At its end, the same wheel moves the parent list.
 - **Docs:** new `docs/hooks.md` reference (hub schema, event and tool support per agent, trust, sync actions, lossy codes, JSON shapes, backup/lock paths). README now documents the full hooks flag set, JSON documents, per-agent hook files, and the `--strict`/`--no-hooks` rules; `ARCHITECTURE.md` and `REQUIREMENTS.md` were refreshed for the v0.3.0 command surface.
 - **Skill:** `skills/synca/SKILL.md` covers hook ids, add flags, trust hashes, per-agent support, conflict reasons, and accurate untrust semantics. The embedded copy is unchanged in kind and still byte-identical.
 - **Skill scripts:** the bundled skill now ships `scripts/status.sh` (read-only version/doctor/skill/MCP/hook summary), `scripts/plan.sh` (read-only dry-run summary) and `scripts/hook-scaffold.sh` (creates a hook script and prints the add/trust commands; never edits the hub or trusts).

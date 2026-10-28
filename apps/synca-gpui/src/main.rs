@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::time::Duration;
 
-use ely_gpui_component::buttons::{Button, ButtonVariant};
+use ely_gpui_component::buttons::{Button, ButtonVariant, IconButton};
 use ely_gpui_component::feedback::{EmptyState, InlineMessage, ToastViewport, Toaster};
 use ely_gpui_component::forms::{CheckState, Checkbox, Input, InputEvent, TextInput};
 use ely_gpui_component::lists::{Tree, TreeNode};
@@ -26,15 +26,14 @@ use ely_gpui_component::typography::SelectableText;
 use gpui::{
     App, Context, ElementId, Entity, FocusHandle, FontWeight, IntoElement, KeyBinding, Menu,
     MenuItem, MouseButton, Point, Render, ScrollHandle, SharedString, Subscription, Window, div,
-    prelude::*, px,
+    prelude::*, px, rems,
 };
 use ns_ui::{
     Ask, IconTone, SIDEBAR_INSET, SIDEBAR_ROW_H, SIDEBAR_SECTION_H, SidebarKey, Tone, ask_banner,
-    button, chip, chrome_busy_wide, field, icon, icon_button, icon_button_md, loading_pane,
-    outline_button, quiet_button, quiet_button_md, section_label, segmented, side_column,
-    sidebar_button, sidebar_empty, sidebar_keys, sidebar_reveal, sidebar_row,
-    sidebar_scroll_tracked, sidebar_step, skeleton_list, tab_strip, tab_strip_equal, text_field,
-    theme, working_row,
+    button, chip, chrome_busy_wide, field, icon, icon_button, loading_pane, outline_button,
+    quiet_button, quiet_button_md, section_label, segmented, side_column, sidebar_button,
+    sidebar_empty, sidebar_keys, sidebar_reveal, sidebar_row, sidebar_scroll_tracked, sidebar_step,
+    skeleton_list, tab_strip, tab_strip_equal, text_field, theme, working_row,
 };
 use serde::Deserialize;
 
@@ -627,6 +626,10 @@ struct SyncaWindow {
     file_path: String,
     /// Native scroll of the file preview inside the fixed FILES section.
     file_scroll: ScrollHandle,
+    /// Native scroll of the workspace menu and the file tree. Each chains to
+    /// its parent scroller once it is at the end.
+    workspace_scroll: ScrollHandle,
+    tree_scroll: ScrollHandle,
     /// The open file's markdown view, keyed by path and body so unrelated
     /// renders keep the selection.
     markdown: Option<MarkdownCache>,
@@ -780,6 +783,8 @@ impl SyncaWindow {
             file_preview: String::new(),
             file_path: String::new(),
             file_scroll: ScrollHandle::new(),
+            workspace_scroll: ScrollHandle::new(),
+            tree_scroll: ScrollHandle::new(),
             markdown: None,
             source: String::new(),
             skill_source_kind: SkillSourceKind::Local,
@@ -1738,6 +1743,7 @@ impl SyncaWindow {
         self.file_preview.clear();
         self.file_path.clear();
         self.file_scroll = ScrollHandle::new();
+        self.tree_scroll = ScrollHandle::new();
         self.markdown = None;
     }
 
@@ -2574,28 +2580,41 @@ fn workspace_trigger(window: &mut SyncaWindow, cx: &mut Context<SyncaWindow>) ->
                     },
                 )),
         )
-        .child(icon_button_md(
-            "add-workspace",
-            "folder-plus",
-            "Add a workspace folder",
-            IconTone::Quiet,
-            cx.listener(|_this, _, _, cx| {
-                cx.spawn(async move |this, cx| {
-                    let picked = cx
-                        .background_spawn(async {
-                            ns_ui::choose_folder("Choose a workspace folder")
+        .child({
+            let colors = theme();
+            div()
+                .id("add-workspace")
+                .size(px(28.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_md()
+                .bg(colors.raised)
+                .border_1()
+                .border_color(colors.border)
+                .cursor_pointer()
+                .tab_index(0)
+                .hover(|style| style.bg(colors.hover))
+                .tooltip(Tooltip::text("Add a workspace folder"))
+                .child(icon("folder-plus"))
+                .on_click(cx.listener(|_this, _, _, cx| {
+                    cx.spawn(async move |this, cx| {
+                        let picked = cx
+                            .background_spawn(async {
+                                ns_ui::choose_folder("Choose a workspace folder")
+                            })
+                            .await;
+                        this.update(cx, |this, cx| {
+                            if let Some(path) = picked {
+                                this.add_project(path.trim_end_matches('/').to_string(), cx);
+                            }
                         })
-                        .await;
-                    this.update(cx, |this, cx| {
-                        if let Some(path) = picked {
-                            this.add_project(path.trim_end_matches('/').to_string(), cx);
-                        }
+                        .ok();
                     })
-                    .ok();
-                })
-                .detach();
-            }),
-        ))
+                    .detach();
+                }))
+        })
 }
 
 /// The popover's close run, filled in when the panel is built.
@@ -2605,9 +2624,8 @@ type CloseSlot = Rc<RefCell<Option<Rc<dyn Fn(&mut Window, &mut App)>>>>;
 /// with a remove control at its end. The rows read the window through `entity`,
 /// so nothing about the panel is built while it is closed.
 ///
-/// Ely's `ListItem` is a large control (`px_3`, `py_1p5`, large min height) and
-/// the popover already wraps this panel in `p_3`. These rows match the sidebar
-/// instead, so the menu is not a padded card of tall rows.
+/// Ely wraps this panel in `p_3`. The negative margin cancels that padding, so
+/// the card has none. Each row carries its own padding.
 fn workspace_panel(
     entity: &Entity<SyncaWindow>,
     close: CloseSlot,
@@ -2618,19 +2636,27 @@ fn workspace_panel(
         (window.projects.clone(), window.active_project.clone())
     };
     let theme = theme();
+    let scroll = entity.read(app).workspace_scroll.clone();
     let mut panel = div()
         .id("workspace-panel")
         .flex()
         .flex_col()
-        .gap(px(2.))
+        .m(rems(-0.75))
+        .rounded_lg()
+        .overflow_x_hidden()
+        .overflow_y_scroll()
+        .track_scroll(&scroll)
+        .on_scroll_wheel({
+            let scroll = scroll.clone();
+            move |event, window, cx| contain_scroll(&scroll, event, window, cx)
+        })
         .min_w(px(240.))
-        .max_h(px(280.))
-        .overflow_y_scroll();
+        .max_h(px(280.));
     if projects.is_empty() {
         panel = panel.child(
             div()
-                .px(px(8.))
-                .py(px(4.))
+                .px_3()
+                .py_2()
                 .text_xs()
                 .text_color(theme.muted)
                 .child("No workspaces"),
@@ -2664,8 +2690,7 @@ fn workspace_row(
     div()
         .id(SharedString::from(format!("ws-{index}")))
         .h(px(32.))
-        .pl(px(8.))
-        .pr(px(2.))
+        .px_3()
         .flex()
         .items_center()
         .gap(px(8.))
@@ -3094,6 +3119,7 @@ fn list_body(
                     &window.file_path,
                     &window.file_preview,
                     &window.file_scroll,
+                    &window.tree_scroll,
                     &mut window.markdown,
                     cx,
                 ))),
@@ -3164,16 +3190,19 @@ fn agents_card(
             .child({
                 let (key, agent, agent_label) =
                     (entry.key.clone(), link.agent.clone(), link.agent.clone());
-                icon_button(
+                IconButton::new(
                     SharedString::from(format!("agent-menu-{index}")),
-                    "ellipsis",
-                    format!("Actions for {agent_label}"),
-                    IconTone::Quiet,
-                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                    IconName::EllipsisVertical,
+                )
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .tooltip(format!("Actions for {agent_label}"))
+                .on_click(cx.listener(
+                    move |this, event: &gpui::ClickEvent, _, cx| {
                         let at = event.position();
                         this.open_agent_menu(key.clone(), agent.clone(), at, cx);
-                    }),
-                )
+                    },
+                ))
             });
         let (host_key, host_agent) = (entry.key.clone(), link.agent.clone());
         let host = div()
@@ -3668,6 +3697,7 @@ fn skill_files(
     current: &str,
     preview: &str,
     file_scroll: &ScrollHandle,
+    tree_scroll: &ScrollHandle,
     markdown: &mut Option<MarkdownCache>,
     cx: &mut Context<SyncaWindow>,
 ) -> impl IntoElement + use<> {
@@ -3699,7 +3729,11 @@ fn skill_files(
     // them side by side, and the tree grows with the pane.
     let layout = detail_layout(detail_content_width());
     let stacked = layout.files_stacked;
+    let folders = open_folders(root, &open, items);
+    let visible = visible_tree_paths(items, &folders);
+    let tree_scroll = tree_scroll.clone();
     let tree = div()
+        .id("skill-tree-scroll")
         .when(stacked, |tree| tree.w_full().h(px(layout.tree_h)))
         .when(!stacked, |tree| tree.w(px(layout.tree_w)).h_full())
         .flex_shrink_0()
@@ -3708,11 +3742,18 @@ fn skill_files(
         .border_color(theme.border)
         .bg(theme.panel)
         .py_1()
+        .overflow_y_scroll()
+        .track_scroll(&tree_scroll)
+        .on_scroll_wheel({
+            let handle = tree_scroll.clone();
+            move |event, window, cx| contain_scroll(&handle, event, window, cx)
+        })
         .child(if items.is_empty() {
             InlineMessage::new(Severity::Info, "No files").into_any_element()
         } else {
             Tree::new("skill-tree", nodes)
-                .open(open_folders(root, &open, items))
+                .h(px(visible.len() as f32 * TREE_ROW_H))
+                .open(folders.clone())
                 .selected([open.clone()])
                 .on_select({
                     let window = cx.entity().downgrade();
@@ -3721,10 +3762,16 @@ fn skill_files(
                         .filter(|item| item.dir)
                         .map(|item| item.path.clone())
                         .collect();
+                    let paths: Vec<String> = visible.into_iter().map(str::to_string).collect();
+                    let scroll = tree_scroll.clone();
                     move |keys, _, cx| {
                         let Some(path) = keys.first().map(|key| key.to_string()) else {
                             return;
                         };
+                        if let Some(index) = paths.iter().position(|item| item == &path) {
+                            scroll
+                                .set_offset(gpui::point(px(0.), px(-(index as f32) * TREE_ROW_H)));
+                        }
                         if folders.contains(&path) {
                             return;
                         }
@@ -3738,7 +3785,6 @@ fn skill_files(
                             .ok();
                     }
                 })
-                .h_full()
                 .into_any_element()
         });
     div()
@@ -3789,9 +3835,75 @@ fn skill_files(
                         .min_h(px(0.))
                         .overflow_y_scroll()
                         .track_scroll(file_scroll)
+                        .on_scroll_wheel({
+                            let handle = file_scroll.clone();
+                            move |event, window, cx| contain_scroll(&handle, event, window, cx)
+                        })
                         .child(file_body(&open, &content, markdown, cx)),
                 ),
         )
+}
+
+/// Stop a wheel only while the nested scroller can still move that way.
+///
+/// GPUI applies the delta first. This bubble listener then keeps the event
+/// when the scroller was not already at that end, so the parent stays still.
+/// At the end, the event continues and the parent scroller moves.
+fn contain_scroll(
+    handle: &ScrollHandle,
+    event: &gpui::ScrollWheelEvent,
+    window: &Window,
+    cx: &mut App,
+) {
+    let delta = event.delta.pixel_delta(window.line_height());
+    let offset = handle.offset();
+    let max = handle.max_offset();
+    let (offset, max, delta) = if delta.y.abs() >= delta.x.abs() {
+        (f32::from(offset.y), f32::from(max.y), f32::from(delta.y))
+    } else {
+        (f32::from(offset.x), f32::from(max.x), f32::from(delta.x))
+    };
+    if wheel_stays(offset, max, delta) {
+        cx.stop_propagation();
+    }
+}
+
+/// Whether a nested scroller should keep this wheel. `offset` is the position
+/// after GPUI applied `delta`. Offset is 0 at the start and `-max` at the end.
+/// A negative delta moves toward the end.
+fn wheel_stays(offset: f32, max: f32, delta: f32) -> bool {
+    if delta == 0. || max <= 0. {
+        return false;
+    }
+    let before = offset - delta;
+    if delta < 0. {
+        before > -max + 0.5
+    } else {
+        before < -0.5
+    }
+}
+
+/// Ely tree rows use the medium control height at standard density.
+const TREE_ROW_H: f32 = 28.;
+
+/// Paths currently shown in the file tree, in row order. A row is shown when
+/// every folder above it is open.
+fn visible_tree_paths<'a>(items: &'a [TreeItem], open: &[String]) -> Vec<&'a str> {
+    let open: std::collections::HashSet<&str> = open.iter().map(String::as_str).collect();
+    let mut ancestors: Vec<&str> = Vec::new();
+    let mut shown = Vec::new();
+    for item in items {
+        while ancestors.len() > item.depth as usize {
+            ancestors.pop();
+        }
+        if ancestors.iter().all(|path| open.contains(path)) {
+            shown.push(item.path.as_str());
+        }
+        if item.dir {
+            ancestors.push(item.path.as_str());
+        }
+    }
+    shown
 }
 
 fn activity_body(
@@ -5911,6 +6023,32 @@ mod view_tests {
         let open = open_folders("/s", "/s/references/deep/a.md", &items);
         assert!(open.contains(&"/s/references".to_string()));
         assert!(open.contains(&"/s/references/deep".to_string()));
+    }
+
+    #[test]
+    fn wheel_stays_until_the_end_then_lets_the_parent_move() {
+        assert!(wheel_stays(-30., 100., -20.), "room toward the end");
+        assert!(!wheel_stays(-120., 100., -20.), "already at the end");
+        assert!(wheel_stays(-20., 100., 20.), "room toward the start");
+        assert!(!wheel_stays(20., 100., 20.), "already at the start");
+        assert!(!wheel_stays(-20., 0., -20.), "a section that cannot scroll");
+        assert!(!wheel_stays(0., 100., 0.), "no wheel delta");
+    }
+
+    #[test]
+    fn closed_folder_hides_its_children() {
+        let items = vec![
+            item("references", "/s/references", true, 0),
+            item("a.md", "/s/references/a.md", false, 1),
+            item("SKILL.md", "/s/SKILL.md", false, 0),
+        ];
+        let shown = visible_tree_paths(&items, &[]);
+        assert_eq!(shown, vec!["/s/references", "/s/SKILL.md"]);
+        let shown = visible_tree_paths(&items, &["/s/references".to_string()]);
+        assert_eq!(
+            shown,
+            vec!["/s/references", "/s/references/a.md", "/s/SKILL.md"]
+        );
     }
 
     #[test]
