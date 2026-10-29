@@ -14,7 +14,7 @@ import (
 
 // Version is the release the updater compares with GitHub tags. It matches the
 // repo-root VERSION file; release tooling refuses a tag that does not.
-const Version = "0.4.0"
+const Version = "0.5.0"
 
 // ---------- Scope ----------
 

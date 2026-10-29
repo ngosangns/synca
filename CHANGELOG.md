@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- **mcp probe:** `synca mcp probe [names...] [--scope --cwd --timeout SECONDS --json]` connects to each server (initialize, then tools/list, resources/list, prompts/list — streamable HTTP, legacy SSE and stdio) and estimates its context cost: every definition serialized as JSON, bytes / 4. Results are cached in `.mcp-probe.json` (user: `$XDG_STATE_HOME/synca/`, else `~/.agents/`; project: beside `.mcp.json`) keyed by a config fingerprint, so `mcp list` serves them until the config changes; `mcp list --json` gains `tokens`, `probed_at`, `probe_ok` and `probe_error`. A failed server is a row in the output, not a command failure; disabled servers are skipped; four servers run at once; each gets `--timeout` seconds (default 15). The cache holds measurements only — no env, header or URL secret values.
+- **macOS window:** the MCP Tokens column shows the probe measurement when one exists (tooltip says "Measured from the server" with how long ago), falls back to the config estimate with the probe error when a probe failed, and a row menu action "Probe tokens" (one or all) runs the probe from the app.
+- **Sidebar tables:** the skills and MCP tables sort independently — click a column head (Name, Origin, Sync, Tokens) to sort ascending, again for descending, a third time restores load order; Origin orders local before remote. MCP servers without a measured token count are probed once after each load, so every enabled server shows a real number.
+- **Provider display:** Settings has one merged Providers list where every agent has an on/off toggle — no read-only rows and no skills.sh branding. The six agents the CLI syncs to are on by default (saved in `synca.disabledProviders`) and keep Delete data; the other rows are off by default and save their choice in `synca.enabledProviders` until the CLI learns to sync to them. The built-in rows render even before the list loads or when the CLI fails. Saved defaults arrays with bare items (agent ids) load back — `defaults read` quotes only values that need it.
+
 ## 0.4.0
 
 - **MCP transports:** a `remote` entry whose URL ends in `/sse` normalizes to `sse` everywhere (before it became `http`, so a server installed with `--transport sse` read back as `http` from OpenCode, mismatched forever, and `sync mcp` skipped it as a permanent conflict).
