@@ -1,0 +1,34 @@
+[
+  {
+    "key": "context7",
+    "ok": true,
+    "transport": "http",
+    "server": "context7",
+    "version": "1.2.3",
+    "protocol": "2025-06-18",
+    "tools": 2,
+    "resources": 1,
+    "prompts": 0,
+    "tokens": 631
+  },
+  {
+    "key": "broken",
+    "ok": false,
+    "error": "https://example.com/mcp is unreachable: connection refused",
+    "transport": "http",
+    "tools": 0,
+    "resources": 0,
+    "prompts": 0,
+    "tokens": 0
+  },
+  {
+    "key": "disabled",
+    "ok": false,
+    "skipped": true,
+    "error": "server is disabled",
+    "tools": 0,
+    "resources": 0,
+    "prompts": 0,
+    "tokens": 0
+  }
+]

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One row per probed MCP server. A failed or skipped server is a row, not a command failure.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["key", "ok", "tools", "resources", "prompts", "tokens"],
+    "properties": {
+      "key": {"type": "string"},
+      "ok": {"type": "boolean"},
+      "skipped": {
+        "description": "True when the server was not contacted: no config, or disabled.",
+        "type": "boolean"
+      },
+      "error": {
+        "description": "Why the probe failed or was skipped. Empty on success.",
+        "type": "string"
+      },
+      "transport": {"type": "string"},
+      "server": {
+        "description": "serverInfo.name from the initialize handshake.",
+        "type": "string"
+      },
+      "version": {
+        "description": "serverInfo.version from the initialize handshake.",
+        "type": "string"
+      },
+      "protocol": {
+        "description": "The negotiated MCP protocol version.",
+        "type": "string"
+      },
+      "tools": {"type": "integer"},
+      "resources": {"type": "integer"},
+      "prompts": {"type": "integer"},
+      "tokens": {
+        "description": "Estimated context cost: every definition serialized as JSON, bytes / 4.",
+        "type": "integer"
+      }
+    }
+  }
+}

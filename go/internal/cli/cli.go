@@ -195,7 +195,7 @@ func printHelp() {
 
 USAGE:
   synca skills <list|install|remove> [flags]
-  synca mcp <list|add|remove|search|browse|info|install> [flags]
+  synca mcp <list|add|remove|update|probe|search|browse|info|install> [flags]
   synca hooks <list|add|remove|trust|untrust|sync> [flags]
   synca sync <skills|mcp|hooks|all> [flags]
   synca provider clear <name> [--scope --cwd --yes --dry-run]
@@ -258,6 +258,7 @@ func printMcpHelp() {
   synca mcp add <name> [--transport --command --url --env KEY=VAL --header NAME=VAL --enabled --scope --cwd --agents --dry-run --json]
   synca mcp remove <name> [--scope --cwd --agents --keep-hub --yes --dry-run --json]
   synca mcp update [names...] [--version V] [--scope --cwd --agents --dry-run --json]
+  synca mcp probe [names...] [--scope --cwd --timeout SECONDS --json]
   synca mcp search <query> [--limit N] [--cursor C] [--json]
   synca mcp browse [--limit N] [--cursor C] [--json]
   synca mcp info <name> [--version V] [--json]
@@ -295,6 +296,17 @@ and MCP_REGISTRY_TOKEN adds a Bearer token for a subregistry.
 mcp update re-reads the registry for servers whose origin was recorded by
 mcp install, keeps their env values, and rewrites changed servers. Servers
 without a recorded registry source are skipped with a note.
+
+mcp probe connects to each server (initialize, then tools/list, resources/list
+and prompts/list) and estimates its context cost: every definition serialized
+as JSON, bytes / 4. Names are optional; with none, every server in the scope
+is probed. Streamable HTTP, legacy SSE and stdio transports are supported —
+stdio commands run locally. Disabled servers are skipped. Each server gets
+--timeout seconds (default 15) and four servers run at once. Results are
+cached in .mcp-probe.json keyed by a config fingerprint, so 'mcp list' serves
+them until the config changes. A failed server is a row in the output, not a
+command failure. The cache holds measurements only — no env, header or URL
+secret values.
 
 JSON masks every env and header value as •••••• unless --reveal. A URL password
 and a secret-looking arg (--token=…, an Authorization header) are masked the
@@ -424,7 +436,7 @@ func runSkills(args []string) error {
 
 func runMcp(args []string) error {
 	if len(args) == 0 {
-		return failUsage(jsonIn(args), "usage: synca mcp <list|add|remove|update|search|browse|info|install>", "see: synca mcp --help")
+		return failUsage(jsonIn(args), "usage: synca mcp <list|add|remove|update|probe|search|browse|info|install>", "see: synca mcp --help")
 	}
 	if isHelp(args[0]) || (len(args) > 1 && hasHelp(args[1:])) {
 		printMcpHelp()
@@ -434,7 +446,7 @@ func runMcp(args []string) error {
 	f := parseFlags(rest, mcpBoolFlags())
 	jsonOut := f.bools["json"]
 	switch sub {
-	case "list", "add", "remove", "update", "search", "browse", "info", "install":
+	case "list", "add", "remove", "update", "probe", "search", "browse", "info", "install":
 	default:
 		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
 	}
@@ -452,6 +464,8 @@ func runMcp(args []string) error {
 		return runMcpInstall(f, jsonOut)
 	case "update":
 		return runMcpUpdate(f, jsonOut)
+	case "probe":
+		return runMcpProbe(f, jsonOut)
 	}
 	scope, err := scopeOf(f)
 	if err != nil {
@@ -460,6 +474,9 @@ func runMcp(args []string) error {
 	switch sub {
 	case "list":
 		inv := core.ScanAll(scope, cwdOf(f))
+		if cache, cacheErr := core.ReadMcpProbeCache(core.McpProbeCachePath(scope, cwdOf(f))); cacheErr == nil {
+			core.MergeMcpProbe(inv.Mcps, cache)
+		}
 		entries := inv.Mcps
 		if !f.bools["reveal"] {
 			entries = core.MaskMcpEntries(entries)
@@ -562,6 +579,8 @@ func mcpAllow(sub string) map[string]bool {
 		return allow("scope", "cwd", "agents", "keep-hub", "yes", "dry-run", "json", "help")
 	case "update":
 		return allow("scope", "cwd", "agents", "version", "dry-run", "json", "help")
+	case "probe":
+		return allow("scope", "cwd", "timeout", "json", "help")
 	case "search", "browse":
 		return allow("limit", "cursor", "json", "help")
 	case "info":

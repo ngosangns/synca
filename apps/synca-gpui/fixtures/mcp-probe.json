@@ -1,0 +1,34 @@
+[
+  {
+    "key": "context7",
+    "ok": true,
+    "transport": "http",
+    "server": "Context7",
+    "version": "1.2.3",
+    "protocol": "2025-06-18",
+    "tools": 2,
+    "resources": 0,
+    "prompts": 0,
+    "tokens": 1304
+  },
+  {
+    "key": "dead",
+    "ok": false,
+    "error": "connection refused",
+    "transport": "http",
+    "tools": 0,
+    "resources": 0,
+    "prompts": 0,
+    "tokens": 0
+  },
+  {
+    "key": "off",
+    "ok": false,
+    "skipped": true,
+    "error": "server is disabled",
+    "tools": 0,
+    "resources": 0,
+    "prompts": 0,
+    "tokens": 0
+  }
+]

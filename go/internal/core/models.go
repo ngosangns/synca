@@ -140,6 +140,12 @@ type McpEntry struct {
 	Source        *string `json:"source"`
 	SourceType    *string `json:"source_type"`
 	SourceVersion *string `json:"source_version"`
+	// Live probe results from `synca mcp probe`. nil when the server was
+	// never probed or the cached probe predates the current config.
+	Tokens     *int    `json:"tokens,omitempty"`
+	ProbedAt   *string `json:"probed_at,omitempty"`
+	ProbeOK    *bool   `json:"probe_ok,omitempty"`
+	ProbeError *string `json:"probe_error,omitempty"`
 }
 
 type Inventory struct {

@@ -24,6 +24,7 @@
         "mcp list",
         "mcp add",
         "mcp remove",
+        "mcp probe",
         "mcp search",
         "mcp browse",
         "mcp info",

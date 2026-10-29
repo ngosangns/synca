@@ -152,6 +152,12 @@ func commandSpecs() []commandSpec {
 			schemaFile:  "manage-plan.json",
 		},
 		{
+			path:       "mcp probe",
+			summary:    "Connect to each MCP server and estimate its context cost from the live tool definitions. Runs stdio commands locally; results are cached for mcp list",
+			flags:      []string{"--scope", "--cwd", "--timeout", "--json"},
+			schemaFile: "mcp-probe.json",
+		},
+		{
 			path:       "mcp search",
 			summary:    "Search the official MCP registry by server name",
 			flags:      []string{"--limit", "--cursor", "--json"},

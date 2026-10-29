@@ -115,6 +115,7 @@ func TestEmbeddedSchemasAreValidJSON(t *testing.T) {
 		"hooks-trust.json",
 		"manage-plan.json",
 		"mcp-list.json",
+		"mcp-probe.json",
 		"mcp-registry-browse.json",
 		"mcp-registry-info.json",
 		"mcp-registry-search.json",
@@ -171,6 +172,7 @@ func TestGoldenFilesMatchSchemas(t *testing.T) {
 		{"mcp-registry-search.json", "mcp-registry-search.json"},
 		{"mcp-registry-browse.json", "mcp-registry-browse.json"},
 		{"mcp-registry-info.json", "mcp-registry-info.json"},
+		{"mcp-probe.json", "mcp-probe.json"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {
@@ -255,6 +257,7 @@ func TestHelpExitsZero(t *testing.T) {
 		{[]string{"mcp", "list", "--help"}, "synca mcp list"},
 		{[]string{"mcp", "add", "--help"}, "synca mcp add"},
 		{[]string{"mcp", "remove", "--help"}, "synca mcp remove"},
+		{[]string{"mcp", "probe", "--help"}, "synca mcp probe"},
 		{[]string{"mcp", "search", "--help"}, "synca mcp search"},
 		{[]string{"mcp", "browse", "-h"}, "synca mcp browse"},
 		{[]string{"mcp", "info", "--help"}, "synca mcp info"},

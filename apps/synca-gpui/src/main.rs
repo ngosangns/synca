@@ -11,7 +11,7 @@ mod perf;
 mod providers;
 mod registry;
 
-use engine::{Conflict, PROVIDERS, Policy, Scope, Target};
+use engine::{Conflict, Policy, Scope, Target, format_tokens};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
@@ -250,8 +250,13 @@ struct Entry {
     /// Linked agents whose copy matches the hub; `None` when unknown.
     synced: Option<usize>,
     /// Estimated tokens: `SKILL.md` bytes / 4 for a skill, the server's JSON
-    /// bytes / 4 for an MCP entry.
+    /// bytes / 4 for an MCP entry — replaced by a live probe measurement for
+    /// MCP rows that have one.
     tokens: Option<usize>,
+    /// When a probe measured an MCP's tokens, and why it failed. Both `None`
+    /// for skills and unprobed MCPs; a failed probe keeps the estimate.
+    probed_at: Option<String>,
+    probe_error: Option<String>,
     mismatch: bool,
     /// Where the entry came from: a skill's lock file, or for MCP the registry
     /// origin recorded at install. `None` fields mean local and unrecorded.
@@ -318,6 +323,7 @@ enum SortColumn {
     #[default]
     None,
     Name,
+    Origin,
     Sync,
     Tokens,
 }
@@ -365,8 +371,10 @@ struct InventoryCache {
     /// Sort keys, parallel to `entries`. Missing values sort last.
     synced_n: Vec<Option<usize>>,
     tokens_n: Vec<Option<usize>>,
-    /// The order `skills` and `mcps` were last arranged with.
-    sort: ListSort,
+    origins_n: Vec<Option<engine::Origin>>,
+    /// The order each group was last arranged with.
+    skill_sort: ListSort,
+    mcp_sort: ListSort,
     /// Estimated tokens of the rows each group is showing.
     skills_tokens: Option<usize>,
     mcps_tokens: Option<usize>,
@@ -448,6 +456,7 @@ impl InventoryCache {
             .collect();
         self.synced_n = entries.iter().map(|entry| entry.synced).collect();
         self.tokens_n = entries.iter().map(|entry| entry.tokens).collect();
+        self.origins_n = entries.iter().map(|entry| Some(entry.origin)).collect();
     }
 
     /// Rebuilds both groups for `needle` (trimmed, lowercased) in one pass.
@@ -479,23 +488,21 @@ impl InventoryCache {
         self.mcps_tokens = sum_tokens(&self.mcps, &self.tokens_n);
     }
 
-    /// Reorders both groups by [`Self::sort`]. `None` leaves load order.
+    /// Reorders each group by its own [`ListSort`]. `None` leaves load order.
     fn sort_groups(&mut self) {
-        if self.sort.column == SortColumn::None {
-            return;
-        }
-        let sort = self.sort;
         sort_indexes(
             &mut self.skills,
-            sort,
+            self.skill_sort,
             &self.titles_lc,
+            &self.origins_n,
             &self.synced_n,
             &self.tokens_n,
         );
         sort_indexes(
             &mut self.mcps,
-            sort,
+            self.mcp_sort,
             &self.titles_lc,
+            &self.origins_n,
             &self.synced_n,
             &self.tokens_n,
         );
@@ -543,18 +550,36 @@ fn sort_indexes(
     indexes: &mut [usize],
     sort: ListSort,
     titles: &[String],
+    origins: &[Option<engine::Origin>],
     synced: &[Option<usize>],
     tokens: &[Option<usize>],
 ) {
+    if sort.column == SortColumn::None {
+        return;
+    }
     indexes.sort_by(|&left, &right| {
         let ord = match sort.column {
             SortColumn::None => std::cmp::Ordering::Equal,
             SortColumn::Name => cmp_ord(&titles[left], &titles[right], sort.ascending),
+            SortColumn::Origin => cmp_missing_last(
+                origins[left].map(origin_rank),
+                origins[right].map(origin_rank),
+                sort.ascending,
+            ),
             SortColumn::Sync => cmp_missing_last(synced[left], synced[right], sort.ascending),
             SortColumn::Tokens => cmp_missing_last(tokens[left], tokens[right], sort.ascending),
         };
         ord.then(left.cmp(&right))
     });
+}
+
+/// The sort order of an origin: local first, remote second, so the default
+/// click reads alphabetically.
+fn origin_rank(origin: engine::Origin) -> u8 {
+    match origin {
+        engine::Origin::Local => 0,
+        engine::Origin::Remote => 1,
+    }
 }
 
 fn cmp_ord<T: Ord>(left: &T, right: &T, ascending: bool) -> std::cmp::Ordering {
@@ -664,8 +689,12 @@ struct SyncaWindow {
     entries_gen: u64,
     /// Sidebar groups, notes and row strings; see [`InventoryCache`].
     inventory: InventoryCache,
-    /// Column sort for both sidebar tables. `None` keeps load order.
-    sort: ListSort,
+    /// Column sort per sidebar table. `None` keeps load order.
+    skill_sort: ListSort,
+    mcp_sort: ListSort,
+    /// The entry generation the auto probe last ran for, so a load probes
+    /// its unmeasured MCPs once.
+    probed_gen: u64,
     /// Bumped for every query change so only the latest debounce fires.
     query_job: u64,
     /// The skill tree and default preview for the current selection.
@@ -685,6 +714,9 @@ struct SyncaWindow {
     projects: Vec<String>,
     active_project: Option<String>,
     disabled: Vec<String>,
+    /// Providers toggled on beyond the six the CLI syncs to; saved in
+    /// defaults until the CLI learns to sync to them.
+    enabled: Vec<String>,
     activity: Vec<engine::LogEntry>,
     activity_limit: usize,
     activity_open: Option<i64>,
@@ -769,7 +801,7 @@ struct SyncaWindow {
     mcp_registry: mcp_registry::McpRegistryState,
     mcp_registry_input: Entity<TextInput>,
     _mcp_registry_sub: Subscription,
-    /// Settings → All skills.sh providers.
+    /// Settings → Providers.
     providers: providers::ProvidersState,
     providers_input: Entity<TextInput>,
     _providers_sub: Subscription,
@@ -939,7 +971,9 @@ impl SyncaWindow {
             entries: Vec::new(),
             entries_gen: 0,
             inventory: InventoryCache::default(),
-            sort: ListSort::default(),
+            skill_sort: ListSort::default(),
+            mcp_sort: ListSort::default(),
+            probed_gen: 0,
             query_job: 0,
             skill_files: SkillFilesCache::empty(),
             plan_clean: None,
@@ -953,6 +987,7 @@ impl SyncaWindow {
             projects,
             active_project,
             disabled: engine::disabled_providers(),
+            enabled: engine::enabled_providers(),
             activity: Vec::new(),
             activity_limit: 40,
             activity_open: None,
@@ -1137,6 +1172,57 @@ impl SyncaWindow {
                 this.busy = false;
                 this.refresh_inventory();
                 cx.notify();
+                this.maybe_auto_probe(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Measures the MCPs a load left without a token number, once per load.
+    fn maybe_auto_probe(&mut self, cx: &mut Context<Self>) {
+        if self.probed_gen == self.entries_gen {
+            return;
+        }
+        self.probed_gen = self.entries_gen;
+        let keys = auto_probe_keys(&self.entries);
+        if !keys.is_empty() {
+            self.probe_mcp(keys, cx);
+        }
+    }
+
+    /// Runs `synca mcp probe` for the selected keys in the background, then
+    /// reloads so the sidebar picks up the measured tokens.
+    fn probe_mcp(&mut self, keys: Vec<String>, cx: &mut Context<Self>) {
+        if self.busy || keys.is_empty() {
+            return;
+        }
+        let args = match engine::mcp_probe_args(self.scope, self.dir(), &keys) {
+            Ok(args) => args,
+            Err(message) => {
+                self.toast(message, cx);
+                return;
+            }
+        };
+        self.busy = true;
+        self.status = "Probing MCPs".into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { ns_ui::run_tool("synca", &args) })
+                .await;
+            this.update(cx, |this, cx| {
+                this.busy = false;
+                let text = result.text();
+                if !result.ok {
+                    this.toast(engine::probe_failure(&text), cx);
+                    return;
+                }
+                match engine::parse_probe(&text) {
+                    Ok(rows) => this.toast(engine::probe_toast(&rows), cx),
+                    Err(message) => this.toast(format!("Failed to probe MCPs: {message}"), cx),
+                }
+                this.reload(cx);
             })
             .ok();
         })
@@ -1153,22 +1239,32 @@ impl SyncaWindow {
             changed = true;
         }
         let needle = self.query.trim().to_lowercase();
-        if changed || self.inventory.query_key != needle || self.inventory.sort != self.sort {
-            self.inventory.sort = self.sort;
+        let sorts = (self.skill_sort, self.mcp_sort);
+        if changed
+            || self.inventory.query_key != needle
+            || (self.inventory.skill_sort, self.inventory.mcp_sort) != sorts
+        {
+            self.inventory.skill_sort = sorts.0;
+            self.inventory.mcp_sort = sorts.1;
             self.inventory.refilter(&needle);
             changed = true;
         }
         changed
     }
 
-    /// Name, sync, then tokens. A third press on the same column restores load order.
-    fn set_sort(&mut self, column: SortColumn, cx: &mut Context<Self>) {
-        self.sort = if self.sort.column != column {
+    /// Name, origin, sync, then tokens — per table. A third press on the same
+    /// column restores load order.
+    fn set_sort(&mut self, kind: Kind, column: SortColumn, cx: &mut Context<Self>) {
+        let current = match kind {
+            Kind::Skill => self.skill_sort,
+            Kind::Mcp => self.mcp_sort,
+        };
+        let next = if current.column != column {
             ListSort {
                 column,
                 ascending: true,
             }
-        } else if self.sort.ascending {
+        } else if current.ascending {
             ListSort {
                 column,
                 ascending: false,
@@ -1176,6 +1272,10 @@ impl SyncaWindow {
         } else {
             ListSort::default()
         };
+        match kind {
+            Kind::Skill => self.skill_sort = next,
+            Kind::Mcp => self.mcp_sort = next,
+        }
         self.refresh_inventory();
         cx.notify();
     }
@@ -3446,12 +3546,7 @@ fn list_body(
             "Tokens",
             entry_tokens_label(entry).to_string(),
             None,
-            entry.tokens.map(|_| {
-                SharedString::from(match entry.kind {
-                    Kind::Skill => "Estimated tokens: SKILL.md bytes / 4.",
-                    Kind::Mcp => "Estimated tokens: the server's config JSON bytes / 4.",
-                })
-            }),
+            entry.tokens.map(|_| SharedString::from(tokens_tip(entry))),
             card_w,
             theme,
         ));
@@ -4629,92 +4724,6 @@ fn settings_body(
                 ))
             }),
     );
-    body = body.child(section_label("Synced by Synca"));
-    for (index, (id, title)) in PROVIDERS.iter().enumerate() {
-        let enabled = !window.disabled.iter().any(|item| item == id);
-        let provider = (*id).to_string();
-        let clear = (*id).to_string();
-        let title = (*title).to_string();
-        let state = if enabled { "Enabled" } else { "Disabled" };
-        let theme = theme();
-        body = body.child(
-            div()
-                .w_full()
-                .flex()
-                .items_center()
-                .gap_2()
-                .py_1()
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .overflow_hidden()
-                        .whitespace_nowrap()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(if enabled { theme.text } else { theme.muted })
-                        .child(title.clone()),
-                )
-                .child(
-                    div()
-                        .flex_shrink_0()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap_2()
-                        .child(icon_button(
-                            SharedString::from(format!("prov-{index}")),
-                            if enabled {
-                                "toggle-right"
-                            } else {
-                                "toggle-left"
-                            },
-                            state,
-                            if enabled {
-                                IconTone::Accent
-                            } else {
-                                IconTone::Quiet
-                            },
-                            cx.listener(move |this, _, _, cx| {
-                                if this.disabled.iter().any(|item| item == &provider) {
-                                    this.disabled.retain(|item| item != &provider);
-                                } else {
-                                    this.disabled.push(provider.clone());
-                                }
-                                engine::save_disabled(&this.disabled);
-                                cx.notify();
-                            }),
-                        ))
-                        .child(icon_button(
-                            SharedString::from(format!("clear-{index}")),
-                            "trash",
-                            "Delete data",
-                            IconTone::Warn,
-                            cx.listener(move |this, _, _, cx| {
-                                if this.scope == Scope::Project && this.dir().is_none() {
-                                    this.toast(
-                                        "Choose a workspace folder before deleting workspace data.",
-                                        cx,
-                                    );
-                                    return;
-                                }
-                                let id = clear.clone();
-                                let name = title.clone();
-                                this.ask_for(
-                                    &format!("Delete {name} data?"),
-                                    "Removes that provider’s skills and MCP entries in this scope. The canonical hub stays. This cannot be undone.",
-                                    "Delete data",
-                                    Pending::ClearProvider(id),
-                                    cx,
-                                );
-                            }),
-                        )),
-                ),
-        );
-        if let Some(detail) = providers::managed_detail(window, id) {
-            body = body.child(div().w_full().pb_1().child(detail));
-        }
-    }
     providers::section(window, body, cx)
 }
 
@@ -5184,6 +5193,15 @@ struct McpRow {
     source_type: Option<String>,
     #[serde(default)]
     source_version: Option<String>,
+    /// Live probe results from `synca mcp probe`. All default for an old CLI.
+    #[serde(default)]
+    tokens: Option<u64>,
+    #[serde(default)]
+    probed_at: Option<String>,
+    #[serde(default)]
+    probe_ok: Option<bool>,
+    #[serde(default)]
+    probe_error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -5481,35 +5499,78 @@ fn mcp_tokens(normalized: Option<&serde_json::Value>) -> Option<usize> {
     Some(bytes / 4)
 }
 
-/// Hub config when the canonical copy is present, otherwise the first agent
-/// that reported one. The sidebar total is the sum of these estimates.
-fn mcp_row_tokens(row: &McpRow) -> Option<usize> {
-    let preferred = row
-        .presence
-        .iter()
-        .find(|item| item.agent == engine::CANONICAL_AGENT)
-        .and_then(|item| item.normalized.as_ref());
-    let value = preferred.or_else(|| {
-        row.presence
+/// Probed tokens when a matching probe cache entry exists, else the config
+/// JSON estimate. A failed probe falls back to the estimate and carries the
+/// error for the tooltip. `(tokens, probed_at, probe_error)`.
+fn mcp_row_tokens(row: &McpRow) -> (Option<usize>, Option<String>, Option<String>) {
+    let estimate = {
+        let preferred = row
+            .presence
             .iter()
-            .find_map(|item| item.normalized.as_ref())
-    });
-    mcp_tokens(value)
+            .find(|item| item.agent == engine::CANONICAL_AGENT)
+            .and_then(|item| item.normalized.as_ref());
+        let value = preferred.or_else(|| {
+            row.presence
+                .iter()
+                .find_map(|item| item.normalized.as_ref())
+        });
+        mcp_tokens(value)
+    };
+    match (row.probe_ok, row.tokens) {
+        (Some(true), Some(tokens)) => (Some(tokens as usize), row.probed_at.clone(), None),
+        (Some(false), _) => (estimate, row.probed_at.clone(), row.probe_error.clone()),
+        _ => (estimate, None, None),
+    }
 }
 
-/// `≈820`, `≈1.2k`, `≈2.4M`.
-fn format_tokens(tokens: usize) -> String {
-    if tokens < 1_000 {
-        return format!("≈{tokens}");
+/// Whether an entry's token number came from a live server probe.
+fn tokens_probed(entry: &Entry) -> bool {
+    entry.kind == Kind::Mcp && entry.probed_at.is_some() && entry.probe_error.is_none()
+}
+
+/// The MCP keys a load left without a measured token count: never probed,
+/// config present (a probe of these records a cache entry), and enabled. The
+/// probe cache holds failures too, so the list shrinks to nothing and the
+/// auto probe stops.
+fn auto_probe_keys(entries: &[Entry]) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.kind == Kind::Mcp
+                && entry.probed_at.is_none()
+                && entry.tokens.is_some()
+                && entry.server.as_ref().and_then(|spec| spec.enabled) != Some(false)
+        })
+        .map(|entry| entry.key.clone())
+        .collect()
+}
+
+/// The tooltip of a token number. Points unprobed MCPs at the probe action.
+fn tokens_tip(entry: &Entry) -> String {
+    match entry.kind {
+        Kind::Skill => "Estimated tokens: SKILL.md bytes / 4.".to_string(),
+        Kind::Mcp => {
+            if let Some(error) = &entry.probe_error {
+                return format!(
+                    "Probe failed ({error}); showing the config JSON bytes / 4 estimate."
+                );
+            }
+            if tokens_probed(entry) {
+                let ago = entry
+                    .probed_at
+                    .as_deref()
+                    .and_then(engine::probe_age)
+                    .map(|ago| format!(" Probed {ago}."))
+                    .unwrap_or_default();
+                format!(
+                    "Measured from the server: tool, resource and prompt definitions, serialized as JSON, bytes / 4.{ago}"
+                )
+            } else {
+                "Estimated tokens: the server's config JSON bytes / 4. Right-click the row and choose Probe tokens for the real cost."
+                    .to_string()
+            }
+        }
     }
-    let (value, unit) = if tokens < 1_000_000 {
-        (tokens as f64 / 1_000., "k")
-    } else {
-        (tokens as f64 / 1_000_000., "M")
-    };
-    let text = format!("{value:.1}");
-    let text = text.strip_suffix(".0").unwrap_or(&text);
-    format!("≈{text}{unit}")
 }
 
 fn entry_sync_label(entry: &Entry) -> SharedString {
@@ -5600,6 +5661,8 @@ fn load_entries(
                     source: row.source.filter(|text| !text.trim().is_empty()),
                     source_type: row.source_type.filter(|text| !text.trim().is_empty()),
                     source_version: None,
+                    probed_at: None,
+                    probe_error: None,
                     server: None,
                 });
             }
@@ -5614,7 +5677,7 @@ fn load_entries(
         Ok((rows, skipped)) => {
             errors.extend(skipped);
             for row in rows {
-                let tokens = mcp_row_tokens(&row);
+                let (tokens, probed_at, probe_error) = mcp_row_tokens(&row);
                 let (links, _, synced) = agent_links(row.presence.iter().map(|item| {
                     (
                         item.agent.clone(),
@@ -5636,6 +5699,8 @@ fn load_entries(
                     links,
                     synced,
                     tokens,
+                    probed_at,
+                    probe_error,
                     mismatch: row.mismatch,
                     origin: mcp_origin(&row),
                     source: row.source.clone(),
@@ -5796,6 +5861,20 @@ fn row_menu_for(
             IconName::Trash2,
         ));
     } else {
+        let probe_label = if one {
+            "Probe tokens".to_string()
+        } else {
+            format!("Probe {count} MCPs…")
+        };
+        let probe_keys = keys.clone();
+        menu = menu.item({
+            let probe = entity.clone();
+            ElyMenuItem::new(probe_label)
+                .icon(IconName::Gauge)
+                .on_click(move |_, app| {
+                    probe.update(app, |this, cx| this.probe_mcp(probe_keys.clone(), cx));
+                })
+        });
         let unlink_label = if one {
             "Unlink…".to_string()
         } else {
@@ -5858,6 +5937,7 @@ fn inventory_heading(
     count: usize,
     note: &Option<SharedString>,
     tokens: Option<usize>,
+    kind: Kind,
 ) -> impl IntoElement {
     let theme = theme();
     let total = match tokens {
@@ -5865,6 +5945,9 @@ fn inventory_heading(
         None => count.to_string(),
     };
     let tip = match tokens {
+        Some(_) if kind == Kind::Mcp => {
+            format!("{title}: {total} tokens (probed where available, config estimates otherwise)")
+        }
         Some(_) => format!("{title}: {total} estimated tokens"),
         None => format!("{title}: {count} shown"),
     };
@@ -5912,10 +5995,20 @@ fn table_head(kind: Kind, sort: ListSort, cx: &mut Context<SyncaWindow>) -> gpui
             .child(div().w(px(16.)).flex_none())
             .child(sort_head(
                 format!("sort-{prefix}-name"),
+                kind,
                 SortColumn::Name,
                 sort,
-                false,
+                HeadAlign::Start,
                 None,
+                cx,
+            ))
+            .child(sort_head(
+                format!("sort-{prefix}-origin"),
+                kind,
+                SortColumn::Origin,
+                sort,
+                HeadAlign::Center,
+                Some(COL_ORIGIN_W),
                 cx,
             ))
             .child(
@@ -5924,21 +6017,22 @@ fn table_head(kind: Kind, sort: ListSort, cx: &mut Context<SyncaWindow>) -> gpui
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(origin_head(kind))
                     .child(div().w(px(COL_DOT_W)).flex_none())
                     .child(sort_head(
                         format!("sort-{prefix}-sync"),
+                        kind,
                         SortColumn::Sync,
                         sort,
-                        true,
+                        HeadAlign::End,
                         Some(COL_SYNC_W),
                         cx,
                     ))
                     .child(sort_head(
                         format!("sort-{prefix}-tokens"),
+                        kind,
                         SortColumn::Tokens,
                         sort,
-                        true,
+                        HeadAlign::End,
                         Some(COL_TOKEN_W),
                         cx,
                     )),
@@ -5946,39 +6040,20 @@ fn table_head(kind: Kind, sort: ListSort, cx: &mut Context<SyncaWindow>) -> gpui
     )
 }
 
-/// The header over the origin badges. Remote/local by transport for MCP
-/// servers, source kind for skills.
-fn origin_head(kind: Kind) -> impl IntoElement {
-    let head = div()
-        .id("origin-head")
-        .w(px(COL_ORIGIN_W))
-        .flex_none()
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .text_size(px(11.))
-        .font_weight(gpui::FontWeight::SEMIBOLD)
-        .text_color(theme().muted);
-    match kind {
-        Kind::Skill => head
-            .tooltip(Tooltip::text(
-                "Remote: installed from skills.sh or another remote source. Local: installed from a folder.",
-            ))
-            .child("Origin"),
-        Kind::Mcp => head
-            .tooltip(Tooltip::text(
-                "Remote: reaches the server over HTTP(S). Local: runs a local command (stdio).",
-            ))
-            .child("Origin"),
-    }
+/// How a sort header lines up with the cells under it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HeadAlign {
+    Start,
+    Center,
+    End,
 }
 
 fn sort_head(
     id: String,
+    kind: Kind,
     column: SortColumn,
     sort: ListSort,
-    align_end: bool,
+    align: HeadAlign,
     width: Option<f32>,
     cx: &mut Context<SyncaWindow>,
 ) -> impl IntoElement {
@@ -5988,26 +6063,41 @@ fn sort_head(
         .id(SharedString::from(id))
         .h_full()
         .flex()
-        .items_center()
         .text_size(px(11.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(if active { theme.text } else { theme.muted })
         .cursor_pointer()
-        .tooltip(Tooltip::text(sort_tip(column, sort)))
+        .tooltip(Tooltip::text(sort_tip(column, sort, kind)))
         .hover(move |style| style.text_color(theme.accent))
-        .on_click(cx.listener(move |this, _, _, cx| this.set_sort(column, cx)))
+        .on_click(cx.listener(move |this, _, _, cx| this.set_sort(kind, column, cx)))
         .child(sort_label(column, sort));
-    head = if let Some(width) = width {
-        head.w(px(width)).flex_none()
-    } else {
-        head.flex_1().min_w(px(0.))
+    head = match align {
+        HeadAlign::Start => {
+            head = head.items_center().justify_start();
+            if let Some(width) = width {
+                head.w(px(width)).flex_none()
+            } else {
+                head.flex_1().min_w(px(0.))
+            }
+        }
+        HeadAlign::Center => head
+            .items_center()
+            .justify_center()
+            .w(px(width.unwrap_or(COL_ORIGIN_W)))
+            .flex_none(),
+        HeadAlign::End => head
+            .items_center()
+            .justify_end()
+            .w(px(width.unwrap_or(0.)))
+            .flex_none(),
     };
-    if align_end { head.justify_end() } else { head }
+    head
 }
 
 fn sort_label(column: SortColumn, sort: ListSort) -> String {
     let name = match column {
         SortColumn::Name => "Name",
+        SortColumn::Origin => "Origin",
         SortColumn::Sync => "Sync",
         SortColumn::Tokens => "Tokens",
         SortColumn::None => "",
@@ -6019,13 +6109,25 @@ fn sort_label(column: SortColumn, sort: ListSort) -> String {
     }
 }
 
-fn sort_tip(column: SortColumn, sort: ListSort) -> String {
+fn sort_tip(column: SortColumn, sort: ListSort, kind: Kind) -> String {
     let name = match column {
         SortColumn::Name => "name",
+        SortColumn::Origin => "origin",
         SortColumn::Sync => "synced agents",
         SortColumn::Tokens => "estimated tokens",
         SortColumn::None => "order",
     };
+    if column == SortColumn::Origin && sort.column != column {
+        let semantics = match kind {
+            Kind::Skill => {
+                "Remote: installed from skills.sh or another remote source. Local: installed from a folder."
+            }
+            Kind::Mcp => {
+                "Remote: reaches the server over HTTP(S). Local: runs a local command (stdio)."
+            }
+        };
+        return format!("Sort by {name}. {semantics}");
+    }
     if sort.column != column {
         format!("Sort by {name}")
     } else if sort.ascending {
@@ -6193,7 +6295,13 @@ fn inventory_group(
         Kind::Skill => cache.skills_tokens,
         Kind::Mcp => cache.mcps_tokens,
     };
-    list = list.child(inventory_heading(title, rows.len(), note, tokens_total));
+    list = list.child(inventory_heading(
+        title,
+        rows.len(),
+        note,
+        tokens_total,
+        kind,
+    ));
     if rows.is_empty() {
         let text = if query.trim().is_empty() {
             SharedString::from(empty)
@@ -6206,7 +6314,14 @@ fn inventory_group(
         };
         return list.child(sidebar_empty(text));
     }
-    list = list.child(table_head(kind, cache.sort, cx));
+    list = list.child(table_head(
+        kind,
+        match kind {
+            Kind::Skill => cache.skill_sort,
+            Kind::Mcp => cache.mcp_sort,
+        },
+        cx,
+    ));
     let glyph = if kind == Kind::Skill { "skill" } else { "plug" };
     let std::ops::Range { start, end } = build;
     if start > 0 {
@@ -6315,7 +6430,12 @@ fn inventory_row_meta(entry: &Entry, status: &'static str) -> SharedString {
         .unwrap_or_default();
     let mut parts = vec![status.to_string(), entry_sync_tip(entry)];
     if let Some(tokens) = entry.tokens {
-        parts.push(format!("{} tokens (estimated)", format_tokens(tokens)));
+        let kind = if tokens_probed(entry) {
+            "probed"
+        } else {
+            "estimated"
+        };
+        parts.push(format!("{} tokens ({kind})", format_tokens(tokens)));
     }
     if !place.is_empty() {
         parts.push(place);
@@ -6836,7 +6956,7 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
         ),
         ns_ui::DevCommand::new(
             "providers",
-            "Open Settings on the All skills.sh providers list (synca providers list, read-only) and optionally set its filter.",
+            "Open Settings on the providers list (synca providers list, read-only) and optionally set its filter.",
             true,
         )
         .arg(
@@ -7718,6 +7838,10 @@ mod view_tests {
             source: None,
             source_type: None,
             source_version: None,
+            tokens: None,
+            probed_at: None,
+            probe_ok: None,
+            probe_error: None,
         };
         for transport in ["http", "sse", "HTTP"] {
             assert_eq!(
@@ -7755,6 +7879,10 @@ mod view_tests {
             source: None,
             source_type: None,
             source_version: None,
+            tokens: None,
+            probed_at: None,
+            probe_ok: None,
+            probe_error: None,
         };
         assert_eq!(
             mcp_origin(&fallback),
@@ -7884,8 +8012,12 @@ mod view_tests {
             source: None,
             source_type: None,
             source_version: None,
+            tokens: None,
+            probed_at: None,
+            probe_ok: None,
+            probe_error: None,
         };
-        assert_eq!(mcp_row_tokens(&row), mcp_tokens(Some(&hub)));
+        assert_eq!(mcp_row_tokens(&row), (mcp_tokens(Some(&hub)), None, None));
         let only_agent = McpRow {
             key: "demo".into(),
             presence: vec![McpPresence {
@@ -7898,8 +8030,137 @@ mod view_tests {
             source: None,
             source_type: None,
             source_version: None,
+            tokens: None,
+            probed_at: None,
+            probe_ok: None,
+            probe_error: None,
         };
-        assert!(mcp_row_tokens(&only_agent).is_some());
+        assert!(mcp_row_tokens(&only_agent).0.is_some());
+    }
+
+    #[test]
+    fn mcp_row_tokens_prefers_the_probe_cache() {
+        let row = |tokens: Option<u64>, probe_ok: Option<bool>, error: Option<&str>| {
+            let mut item = mcp_row_tokens_row();
+            item.tokens = tokens;
+            item.probed_at = Some("2026-10-29T15:15:59.538Z".into());
+            item.probe_ok = probe_ok;
+            item.probe_error = error.map(str::to_string);
+            item
+        };
+        let estimate = mcp_row_tokens(&row(None, None, None)).0.unwrap();
+
+        let probed = row(Some(1304), Some(true), None);
+        let (tokens, probed_at, probe_error) = mcp_row_tokens(&probed);
+        assert_eq!(tokens, Some(1304));
+        assert!(probed_at.is_some());
+        assert_eq!(probe_error, None);
+
+        let failed = row(None, Some(false), Some("connection refused"));
+        let (tokens, probed_at, probe_error) = mcp_row_tokens(&failed);
+        assert_eq!(tokens, Some(estimate));
+        assert!(probed_at.is_some());
+        assert_eq!(probe_error.as_deref(), Some("connection refused"));
+
+        // A failed probe's cached tokens are stale; the estimate wins.
+        let stale = row(Some(999), Some(false), None);
+        let (tokens, _, probe_error) = mcp_row_tokens(&stale);
+        assert_eq!(tokens, Some(estimate));
+        assert_eq!(probe_error, None);
+    }
+
+    fn mcp_row_tokens_row() -> McpRow {
+        McpRow {
+            key: "demo".into(),
+            presence: vec![McpPresence {
+                agent: engine::CANONICAL_AGENT.into(),
+                path: String::new(),
+                fingerprint: String::new(),
+                normalized: Some(serde_json::json!({"command": "x"})),
+            }],
+            mismatch: false,
+            source: None,
+            source_type: None,
+            source_version: None,
+            tokens: None,
+            probed_at: None,
+            probe_ok: None,
+            probe_error: None,
+        }
+    }
+
+    #[test]
+    fn tokens_tip_explains_each_state() {
+        let entry = |probed_at: Option<&str>, probe_error: Option<&str>| Entry {
+            kind: Kind::Mcp,
+            key: "demo".into(),
+            title: "Demo".into(),
+            description: String::new(),
+            paths: Vec::new(),
+            links: Vec::new(),
+            synced: None,
+            tokens: Some(1304),
+            probed_at: probed_at.map(str::to_string),
+            probe_error: probe_error.map(str::to_string),
+            mismatch: false,
+            origin: engine::Origin::Remote,
+            source: None,
+            source_type: None,
+            source_version: None,
+            server: None,
+        };
+        let unprobed = tokens_tip(&entry(None, None));
+        assert!(unprobed.contains("config JSON bytes / 4"));
+        assert!(unprobed.contains("Probe tokens"));
+
+        let measured = tokens_tip(&entry(Some("2026-10-29T15:15:59.538Z"), None));
+        assert!(measured.contains("Measured from the server"));
+        assert!(measured.contains("Probed "));
+
+        let failed = tokens_tip(&entry(Some("2026-10-29T15:15:59.538Z"), Some("refused")));
+        assert!(failed.contains("Probe failed (refused)"));
+        assert!(failed.contains("estimate"));
+
+        let skill = Entry {
+            kind: Kind::Skill,
+            ..entry(None, None)
+        };
+        assert!(tokens_tip(&skill).contains("SKILL.md bytes / 4"));
+    }
+
+    #[test]
+    fn auto_probe_picks_unprobed_enabled_mcps_with_a_config() {
+        let entry =
+            |kind: Kind, probed: bool, tokens: Option<usize>, enabled: Option<bool>| Entry {
+                kind,
+                key: "demo".into(),
+                title: "Demo".into(),
+                description: String::new(),
+                paths: Vec::new(),
+                links: Vec::new(),
+                synced: None,
+                tokens,
+                probed_at: probed.then(|| "2026-10-29T15:15:59.538Z".to_string()),
+                probe_error: None,
+                mismatch: false,
+                origin: engine::Origin::Local,
+                source: None,
+                source_type: None,
+                source_version: None,
+                server: Some(ServerSpec {
+                    enabled,
+                    ..ServerSpec::default()
+                }),
+            };
+        let entries = vec![
+            entry(Kind::Mcp, false, Some(100), None),
+            entry(Kind::Mcp, true, Some(100), None),
+            entry(Kind::Mcp, false, Some(100), Some(false)),
+            entry(Kind::Mcp, false, None, None),
+            entry(Kind::Skill, false, Some(100), None),
+        ];
+        // The probed row, the disabled server and the config-less row stay out.
+        assert_eq!(auto_probe_keys(&entries), ["demo"]);
     }
 
     #[test]

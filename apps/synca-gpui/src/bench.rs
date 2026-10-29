@@ -3,11 +3,12 @@ use std::time::Instant;
 
 use gpui::SharedString;
 
+use crate::engine::PROVIDERS;
 use crate::{
-    Apply, Conflict, Entry, InventoryCache, Kind, ListSort, PROVIDERS, PlanView, Policy,
-    SortColumn, Target, TreeItem, chosen_file, entry_matches, inventory_row_meta, inventory_rows,
-    keys_for_kind, markdown_with_metadata, open_folders, relative_label, row_top, rows_in_view,
-    shown_scope, tree_nodes, visible_entries, workspace_parts,
+    Apply, Conflict, Entry, InventoryCache, Kind, ListSort, PlanView, Policy, SortColumn, Target,
+    TreeItem, chosen_file, entry_matches, inventory_row_meta, inventory_rows, keys_for_kind,
+    markdown_with_metadata, open_folders, relative_label, row_top, rows_in_view, shown_scope,
+    tree_nodes, visible_entries, workspace_parts,
 };
 
 const ENTRIES: usize = 5_000;
@@ -66,6 +67,8 @@ fn inventory(count: usize) -> Vec<Entry> {
                 source_type: (index % 3 == 0).then(|| "github".to_string()),
                 source_version: None,
                 server: None,
+                probed_at: None,
+                probe_error: None,
             }
         })
         .collect()
@@ -431,7 +434,7 @@ fn column_sort_reorders_each_group_and_keeps_token_totals() {
     assert_eq!(cache.skills_tokens, Some(skill_sum));
     assert_eq!(cache.mcps_tokens, Some(mcp_sum));
 
-    cache.sort = ListSort {
+    cache.skill_sort = ListSort {
         column: SortColumn::Name,
         ascending: true,
     };
@@ -447,7 +450,7 @@ fn column_sort_reorders_each_group_and_keeps_token_totals() {
     assert_eq!(cache.skills.first().copied(), Some(1));
     assert_eq!(cache.mcps_tokens, Some(mcp_sum));
 
-    cache.sort = ListSort {
+    cache.skill_sort = ListSort {
         column: SortColumn::Tokens,
         ascending: false,
     };
@@ -464,7 +467,7 @@ fn column_sort_reorders_each_group_and_keeps_token_totals() {
         }
     }
 
-    cache.sort = ListSort {
+    cache.skill_sort = ListSort {
         column: SortColumn::Sync,
         ascending: true,
     };
@@ -480,6 +483,72 @@ fn column_sort_reorders_each_group_and_keeps_token_totals() {
     let mut rising = known.clone();
     rising.sort();
     assert_eq!(known, rising);
+}
+
+#[test]
+fn origin_sort_orders_local_first_and_tables_sort_alone() {
+    let mut entries = inventory(20);
+    for (index, entry) in entries.iter_mut().enumerate() {
+        entry.origin = if index % 2 == 0 {
+            crate::engine::Origin::Local
+        } else {
+            crate::engine::Origin::Remote
+        };
+    }
+    let in_load_order = |kind: Kind| -> Vec<usize> {
+        entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.kind == kind)
+            .map(|(index, _)| index)
+            .collect()
+    };
+    let mut cache = InventoryCache::default();
+    cache.rebuild_entries(&entries);
+    cache.refilter("");
+
+    cache.skill_sort = ListSort {
+        column: SortColumn::Origin,
+        ascending: true,
+    };
+    cache.refilter("");
+    let ranks: Vec<u8> = cache
+        .skills
+        .iter()
+        .map(|&index| crate::origin_rank(entries[index].origin))
+        .collect();
+    assert!(ranks.windows(2).all(|pair| pair[0] <= pair[1]));
+    assert_eq!(cache.mcps, in_load_order(Kind::Mcp), "skills sort only");
+
+    cache.skill_sort = ListSort::default();
+    cache.mcp_sort = ListSort {
+        column: SortColumn::Tokens,
+        ascending: false,
+    };
+    cache.refilter("");
+    assert_eq!(cache.skills, in_load_order(Kind::Skill), "mcp sort only");
+    let tokens: Vec<_> = cache
+        .mcps
+        .iter()
+        .map(|&index| entries[index].tokens)
+        .collect();
+    for pair in tokens.windows(2) {
+        if let (Some(left), Some(right)) = (pair[0], pair[1]) {
+            assert!(left >= right);
+        }
+    }
+
+    cache.mcp_sort = ListSort {
+        column: SortColumn::Origin,
+        ascending: false,
+    };
+    cache.refilter("");
+    let ranks: Vec<u8> = cache
+        .mcps
+        .iter()
+        .map(|&index| crate::origin_rank(entries[index].origin))
+        .collect();
+    assert!(ranks.windows(2).all(|pair| pair[0] >= pair[1]));
 }
 
 #[test]

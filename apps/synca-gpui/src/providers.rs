@@ -1,8 +1,10 @@
-//! Settings → "All skills.sh providers": every agent the `skills` CLI can
+//! Settings → "Providers": one list of every agent a skills backend can
 //! install to, read from `synca providers list --json` on a background task.
-//! The six agents Synca syncs to keep their toggle rows in Settings and gain
-//! a status line here; the others are read-only rows. A sequence number per
-//! request keeps a slow answer from replacing a newer one.
+//! Every row carries an on/off toggle: the six agents the CLI syncs to save
+//! their choice in the disabled list, the rest in the enabled list (the CLI
+//! cannot sync or clear them yet). The six rows render even before the list
+//! loads or when the CLI cannot answer. A sequence number per request keeps a
+//! slow answer from replacing a newer one.
 
 use ely_gpui_component::buttons::ButtonVariant;
 use ely_gpui_component::feedback::{EmptyState, InlineMessage};
@@ -11,19 +13,22 @@ use gpui::{
     Context, FontWeight, InteractiveElement, IntoElement, ParentElement, ScrollHandle,
     SharedString, Styled, div, prelude::*, px,
 };
-use ns_ui::{Tone, chip, section_label, skeleton_list, text_field, theme, working_row};
+use ns_ui::{
+    IconTone, Tone, chip, icon_button, section_label, skeleton_list, text_field, theme, working_row,
+};
 
+use crate::Pending;
 use crate::SyncaWindow;
 use crate::engine::{self, PROVIDERS, ProviderInfo, Scope};
-use crate::registry::{Load, rows_window, run_parsed};
+use crate::registry::{Load, run_parsed};
 
 /// One provider row, and the list area that scrolls them.
 const ROW_H: f32 = 54.;
 const LIST_H: f32 = 324.;
-const ROW_OVERSCAN: f32 = 108.;
 
-/// Tooltip of a provider Synca does not sync to.
-const READ_ONLY_TIP: &str = "Synca does not sync to this agent yet. skills.sh can install to it.";
+/// Tooltip of a provider outside the six built-in sync targets.
+const READ_ONLY_TIP: &str =
+    "Saved as a preference. The CLI currently syncs skills to the six built-in agents.";
 
 pub(crate) struct ProvidersState {
     pub(crate) query: String,
@@ -31,9 +36,9 @@ pub(crate) struct ProvidersState {
     /// older number is dropped.
     pub(crate) seq: u64,
     pub(crate) status: Load<()>,
-    /// Every provider, managed first, then installed, then the rest.
+    /// Every provider, sorted by name.
     pub(crate) list: Vec<ProviderInfo>,
-    /// Indexes into `list` of the read-only rows that match `query`.
+    /// Indexes into `list` of the rows that match `query`.
     pub(crate) shown: Vec<usize>,
     /// The answer describes project folders (the Workspace scope).
     pub(crate) project: bool,
@@ -70,20 +75,10 @@ impl ProvidersState {
             .list
             .iter()
             .enumerate()
-            .filter(|(_, item)| is_listed(item) && item.matches(&needle))
+            .filter(|(_, item)| item.matches(&needle))
             .map(|(index, _)| index)
             .collect();
     }
-}
-
-/// Whether a provider gets a row in the read-only list. A managed provider
-/// with a toggle row in Settings is shown there instead.
-fn is_listed(info: &ProviderInfo) -> bool {
-    !(info.managed
-        && info
-            .synca_agent
-            .as_deref()
-            .is_some_and(|id| PROVIDERS.iter().any(|(known, _)| *known == id)))
 }
 
 fn status_label(info: &ProviderInfo) -> (&'static str, Tone) {
@@ -246,41 +241,21 @@ fn chips(info: &ProviderInfo) -> gpui::Div {
         .children(info.universal.then(|| chip("universal", Tone::Neutral)))
 }
 
-/// The status block under a managed provider's toggle row in Settings.
-/// `None` until the list has loaded or when the CLI did not list the agent.
-pub(crate) fn managed_detail(window: &SyncaWindow, id: &str) -> Option<gpui::AnyElement> {
-    let info = window.providers.managed(id)?;
-    Some(
-        div()
-            .w_full()
-            .min_w(px(0.))
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(chips(info))
-            .child(path_line(
-                info,
-                window.providers.project,
-                &format!("managed-{id}"),
-                false,
-            ))
-            .into_any_element(),
-    )
-}
-
-/// The "All skills.sh providers" section of Settings.
+/// The "Providers" section of Settings: one list with the managed agents and
+/// every other agent the backend can install to.
 pub(crate) fn section(
     window: &mut SyncaWindow,
     mut body: gpui::Div,
     cx: &mut Context<SyncaWindow>,
 ) -> gpui::Div {
     let theme = theme();
-    body = body.child(section_label("All skills.sh providers"));
+    body = body.child(section_label("Providers"));
     let state = &window.providers;
     match &state.status {
         Load::Idle | Load::Loading => body
             .child(working_row("providers-wait", "Loading providers…"))
-            .child(skeleton_list("providers-skeleton", 5)),
+            .child(skeleton_list("providers-skeleton", 5))
+            .child(managed_rows(window, cx)),
         Load::Failed(message) => body
             .child(InlineMessage::new(Severity::Warning, message.clone()))
             .child(div().child(crate::tipped_button(
@@ -291,7 +266,8 @@ pub(crate) fn section(
                 ButtonVariant::Secondary,
                 false,
                 cx.listener(|this, _, _, cx| this.providers_invalidate(cx)),
-            ))),
+            )))
+            .child(managed_rows(window, cx)),
         Load::Ready(()) => {
             let mut summary = engine::providers_summary(&state.list);
             if !state.query.trim().is_empty() {
@@ -303,11 +279,15 @@ pub(crate) fn section(
                         .px_2()
                         .text_xs()
                         .text_color(theme.muted)
-                        .child("The providers above sync with Synca. The others are read-only: skills.sh can install to them."),
+                        .child(
+                            "Every agent toggles on or off. Synca currently syncs skills and MCP servers to the six built-in agents; other choices are saved.",
+                        ),
                 )
                 .child(text_field("providers-query", &window.providers_input))
                 .child(
                     div()
+                        .flex_1()
+                        .min_w(px(0.))
                         .px_2()
                         .text_xs()
                         .text_color(theme.muted)
@@ -318,61 +298,75 @@ pub(crate) fn section(
                     "Choose a workspace folder to see project folders. Showing user folders.",
                 ));
             }
-            body.child(rows_view(&window.providers))
+            body.child(list_view(window, cx))
         }
     }
 }
 
-fn rows_view(state: &ProvidersState) -> gpui::AnyElement {
-    let theme = theme();
-    if state.shown.is_empty() {
-        return div()
-            .w_full()
-            .h(px(LIST_H))
-            .overflow_hidden()
-            .child(
-                EmptyState::new("providers-empty", IconName::Search, "No providers match")
-                    .body("Try another name or id."),
-            )
-            .into_any_element();
+/// The six toggle rows, built from the PROVIDERS table so the sync toggles
+/// keep working before the list loads or when the CLI cannot answer.
+fn managed_rows(window: &SyncaWindow, cx: &mut Context<SyncaWindow>) -> gpui::Div {
+    let mut rows = div().flex().flex_col();
+    for (index, (id, title)) in PROVIDERS.iter().enumerate() {
+        rows = rows.child(provider_toggle_row(
+            window,
+            index,
+            id,
+            title,
+            true,
+            window.providers.managed(id),
+            cx,
+        ));
     }
-    let count = state.shown.len();
-    let seen = -f32::from(state.scroll.offset().y);
-    let window = rows_window(count, ROW_H, LIST_H, seen.max(0.), ROW_OVERSCAN);
-    let mut list = div().flex().flex_col();
-    if window.start > 0 {
-        list = list.child(div().w_full().h(px(window.start as f32 * ROW_H)));
-    }
-    for at in window.clone() {
-        list = list.child(provider_row(&state.list[state.shown[at]], state.project));
-    }
-    if window.end < count {
-        list = list.child(div().w_full().h(px((count - window.end) as f32 * ROW_H)));
-    }
-    let handle = state.scroll.clone();
-    div()
-        .id("providers-list")
-        .w_full()
-        .h(px(LIST_H))
-        .overflow_y_scroll()
-        .track_scroll(&state.scroll)
-        .on_scroll_wheel(move |event, window, cx| crate::contain_scroll(&handle, event, window, cx))
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .child(list)
-        .into_any_element()
+    rows
 }
 
-fn provider_row(info: &ProviderInfo, project: bool) -> impl IntoElement {
+/// The `(index, id, title)` of the managed row for `info`, when its Synca
+/// agent is one of the six.
+fn managed_keys(info: &ProviderInfo) -> Option<(usize, &'static str, &'static str)> {
+    let agent = info.synca_agent.as_deref()?;
+    PROVIDERS
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| entry.0 == agent)
+        .map(|(index, entry)| (index, entry.0, entry.1))
+}
+
+/// One row with an on/off toggle. The six built-in agents save their choice
+/// in the disabled list and sync for real; the rest save theirs in the
+/// enabled list, and only the six get Delete data (the CLI cannot clear the
+/// others yet).
+fn provider_toggle_row(
+    window: &SyncaWindow,
+    index: usize,
+    id: &str,
+    title: &str,
+    managed: bool,
+    info: Option<&ProviderInfo>,
+    cx: &mut Context<SyncaWindow>,
+) -> impl IntoElement {
     let theme = theme();
-    let tip = if info.managed {
-        format!("{} syncs with Synca.", info.title())
+    let enabled = if managed {
+        !window.disabled.iter().any(|item| item == id)
     } else {
-        READ_ONLY_TIP.to_string()
+        window.enabled.iter().any(|item| item == id)
+    };
+    let state = if enabled { "Enabled" } else { "Disabled" };
+    let provider = id.to_string();
+    let name = title.to_string();
+    let clear = id.to_string();
+    let tip: SharedString = if managed {
+        format!("{title} syncs with Synca.").into()
+    } else {
+        READ_ONLY_TIP.into()
+    };
+    let toggle_id = if managed {
+        SharedString::from(format!("prov-{index}"))
+    } else {
+        SharedString::from(format!("prov-{id}"))
     };
     div()
-        .id(SharedString::from(format!("provider-row-{}", info.id)))
+        .id(SharedString::from(format!("provider-row-{id}")))
         .h(px(ROW_H))
         .w_full()
         .px_2()
@@ -395,12 +389,116 @@ fn provider_row(info: &ProviderInfo, project: bool) -> impl IntoElement {
                         .truncate()
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(theme.text)
-                        .child(SharedString::from(info.title().to_string())),
+                        .text_color(if enabled { theme.text } else { theme.muted })
+                        .child(title.to_string()),
                 )
-                .child(chips(info)),
+                .children(info.map(chips))
+                .child(icon_button(
+                    toggle_id,
+                    if enabled {
+                        "toggle-right"
+                    } else {
+                        "toggle-left"
+                    },
+                    state,
+                    if enabled {
+                        IconTone::Accent
+                    } else {
+                        IconTone::Quiet
+                    },
+                    cx.listener(move |this, _, _, cx| {
+                        if managed {
+                            if this.disabled.iter().any(|item| item == &provider) {
+                                this.disabled.retain(|item| item != &provider);
+                            } else {
+                                this.disabled.push(provider.clone());
+                            }
+                            engine::save_disabled(&this.disabled);
+                        } else if this.enabled.iter().any(|item| item == &provider) {
+                            this.enabled.retain(|item| item != &provider);
+                            engine::save_enabled(&this.enabled);
+                        } else {
+                            this.enabled.push(provider.clone());
+                            engine::save_enabled(&this.enabled);
+                        }
+                        cx.notify();
+                    }),
+                ))
+                .when(managed, |row| {
+                    row.child(icon_button(
+                        SharedString::from(format!("clear-{index}")),
+                        "trash",
+                        "Delete data",
+                        IconTone::Warn,
+                        cx.listener(move |this, _, _, cx| {
+                            if this.scope == Scope::Project && this.dir().is_none() {
+                                this.toast(
+                                    "Choose a workspace folder before deleting workspace data.",
+                                    cx,
+                                );
+                                return;
+                            }
+                            let id = clear.clone();
+                            this.ask_for(
+                                &format!("Delete {name} data?"),
+                                "Removes that provider’s skills and MCP entries in this scope. The canonical hub stays. This cannot be undone.",
+                                "Delete data",
+                                Pending::ClearProvider(id),
+                                cx,
+                            );
+                        }),
+                    ))
+                }),
         )
-        .child(path_line(info, project, &format!("list-{}", info.id), true))
+        .children(info.map(|info| {
+            div().w_full().child(path_line(
+                info,
+                window.providers.project,
+                &format!("row-{id}"),
+                false,
+            ))
+        }))
+}
+
+fn list_view(window: &SyncaWindow, cx: &mut Context<SyncaWindow>) -> gpui::AnyElement {
+    let state = &window.providers;
+    let theme = theme();
+    if state.shown.is_empty() {
+        return div()
+            .w_full()
+            .h(px(LIST_H))
+            .overflow_hidden()
+            .child(
+                EmptyState::new("providers-empty", IconName::Search, "No providers match")
+                    .body("Try another name or id."),
+            )
+            .into_any_element();
+    }
+    let mut list = div().flex().flex_col();
+    for &at in &state.shown {
+        let info = &state.list[at];
+        list = list.child(match managed_keys(info) {
+            Some((index, id, title)) => {
+                provider_toggle_row(window, index, id, title, true, Some(info), cx)
+                    .into_any_element()
+            }
+            None => provider_toggle_row(window, 0, &info.id, info.title(), false, Some(info), cx)
+                .into_any_element(),
+        });
+    }
+    let handle = state.scroll.clone();
+    div()
+        .id("providers-list")
+        .w_full()
+        .h(px(LIST_H))
+        .overflow_y_scroll()
+        .track_scroll(&state.scroll)
+        .on_scroll_wheel(move |event, window, cx| crate::contain_scroll(&handle, event, window, cx))
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .child(list)
+        .into_any_element()
 }
 
 #[cfg(test)]
@@ -416,11 +514,18 @@ mod tests {
     }
 
     #[test]
-    fn managed_rows_with_a_toggle_are_not_listed_twice() {
+    fn the_merged_list_includes_managed_rows() {
         let state = loaded();
-        // 8 providers, 3 managed ones have a toggle row in Settings.
-        assert_eq!(state.shown.len(), 5);
-        assert!(state.shown.iter().all(|&at| !state.list[at].managed));
+        // All 8 providers in one list, the 3 managed ones among them.
+        assert_eq!(state.shown.len(), 8);
+        let ids: Vec<&str> = state
+            .shown
+            .iter()
+            .map(|&at| state.list[at].id.as_str())
+            .collect();
+        assert!(ids.contains(&"claude-code"));
+        assert!(ids.contains(&"cursor"));
+        assert!(ids.contains(&"kiro-cli"));
         assert_eq!(
             state.managed("claude").map(|item| item.id.as_str()),
             Some("claude-code")
@@ -433,32 +538,20 @@ mod tests {
     }
 
     #[test]
-    fn the_query_filters_the_read_only_rows_only() {
+    fn the_query_filters_every_row() {
         let mut state = loaded();
         state.query = "  GOOSE ".into();
         state.refilter();
         assert_eq!(state.shown.len(), 1);
         assert_eq!(state.list[state.shown[0]].id, "goose");
-        // "cursor" is managed with a toggle row, so no read-only row matches.
-        state.query = "cursor".into();
+        // A managed row matches too.
+        state.query = "CURSOR".into();
         state.refilter();
-        assert!(state.shown.is_empty());
+        assert_eq!(state.shown.len(), 1);
+        assert_eq!(state.list[state.shown[0]].id, "cursor");
         state.query.clear();
         state.refilter();
-        assert_eq!(state.shown.len(), 5);
-    }
-
-    #[test]
-    fn a_managed_agent_without_a_toggle_row_is_listed() {
-        let mut state = loaded();
-        state.list.push(ProviderInfo {
-            id: "newcomer".into(),
-            managed: true,
-            synca_agent: Some("newcomer".into()),
-            ..ProviderInfo::default()
-        });
-        state.refilter();
-        assert_eq!(state.shown.len(), 6);
+        assert_eq!(state.shown.len(), 8);
     }
 
     #[test]

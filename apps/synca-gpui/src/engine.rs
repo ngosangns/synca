@@ -285,6 +285,147 @@ pub fn mcp_update_args(
     Ok(args)
 }
 
+/// `mcp probe [names…] --json`: connect to each server and measure its
+/// context cost, caching the results for the next `mcp list`.
+pub fn mcp_probe_args(
+    scope: Scope,
+    dir: Option<&str>,
+    names: &[String],
+) -> Result<Vec<String>, String> {
+    let mut args = vec!["mcp".into(), "probe".into()];
+    args.extend(names.iter().map(|name| name.into()));
+    args.extend(scope_args(scope, dir)?);
+    args.push("--json".into());
+    Ok(args)
+}
+
+/// One row of `mcp probe --json`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpProbeRow {
+    pub key: String,
+    pub ok: bool,
+    pub skipped: bool,
+    pub error: String,
+    pub tools: u64,
+    pub resources: u64,
+    pub prompts: u64,
+    pub tokens: u64,
+}
+
+fn probe_row(value: &Value) -> Option<McpProbeRow> {
+    Some(McpProbeRow {
+        key: field_text(value, "key"),
+        ok: value.get("ok").and_then(|item| item.as_bool())?,
+        skipped: value
+            .get("skipped")
+            .and_then(|item| item.as_bool())
+            .unwrap_or(false),
+        error: field_text(value, "error"),
+        tools: field_count(value, "tools").unwrap_or(0),
+        resources: field_count(value, "resources").unwrap_or(0),
+        prompts: field_count(value, "prompts").unwrap_or(0),
+        tokens: field_count(value, "tokens").unwrap_or(0),
+    })
+}
+
+pub fn parse_probe(text: &str) -> Result<Vec<McpProbeRow>, String> {
+    let doc = document(text)?;
+    let rows = doc
+        .as_array()
+        .ok_or_else(|| "synca printed a probe document that is not an array.".to_string())?;
+    Ok(rows.iter().filter_map(probe_row).collect())
+}
+
+/// `≈820`, `≈1.2k`, `≈2.4M`.
+pub fn format_tokens(tokens: usize) -> String {
+    if tokens < 1_000 {
+        return format!("≈{tokens}");
+    }
+    let (value, unit) = if tokens < 1_000_000 {
+        (tokens as f64 / 1_000., "k")
+    } else {
+        (tokens as f64 / 1_000_000., "M")
+    };
+    let text = format!("{value:.1}");
+    let text = text.strip_suffix(".0").unwrap_or(&text);
+    format!("≈{text}{unit}")
+}
+
+/// The toast after a finished probe: how many servers answered and what they
+/// cost, with failures and skips named by count.
+pub fn probe_toast(rows: &[McpProbeRow]) -> String {
+    if rows.is_empty() {
+        return "No MCP servers to probe.".to_string();
+    }
+    let probed: Vec<&McpProbeRow> = rows.iter().filter(|row| row.ok).collect();
+    let tokens: usize = probed.iter().map(|row| row.tokens as usize).sum();
+    let mut parts = vec![format!("{} probed", probed.len())];
+    if !probed.is_empty() {
+        parts.push(format!("{} tokens", format_tokens(tokens)));
+    }
+    let failed = rows.iter().filter(|row| !row.ok && !row.skipped).count();
+    if failed > 0 {
+        parts.push(format!("{failed} failed"));
+    }
+    let skipped = rows.iter().filter(|row| row.skipped).count();
+    if skipped > 0 {
+        parts.push(format!("{skipped} skipped"));
+    }
+    format!("MCP probe: {}.", parts.join(" · "))
+}
+
+/// The toast for a probe command that did not run. An old CLI has no probe
+/// subcommand and reads as an update hint instead of an error.
+pub fn probe_failure(text: &str) -> String {
+    if text.contains("unknown mcp command") || text.contains("unknown command") {
+        return "Update the synca CLI to probe MCP tokens.".to_string();
+    }
+    format!("Failed to probe MCPs: {}", failure_message(text))
+}
+
+/// How long ago a probe timestamp (RFC 3339 UTC) was, for tooltips.
+pub fn probe_age(timestamp: &str) -> Option<String> {
+    let seconds = parse_rfc3339(timestamp)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    let delta = (now - seconds).max(0);
+    Some(match delta {
+        0..=59 => "just now".to_string(),
+        60..=3599 => format!("{}m ago", delta / 60),
+        3600..=86_399 => format!("{}h ago", delta / 3600),
+        _ => format!("{}d ago", delta / 86_400),
+    })
+}
+
+/// Parses the fixed Go timestamp shape (`2006-01-02T15:04:05.000Z`) into Unix
+/// seconds without pulling in a date crate.
+fn parse_rfc3339(text: &str) -> Option<i64> {
+    let (date, rest) = text.split_once('T')?;
+    let mut date = date.split('-');
+    let year: i64 = date.next()?.parse().ok()?;
+    let month: i64 = date.next()?.parse().ok()?;
+    let day: i64 = date.next()?.parse().ok()?;
+    let time = rest.trim_end_matches('Z');
+    let time = time.split('.').next().unwrap_or(time);
+    let mut time = time.split(':');
+    let hour: i64 = time.next()?.parse().ok()?;
+    let minute: i64 = time.next()?.parse().ok()?;
+    let second: i64 = time.next().unwrap_or("0").parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Days from the civil date (Howard Hinnant's algorithm).
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let day_of_era = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let day_number = era * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100
+        + day_of_era
+        - 719_468;
+    Some(((day_number * 24 + hour) * 60 + minute) * 60 + second)
+}
+
 pub fn remove_mcp(
     scope: Scope,
     dir: Option<&str>,
@@ -1609,6 +1750,17 @@ pub fn save_disabled(ids: &[String]) {
     write_list("synca.disabledProviders", ids);
 }
 
+/// skills.sh provider ids toggled on in Settings beyond the six built-in sync
+/// targets. The CLI cannot sync or clear them yet; the choice is saved for
+/// when it learns how.
+pub fn enabled_providers() -> Vec<String> {
+    read_list("synca.enabledProviders")
+}
+
+pub fn save_enabled(ids: &[String]) {
+    write_list("synca.enabledProviders", ids);
+}
+
 pub fn sidebar_width() -> f32 {
     parse_sidebar_width(read_string("synca.sidebarWidth").as_deref())
 }
@@ -1738,7 +1890,12 @@ fn read_list(key: &str) -> Vec<String> {
     if !output.status.success() {
         return Vec::new();
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    parse_defaults_list(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// `defaults read` prints an array item quoted only when the value needs it —
+/// paths arrive as `"/a/b"` but plain words as `grok,` bare. Accept both.
+fn parse_defaults_list(text: &str) -> Vec<String> {
     let mut values = Vec::new();
     for line in text.lines() {
         let line = line.trim().trim_matches(',').trim();
@@ -1747,6 +1904,8 @@ fn read_list(key: &str) -> Vec<String> {
             .and_then(|rest| rest.strip_suffix('"'))
         {
             values.push(value.to_string());
+        } else if !line.is_empty() && line != "(" && line != ")" {
+            values.push(line.to_string());
         }
     }
     values
@@ -1799,6 +1958,18 @@ mod tests {
         assert_eq!(parse_sidebar_width(Some("abc")), SIDEBAR_DEFAULT);
         assert_eq!(parse_sidebar_width(Some("NaN")), SIDEBAR_DEFAULT);
         assert_eq!(parse_sidebar_width(Some("inf")), SIDEBAR_DEFAULT);
+    }
+
+    #[test]
+    fn defaults_list_items_arrive_quoted_or_bare() {
+        // `defaults read` quotes only values that need it: paths keep their
+        // quotes, plain words like provider ids arrive bare.
+        let text = "(\n    \"/Users/x/a project\",\n    goose,\n    eve\n)\n";
+        assert_eq!(
+            parse_defaults_list(text),
+            vec!["/Users/x/a project", "goose", "eve"]
+        );
+        assert!(parse_defaults_list("").is_empty());
     }
 
     #[test]
@@ -2233,6 +2404,71 @@ mod tests {
                 .iter()
                 .any(|arg| arg == "--dry-run")
         );
+    }
+
+    #[test]
+    fn probe_args_and_rows_follow_the_cli_contract() {
+        let args = mcp_probe_args(
+            Scope::Project,
+            Some("/work"),
+            &["context7".to_string(), "linear".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            [
+                "mcp", "probe", "context7", "linear", "--scope", "project", "--cwd", "/work",
+                "--json"
+            ]
+        );
+        assert!(mcp_probe_args(Scope::Project, None, &[]).is_err());
+
+        let rows = parse_probe(include_str!("../fixtures/mcp-probe.json")).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].key, "context7");
+        assert!(rows[0].ok);
+        assert_eq!(rows[0].tokens, 1304);
+        assert!(!rows[1].ok);
+        assert_eq!(rows[1].error, "connection refused");
+        assert!(rows[2].skipped);
+        assert!(parse_probe("synca printed something that is not JSON.").is_err());
+    }
+
+    #[test]
+    fn probe_toasts_summarize_the_run() {
+        let rows = parse_probe(include_str!("../fixtures/mcp-probe.json")).unwrap();
+        assert_eq!(
+            probe_toast(&rows),
+            "MCP probe: 1 probed · ≈1.3k tokens · 1 failed · 1 skipped."
+        );
+        assert_eq!(probe_toast(&[]), "No MCP servers to probe.");
+        let ok_only = parse_probe(
+            r#"[{"key":"a","ok":true,"tools":2,"resources":0,"prompts":0,"tokens":820}]"#,
+        )
+        .unwrap();
+        assert_eq!(probe_toast(&ok_only), "MCP probe: 1 probed · ≈820 tokens.");
+        assert_eq!(
+            probe_failure("unknown mcp command 'probe' (see: synca mcp --help)"),
+            "Update the synca CLI to probe MCP tokens."
+        );
+        assert_eq!(probe_failure(""), "Failed to probe MCPs: Failed");
+    }
+
+    #[test]
+    fn probe_age_buckets_elapsed_time() {
+        assert_eq!(probe_age("not a timestamp"), None);
+        assert_eq!(
+            probe_age("3026-01-01T00:00:00.000Z"),
+            Some("just now".to_string())
+        );
+    }
+
+    #[test]
+    fn format_tokens_uses_the_k_and_m_units() {
+        assert_eq!(format_tokens(820), "≈820");
+        assert_eq!(format_tokens(1_304), "≈1.3k");
+        assert_eq!(format_tokens(12_000), "≈12k");
+        assert_eq!(format_tokens(2_400_000), "≈2.4M");
     }
 
     #[test]

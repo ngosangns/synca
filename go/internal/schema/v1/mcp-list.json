@@ -57,7 +57,23 @@
         "type": ["string", "null"]
       },
       "source_type": {"enum": ["registry", null]},
-      "source_version": {"type": ["string", "null"]}
+      "source_version": {"type": ["string", "null"]},
+      "tokens": {
+        "description": "Estimated context cost from the last synca mcp probe: tool, resource and prompt definitions serialized as JSON, bytes / 4. Absent when never probed or the cached probe predates the current config.",
+        "type": "integer"
+      },
+      "probed_at": {
+        "description": "When the probe ran, RFC 3339 UTC.",
+        "type": "string"
+      },
+      "probe_ok": {
+        "description": "Whether the probe reached the server. False keeps tokens as the partial count.",
+        "type": "boolean"
+      },
+      "probe_error": {
+        "description": "Why the probe failed. Present only when probe_ok is false.",
+        "type": "string"
+      }
     }
   }
 }
