@@ -35,7 +35,7 @@ A skill detail in a narrow (390 pt) window: the list and the detail become separ
 macOS arm64 only. Asset name: `synca-vX.Y.Z-darwin-arm64`. `SHA256SUMS` is for a manual check. `synca update` verifies the GitHub asset digest instead.
 
 ```bash
-TAG=v0.3.0
+TAG=v0.4.0
 ASSET=synca-${TAG}-darwin-arm64
 VER=${TAG#v}
 mkdir -p ~/.local/share/synca/bin ~/.local/bin
@@ -81,7 +81,7 @@ The version lives in the root `VERSION` file and must match `Version` in `go/int
 
 ```bash
 synca                 # print help (same as synca help)
-synca --version       # synca 0.3.0
+synca --version       # synca 0.4.0
 ```
 
 ```text
@@ -124,7 +124,7 @@ synca mcp list --json
 synca mcp list --json --reveal
 ```
 
-Text output is one line per entry with the agents that have it, and `MISMATCH` when copies differ. It does not print env values. `mcp list --json` does: every env value is `••••••` unless you pass `--reveal`. A URL password and a secret-looking arg are masked the same way. The fingerprint still comes from the real config.
+Text output is one line per entry with the agents that have it, and `MISMATCH` when copies differ. It does not print env values. `mcp list --json` does: every env value and header value is `••••••` unless you pass `--reveal`. A URL password and a secret-looking arg are masked the same way. The fingerprint still comes from the real config. Each row also carries `source`, `source_type` and `source_version` when the MCP lock file (`~/.agents/.mcp-lock.json`, or `<project>/.mcp-lock.json`) records a registry install; the file holds names and versions only, never values.
 
 ### Skills
 
@@ -213,6 +213,8 @@ synca mcp install ai.2kw/mcp-server --env AI_2KW_API_KEY=... --dry-run
 synca mcp add my-server --transport stdio --command "npx -y @pkg/server"
 synca mcp add hosted-server --transport http --url https://example.com/mcp
 synca mcp add stream-server --transport sse --url https://example.com/sse
+synca mcp add gated-server --transport http --url https://example.com/mcp --header "Authorization=Bearer ..."
+synca mcp update --dry-run
 synca mcp remove my-server --scope user --dry-run
 synca mcp remove my-server --scope user --yes
 synca mcp remove my-server --agents cursor --keep-hub
@@ -222,11 +224,13 @@ synca mcp remove my-server --agents cursor --keep-hub
 
 `mcp install <name>` fetches the metadata and turns one variant into a server config; its plan and `--json` document are the same `manage-plan.json` as `mcp add`. The variant is chosen in this order: `--package npm|pypi|oci`; `--transport stdio` (same package order); `--transport http|sse` (the matching remote); otherwise npm, pypi, oci, then `streamable-http`, then `sse`. `--package` cannot be combined with `--transport http` or `sse`. npm becomes `npx -y <id>@<version>`, pypi `uvx <id>==<version>`, and oci `docker run -i --rm <id>:<version>`; registry runtime arguments go before the package, package arguments after it.
 
-The installed key is the last segment of the registry name (`ai.2kw/mcp-server` is `mcp-server`); `--name` overrides it. Applying over an existing key needs `--force`, while a dry-run adds a note instead of failing. `--env KEY=VAL` fills a declared variable before its literal value and default; `--arg NAME=VAL` fills an argument (a named flag uses its name without dashes, a positional one uses its `valueHint` or `argN`). Required env vars, variables and arguments without a value exit 2 and list only names. Remote servers arrive without headers in the stored config, so a required header is refused with exit 2 and optional headers are skipped with a note. `--dry-run` still fetches the registry, it only writes nothing. sse keeps the same rule as `mcp add`: it becomes `http` unless the URL ends in `/sse`, and the plan says so.
+The installed key is the last segment of the registry name (`ai.2kw/mcp-server` is `mcp-server`); `--name` overrides it. Applying over an existing key needs `--force`, while a dry-run adds a note instead of failing. `--env KEY=VAL` fills a declared variable before its literal value and default; `--arg NAME=VAL` fills an argument (a named flag uses its name without dashes, a positional one uses its `valueHint` or `argN`). Required env vars, variables and arguments without a value exit 2 and list only names. `--header NAME=VAL` fills a remote header: it overrides a registry header value and satisfies a required header (missing ones exit 2 with names only); an optional header without a value is skipped with a note, and a secret-looking one is shown masked in the plan. A successful install records its registry source in the MCP lock file. `--dry-run` still fetches the registry, it only writes nothing. sse keeps the same rule as `mcp add`: it becomes `http` unless the URL ends in `/sse`, and the plan says so.
+
+`mcp update [names...] [--version V]` re-reads the recorded registry source of each server and reinstalls the current version: env and header values already in the config are kept, a changed version is planned as an update (`upsert_mcp_hub`, `write_mcp_agent`, `record_mcp_origin`), an identical fingerprint reports `up to date:` and a server without a recorded source errors with its name. A newly required env var without a value asks for `--env KEY=VAL` and that server is left out of the plan. `--dry-run` and `--json` behave like `mcp add`.
 
 `mcp add` and `mcp remove` both accept `--dry-run`. `mcp remove` deletes the server from the hub and from agent configs, so off a TTY it exits 6 unless you pass `--yes`. With `--keep-hub --agents a,b` it removes the server from those agent configs only and keeps it in the hub; that unlink is reversible (the next `sync mcp` adds it back) and needs no `--yes`. `--keep-hub` without `--agents` is a usage error.
 
-`mcp add` flags: `--transport stdio|http|sse` (default `stdio`; `local` means stdio, `remote` means http), `--command` (required for stdio, split like a shell line), `--url` (required for http and sse), `--env KEY=VAL` (repeatable; the plan shows the key with the value masked), `--enabled true|false`. `sse` is kept only when the URL ends in `/sse`; otherwise the server is stored as `http`.
+`mcp add` flags: `--transport stdio|http|sse` (default `stdio`; `local` means stdio, `remote` follows the URL — `http`, or `sse` when it ends in `/sse`), `--command` (required for stdio, split like a shell line), `--url` (required for http and sse), `--env KEY=VAL` (repeatable; the plan shows the key with the value masked), `--header NAME=VAL` (repeatable; masked like env), `--enabled true|false`. `sse` is kept only when the URL ends in `/sse`; otherwise the server is stored as `http`.
 
 ### Sync
 
