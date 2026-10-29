@@ -1,0 +1,38 @@
+{
+  "query": "context",
+  "cursor": "",
+  "count": 2,
+  "nextCursor": "eyJvZmZzZXQiOjJ9",
+  "servers": [
+    {
+      "name": "io.github.modelcontextprotocol/server-everything",
+      "title": "Everything",
+      "description": "A test server exercising every MCP feature: resources, prompts, tools and sampling.",
+      "version": "0.0.1-se.9a2d88691934689d",
+      "repositoryUrl": "https://github.com/modelcontextprotocol/servers",
+      "websiteUrl": "https://modelcontextprotocol.io",
+      "packageTypes": ["npm"],
+      "remoteTypes": ["streamable-http"],
+      "status": "active",
+      "isLatest": true,
+      "statusChangedAt": "2026-08-04T09:51:04.5Z",
+      "publishedAt": "2026-08-04T09:51:04.5Z",
+      "updatedAt": "2026-08-04T09:52:04.5Z"
+    },
+    {
+      "name": "io.github.example/context7",
+      "title": "Context7",
+      "description": "Up-to-date code documentation for LLMs and AI code editors.",
+      "version": "1.2.0",
+      "repositoryUrl": "https://github.com/example/context7",
+      "websiteUrl": "",
+      "packageTypes": ["npm"],
+      "remoteTypes": [],
+      "status": "active",
+      "isLatest": true,
+      "statusChangedAt": "2026-07-01T00:00:00.0Z",
+      "publishedAt": "2026-07-01T00:00:00.0Z",
+      "updatedAt": "2026-07-02T00:00:00.0Z"
+    }
+  ]
+}

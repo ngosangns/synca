@@ -255,14 +255,15 @@ func printSkillsHelp() {
 func printMcpHelp() {
 	fmt.Print(`USAGE:
   synca mcp list [--scope user|project] [--cwd <dir>] [--json] [--reveal]
-  synca mcp add <name> [--transport --command --url --env KEY=VAL --enabled --scope --cwd --agents --dry-run --json]
+  synca mcp add <name> [--transport --command --url --env KEY=VAL --header NAME=VAL --enabled --scope --cwd --agents --dry-run --json]
   synca mcp remove <name> [--scope --cwd --agents --keep-hub --yes --dry-run --json]
+  synca mcp update [names...] [--version V] [--scope --cwd --agents --dry-run --json]
   synca mcp search <query> [--limit N] [--cursor C] [--json]
   synca mcp browse [--limit N] [--cursor C] [--json]
   synca mcp info <name> [--version V] [--json]
   synca mcp install <name> [--version V] [--name KEY] [--package npm|pypi|oci]
                        [--transport stdio|http|sse] [--env KEY=VAL]...
-                       [--arg NAME=VAL]... [--enabled true|false]
+                       [--header NAME=VAL]... [--arg NAME=VAL]... [--enabled true|false]
                        [--scope user|project] [--cwd <dir>] [--agents a,b]
                        [--dry-run] [--force] [--json]
 
@@ -281,18 +282,24 @@ server name; --name overrides it. An existing key needs --force on apply; a
 dry-run only adds a note.
 
 --env overrides a declared value or default; --arg overrides an argument value.
-Required env vars, variables and arguments without a value fail with exit 2 and
-list only names. Remote servers with required headers cannot be installed yet
-(MCP headers are not stored); optional headers are skipped with a note.
+--header overrides a registry header value and satisfies a required header;
+header values are stored in the hub and the agent configs. Required env vars,
+variables and arguments without a value fail with exit 2 and list only names.
+Optional registry headers with a value are stored; the rest are skipped with a
+note.
 
 --dry-run still fetches the registry, it just writes nothing. JSON output never
 contains env, header or variable values. MCP_REGISTRY_URL changes the registry
 and MCP_REGISTRY_TOKEN adds a Bearer token for a subregistry.
 
-JSON masks every env value as •••••• unless --reveal. A URL password and a
-secret-looking arg (--token=…, an Authorization header) are masked the same way.
---reveal prints the real values. The text list is a summary and does not print
-them. --env may be repeated.
+mcp update re-reads the registry for servers whose origin was recorded by
+mcp install, keeps their env values, and rewrites changed servers. Servers
+without a recorded registry source are skipped with a note.
+
+JSON masks every env and header value as •••••• unless --reveal. A URL password
+and a secret-looking arg (--token=…, an Authorization header) are masked the
+same way. --reveal prints the real values. The text list is a summary and does
+not print them. --env and --header may be repeated.
 `)
 }
 
@@ -417,7 +424,7 @@ func runSkills(args []string) error {
 
 func runMcp(args []string) error {
 	if len(args) == 0 {
-		return failUsage(jsonIn(args), "usage: synca mcp <list|add|remove|search|browse|info|install>", "see: synca mcp --help")
+		return failUsage(jsonIn(args), "usage: synca mcp <list|add|remove|update|search|browse|info|install>", "see: synca mcp --help")
 	}
 	if isHelp(args[0]) || (len(args) > 1 && hasHelp(args[1:])) {
 		printMcpHelp()
@@ -427,7 +434,7 @@ func runMcp(args []string) error {
 	f := parseFlags(rest, mcpBoolFlags())
 	jsonOut := f.bools["json"]
 	switch sub {
-	case "list", "add", "remove", "search", "browse", "info", "install":
+	case "list", "add", "remove", "update", "search", "browse", "info", "install":
 	default:
 		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
 	}
@@ -443,6 +450,8 @@ func runMcp(args []string) error {
 		return runMcpInfo(f, jsonOut)
 	case "install":
 		return runMcpInstall(f, jsonOut)
+	case "update":
+		return runMcpUpdate(f, jsonOut)
 	}
 	scope, err := scopeOf(f)
 	if err != nil {
@@ -475,7 +484,7 @@ func runMcp(args []string) error {
 		return nil
 	case "add":
 		if len(f.pos) < 1 {
-			return failUsage(jsonOut, "usage: synca mcp add <name> [--transport --command --url --env KEY=VAL --enabled --scope --agents --dry-run --cwd]", "see: synca mcp --help")
+			return failUsage(jsonOut, "usage: synca mcp add <name> [--transport --command --url --env KEY=VAL --header NAME=VAL --enabled --scope --agents --dry-run --cwd]", "see: synca mcp --help")
 		}
 		norm, err := core.McpFromCLI(
 			f.str("transport", "stdio"),
@@ -490,8 +499,17 @@ func runMcp(args []string) error {
 		if err != nil {
 			return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
 		}
+		headers, headerKeys, err := parseHeaderPairs(f.lists["header"])
+		if err != nil {
+			return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
+		}
+		if len(headers) > 0 && norm.Transport == "stdio" {
+			return failUsage(jsonOut, "--header needs an http or sse server", "see: synca mcp --help")
+		}
 		norm.Env = env
 		norm.EnvKeys = keys
+		norm.Headers = headers
+		norm.HeaderKeys = headerKeys
 		filter, err := agentsFilter(f)
 		if err != nil {
 			return asCommandErr(jsonOut, err)
@@ -539,15 +557,17 @@ func mcpAllow(sub string) map[string]bool {
 	case "list":
 		return allow("scope", "cwd", "json", "reveal", "help")
 	case "add":
-		return allow("scope", "cwd", "agents", "transport", "command", "url", "env", "enabled", "dry-run", "json", "help")
+		return allow("scope", "cwd", "agents", "transport", "command", "url", "env", "header", "enabled", "dry-run", "json", "help")
 	case "remove":
 		return allow("scope", "cwd", "agents", "keep-hub", "yes", "dry-run", "json", "help")
+	case "update":
+		return allow("scope", "cwd", "agents", "version", "dry-run", "json", "help")
 	case "search", "browse":
 		return allow("limit", "cursor", "json", "help")
 	case "info":
 		return allow("version", "json", "help")
 	case "install":
-		return allow("version", "name", "transport", "package", "env", "arg", "enabled",
+		return allow("version", "name", "transport", "package", "env", "header", "arg", "enabled",
 			"scope", "cwd", "agents", "dry-run", "force", "json", "help")
 	default:
 		return allow("help")
@@ -556,24 +576,35 @@ func mcpAllow(sub string) map[string]bool {
 
 // parseEnvPairs reads repeated --env KEY=VALUE flags. Keys are sorted.
 func parseEnvPairs(pairs []string) (map[string]string, []string, error) {
-	env := map[string]string{}
+	return parseKeyValuePairs("env", "KEY=VALUE", pairs, func(string) bool { return true })
+}
+
+// parseHeaderPairs reads repeated --header NAME=VALUE flags. Keys are sorted.
+func parseHeaderPairs(pairs []string) (map[string]string, []string, error) {
+	return parseKeyValuePairs("header", "NAME=VALUE", pairs, func(name string) bool {
+		return !strings.ContainsAny(name, " \t:")
+	})
+}
+
+func parseKeyValuePairs(flag, placeholder string, pairs []string, valid func(string) bool) (map[string]string, []string, error) {
+	values := map[string]string{}
 	var keys []string
 	for _, pair := range pairs {
 		key, val, ok := strings.Cut(pair, "=")
 		key = strings.TrimSpace(key)
-		if !ok || key == "" {
-			return nil, nil, fmt.Errorf("invalid --env %s (use KEY=VALUE)", quoteArg(pair))
+		if !ok || key == "" || !valid(key) {
+			return nil, nil, fmt.Errorf("invalid --%s %s (use %s)", flag, quoteArg(pair), placeholder)
 		}
-		if _, exists := env[key]; !exists {
+		if _, exists := values[key]; !exists {
 			keys = append(keys, key)
 		}
-		env[key] = val
+		values[key] = val
 	}
 	sort.Strings(keys)
 	if keys == nil {
 		keys = []string{}
 	}
-	return env, keys, nil
+	return values, keys, nil
 }
 
 func runSync(args []string) error {

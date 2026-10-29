@@ -1,0 +1,43 @@
+{
+  "server": {
+    "name": "io.github.modelcontextprotocol/server-everything",
+    "title": "Everything",
+    "description": "A test server exercising every MCP feature: resources, prompts, tools and sampling.",
+    "version": "0.0.1-se.9a2d88691934689d",
+    "repositoryUrl": "https://github.com/modelcontextprotocol/servers",
+    "websiteUrl": "https://modelcontextprotocol.io",
+    "packageTypes": ["npm"],
+    "remoteTypes": ["streamable-http"],
+    "status": "active",
+    "isLatest": true,
+    "statusChangedAt": "2026-08-04T09:51:04.5Z",
+    "publishedAt": "2026-08-04T09:51:04.5Z",
+    "updatedAt": "2026-08-04T09:52:04.5Z",
+    "packages": [
+      {
+        "registryType": "npm",
+        "registryBaseUrl": "https://registry.npmjs.org",
+        "identifier": "@modelcontextprotocol/server-everything",
+        "version": "0.0.1-se.9a2d88691934689d",
+        "runtimeHint": "npx",
+        "transport": "stdio",
+        "envKeys": ["EVERYTHING_ENV", "DEBUG_LOG"]
+      }
+    ],
+    "remotes": [
+      {
+        "type": "streamable-http",
+        "url": "https://mcp.example.dev/mcp",
+        "headerNames": ["Authorization", "X-Api-Key"],
+        "variables": ["token"]
+      }
+    ],
+    "official": {
+      "status": "active",
+      "isLatest": true,
+      "statusChangedAt": "2026-08-04T09:51:04.5Z",
+      "publishedAt": "2026-08-04T09:51:04.5Z",
+      "updatedAt": "2026-08-04T09:52:04.5Z"
+    }
+  }
+}

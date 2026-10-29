@@ -82,9 +82,9 @@ func validScheme(scheme string) bool {
 	return true
 }
 
-// MaskNormalized returns a copy of n for display. Every env value is
-// SecretMask. URL userinfo passwords and secret-looking command or arg
-// values are masked. Env keys are unchanged. n is not modified.
+// MaskNormalized returns a copy of n for display. Every env and header value
+// is SecretMask. URL userinfo passwords and secret-looking command or arg
+// values are masked. Keys are unchanged. n is not modified.
 func MaskNormalized(n *McpNormalized) *McpNormalized {
 	if n == nil {
 		return nil
@@ -107,6 +107,15 @@ func MaskNormalized(n *McpNormalized) *McpNormalized {
 		out.Env = make(map[string]string, len(n.Env))
 		for k := range n.Env {
 			out.Env[k] = SecretMask
+		}
+	}
+	if n.HeaderKeys != nil {
+		out.HeaderKeys = append([]string{}, n.HeaderKeys...)
+	}
+	if n.Headers != nil {
+		out.Headers = make(map[string]string, len(n.Headers))
+		for k := range n.Headers {
+			out.Headers[k] = SecretMask
 		}
 	}
 	return &out

@@ -57,13 +57,15 @@ fn inventory(count: usize) -> Vec<Entry> {
                 synced: Some(if stale { 2 } else { 3 }),
                 tokens: Some(120 + index % 4_800),
                 mismatch: stale,
-                origin: if kind == Kind::Skill && index % 3 == 0 {
+                origin: if index % 3 == 0 {
                     crate::engine::Origin::Remote
                 } else {
                     crate::engine::Origin::Local
                 },
                 source: (index % 3 == 0).then(|| "vercel-labs/skills".to_string()),
                 source_type: (index % 3 == 0).then(|| "github".to_string()),
+                source_version: None,
+                server: None,
             }
         })
         .collect()

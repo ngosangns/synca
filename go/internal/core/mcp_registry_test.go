@@ -351,20 +351,44 @@ func TestRegistryRemoteHeadersAndVariables(t *testing.T) {
 			"baseUrl": {IsRequired: true},
 		},
 	}
-	_, _, _, err := McpFromRegistry(registryServer(nil, []mcpregistry.Remote{remote}), McpRegistryOptions{})
-	if err == nil || !strings.Contains(err.Error(), "Authorization") || strings.Contains(err.Error(), "top-secret") {
-		t.Fatalf("required header err %v", err)
-	}
+	env := map[string]string{"baseUrl": "https://api.example"}
 
-	remote.Headers = []mcpregistry.Header{{Name: "X-Trace", Value: "internal"}}
-	_, norm, notes := mustRegistry(t, registryServer(nil, []mcpregistry.Remote{remote}), McpRegistryOptions{
-		Env: map[string]string{"baseUrl": "https://api.example"},
-	})
+	// A declared header value is stored, and its value never reaches the notes.
+	_, norm, notes := mustRegistry(t, registryServer(nil, []mcpregistry.Remote{remote}), McpRegistryOptions{Env: env})
 	if norm.Transport != "http" || *norm.URL != "https://api.example/mcp" {
 		t.Fatalf("remote %+v", norm)
 	}
-	if !notesContain(notes, "X-Trace") || notesContain(notes, "internal") {
+	if norm.Headers["Authorization"] != "Bearer top-secret" || len(norm.HeaderKeys) != 1 || norm.HeaderKeys[0] != "Authorization" {
+		t.Fatalf("headers %v %+v", norm.HeaderKeys, norm.Headers)
+	}
+	if !notesContain(notes, "Authorization") || notesContain(notes, "top-secret") {
 		t.Fatalf("header note %v", notes)
+	}
+
+	// A required header without a value needs --header.
+	remote.Headers = []mcpregistry.Header{{Name: "Authorization", IsRequired: true}}
+	if _, _, _, err := McpFromRegistry(registryServer(nil, []mcpregistry.Remote{remote}), McpRegistryOptions{Env: env}); err == nil ||
+		!strings.Contains(err.Error(), "Authorization") || !strings.Contains(err.Error(), "--header") {
+		t.Fatalf("required header err %v", err)
+	}
+	_, norm, notes = mustRegistry(t, registryServer(nil, []mcpregistry.Remote{remote}), McpRegistryOptions{
+		Env:     env,
+		Headers: map[string]string{"Authorization": "Bearer from-flag"},
+	})
+	if norm.Headers["Authorization"] != "Bearer from-flag" || notesContain(notes, "from-flag") {
+		t.Fatalf("header override %+v notes %v", norm.Headers, notes)
+	}
+
+	// An optional header with a value is stored; one without is skipped.
+	remote.Headers = []mcpregistry.Header{{Name: "X-Trace", Value: "internal"}}
+	_, norm, notes = mustRegistry(t, registryServer(nil, []mcpregistry.Remote{remote}), McpRegistryOptions{Env: env})
+	if norm.Headers["X-Trace"] != "internal" || notesContain(notes, "internal") || notesContain(notes, "skipped") {
+		t.Fatalf("optional header %+v notes %v", norm.Headers, notes)
+	}
+	remote.Headers = []mcpregistry.Header{{Name: "X-Trace"}}
+	_, norm, notes = mustRegistry(t, registryServer(nil, []mcpregistry.Remote{remote}), McpRegistryOptions{Env: env})
+	if len(norm.Headers) != 0 || !notesContain(notes, "skipped optional header(s): X-Trace") {
+		t.Fatalf("optional header skip %+v notes %v", norm.Headers, notes)
 	}
 
 	remote.Headers = nil

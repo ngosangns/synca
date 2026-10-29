@@ -118,6 +118,43 @@ func TestMcpNormalizeJSONCommandStringAndArray(t *testing.T) {
 	if bare.Transport != "http" {
 		t.Errorf("bare url transport %q", bare.Transport)
 	}
+	alt := jsonToNormalized(map[string]any{"serverUrl": "https://alt.example/sse"})
+	if alt.Transport != "sse" || alt.URL == nil || *alt.URL != "https://alt.example/sse" {
+		t.Errorf("serverUrl %+v", alt)
+	}
+}
+
+func TestMcpHeadersRoundTripAndFingerprint(t *testing.T) {
+	n := jsonToNormalized(map[string]any{
+		"type":    "sse",
+		"url":     "https://h/sse",
+		"headers": map[string]any{"Authorization": "Bearer t", "X-Trace": "id"},
+	})
+	if n.Headers["Authorization"] != "Bearer t" {
+		t.Errorf("headers %v", n.Headers)
+	}
+	if !reflect.DeepEqual(n.HeaderKeys, []string{"Authorization", "X-Trace"}) {
+		t.Errorf("header keys %v", n.HeaderKeys)
+	}
+	same := McpFingerprint(&McpNormalized{
+		Transport:  "sse",
+		URL:        sp("https://h/sse"),
+		EnvKeys:    []string{},
+		HeaderKeys: []string{"X-Trace", "Authorization"},
+		Headers:    map[string]string{"Authorization": "other", "X-Trace": "other"},
+	})
+	if McpFingerprint(n) != same {
+		t.Errorf("fingerprint must ignore header values and order")
+	}
+	extra := McpFingerprint(&McpNormalized{
+		Transport:  "sse",
+		URL:        sp("https://h/sse"),
+		EnvKeys:    []string{},
+		HeaderKeys: []string{"Authorization", "X-Trace", "X-More"},
+	})
+	if McpFingerprint(n) == extra {
+		t.Errorf("fingerprint must cover header names")
+	}
 }
 
 func TestMcpNormalizeTomlAndOpencode(t *testing.T) {
@@ -156,6 +193,13 @@ func TestMcpNormalizeTomlAndOpencode(t *testing.T) {
 	if oc.Enabled == nil || !*oc.Enabled {
 		t.Errorf("enabled %v", oc.Enabled)
 	}
+	ocSse := jsonToNormalized(map[string]any{
+		"type": "remote",
+		"url":  "https://mcp.example/sse",
+	})
+	if ocSse.Transport != "sse" {
+		t.Errorf("remote sse transport %q", ocSse.Transport)
+	}
 }
 
 func TestMcpTransportAliasesCollapse(t *testing.T) {
@@ -167,6 +211,7 @@ func TestMcpTransportAliasesCollapse(t *testing.T) {
 	}{
 		{sp("local"), nil, true, "stdio"},
 		{sp("remote"), sp("https://x/mcp"), false, "http"},
+		{sp("remote"), sp("https://x/sse"), false, "sse"},
 		{sp("streamable-http"), sp("https://x/mcp"), false, "http"},
 		{sp("sse"), sp("https://x/mcp"), false, "http"},
 		{sp("sse"), sp("https://x/sse"), false, "sse"},

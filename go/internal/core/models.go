@@ -14,7 +14,7 @@ import (
 
 // Version is the release the updater compares with GitHub tags. It matches the
 // repo-root VERSION file; release tooling refuses a tag that does not.
-const Version = "0.3.0"
+const Version = "0.4.0"
 
 // ---------- Scope ----------
 
@@ -117,6 +117,10 @@ type McpNormalized struct {
 	Enabled   *bool             `json:"enabled"`
 	EnvKeys   []string          `json:"env_keys"`
 	Env       map[string]string `json:"env,omitempty"`
+	// HeaderKeys names the remote headers; Headers holds their values for
+	// writing agent configs. Values are masked in every command output.
+	HeaderKeys []string          `json:"header_keys"`
+	Headers    map[string]string `json:"headers,omitempty"`
 }
 
 type McpPresence struct {
@@ -131,6 +135,11 @@ type McpEntry struct {
 	Scope    string        `json:"scope"`
 	Presence []McpPresence `json:"presence"`
 	Mismatch bool          `json:"mismatch"`
+	// Origin records where the server was installed from. It is nil when the
+	// server was never installed through a registry.
+	Source        *string `json:"source"`
+	SourceType    *string `json:"source_type"`
+	SourceVersion *string `json:"source_version"`
 }
 
 type Inventory struct {

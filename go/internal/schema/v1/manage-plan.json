@@ -15,8 +15,10 @@
           "kind": {
             "enum": [
               "copy_skill",
+              "forget_mcp_origin",
               "forget_origin",
               "purge_canonical_skill",
+              "record_mcp_origin",
               "record_origin",
               "remove_mcp_agent",
               "remove_mcp_hub",

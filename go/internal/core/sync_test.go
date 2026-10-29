@@ -251,6 +251,60 @@ func TestMcpOpencodeWriterUsesLocalRemoteSchemaAndKeepsEnv(t *testing.T) {
 	}
 }
 
+func TestMcpHeadersRoundTripAndMerge(t *testing.T) {
+	tmp := t.TempDir()
+	norm := &McpNormalized{
+		Transport:  "http",
+		URL:        sp("https://x/mcp"),
+		EnvKeys:    []string{},
+		Env:        map[string]string{},
+		HeaderKeys: []string{"Authorization", "X-Trace"},
+		Headers:    map[string]string{"Authorization": "Bearer t", "X-Trace": "id"},
+	}
+	paths := map[AgentKind]string{
+		AgentCursor:   "cursor.json",
+		AgentOpenCode: "opencode.json",
+		AgentGrok:     "config.toml",
+	}
+	for agent, name := range paths {
+		path := filepath.Join(tmp, name)
+		if err := WriteMcpToAgent(path, agent, "svc", norm); err != nil {
+			t.Fatalf("%s: %v", agent, err)
+		}
+		servers, err := ReadMcpServers(agent, path)
+		if err != nil {
+			t.Fatalf("%s: %v", agent, err)
+		}
+		got := servers["svc"]
+		if got.Headers["Authorization"] != "Bearer t" || got.Headers["X-Trace"] != "id" {
+			t.Fatalf("%s headers %v", agent, got.Headers)
+		}
+		if !reflect.DeepEqual(got.HeaderKeys, []string{"Authorization", "X-Trace"}) {
+			t.Fatalf("%s header keys %v", agent, got.HeaderKeys)
+		}
+	}
+
+	// The hub keeps a header value the source names but does not carry, and the
+	// source value wins when both have one.
+	hub := filepath.Join(tmp, "hub.json")
+	mustWrite(t, hub, `{"mcpServers":{"svc":{"type":"http","url":"https://x/mcp","headers":{"Authorization":"Bearer old","X-Extra":"keep"}}}}`)
+	src := &McpNormalized{
+		Transport:  "http",
+		URL:        sp("https://x/mcp"),
+		EnvKeys:    []string{},
+		Env:        map[string]string{},
+		HeaderKeys: []string{"Authorization"},
+		Headers:    map[string]string{"Authorization": "Bearer new"},
+	}
+	if err := UpsertMcpJSONHub(hub, "svc", src); err != nil {
+		t.Fatal(err)
+	}
+	headers := readJSON(t, hub)["mcpServers"].(map[string]any)["svc"].(map[string]any)["headers"].(map[string]any)
+	if headers["Authorization"] != "Bearer new" || headers["X-Extra"] != "keep" {
+		t.Errorf("headers after merge: %v", headers)
+	}
+}
+
 func TestMcpWritersKeepArgsWhenCommandIsSingleToken(t *testing.T) {
 	tmp := t.TempDir()
 	norm := &McpNormalized{

@@ -32,7 +32,7 @@ const REGISTRY_DEBOUNCE_MS: u64 = 300;
 /// One result row, and the list area that scrolls them.
 pub(crate) const ROW_H: f32 = 42.;
 pub(crate) const LIST_H: f32 = 252.;
-const ROW_OVERSCAN: f32 = 84.;
+pub(crate) const ROW_OVERSCAN: f32 = 84.;
 /// Height of the file preview, and the longest preview kept.
 const PREVIEW_H: f32 = 260.;
 const PREVIEW_LIMIT: usize = 64 * 1024;

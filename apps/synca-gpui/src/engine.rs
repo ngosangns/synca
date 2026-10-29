@@ -12,6 +12,11 @@ use serde_json::Value;
 
 pub const DOMAIN: &str = "com.ngosangns.synca";
 
+/// Sidebar width bounds. The chrome clamps drags to the same range.
+pub const SIDEBAR_DEFAULT: f32 = 320.;
+pub const SIDEBAR_MIN: f32 = 240.;
+pub const SIDEBAR_MAX: f32 = 560.;
+
 /// The hub row in `skills list --json` / `mcp list --json`. It is a presence
 /// entry, not an agent, so chips and counts skip it.
 pub const CANONICAL_AGENT: &str = "agents";
@@ -226,6 +231,8 @@ pub fn add_mcp(
     transport: &str,
     command: &str,
     url: &str,
+    env: &[(String, String)],
+    headers: &[(String, String)],
     enabled: bool,
     dry_run: bool,
 ) -> Result<Vec<String>, String> {
@@ -243,6 +250,12 @@ pub fn add_mcp(
     if !url.is_empty() {
         args.extend(["--url".into(), url.into()]);
     }
+    for (key, value) in env {
+        args.extend(["--env".into(), format!("{key}={value}")]);
+    }
+    for (name, value) in headers {
+        args.extend(["--header".into(), format!("{name}={value}")]);
+    }
     args.extend([
         "--enabled".into(),
         if enabled { "true" } else { "false" }.into(),
@@ -250,6 +263,25 @@ pub fn add_mcp(
     if dry_run {
         args.push("--dry-run".into());
     }
+    args.push("--json".into());
+    Ok(args)
+}
+
+/// `mcp update [names…] --dry-run --json`: re-read the recorded registry
+/// source and preview what changes.
+pub fn mcp_update_args(
+    scope: Scope,
+    dir: Option<&str>,
+    names: &[String],
+    dry_run: bool,
+) -> Result<Vec<String>, String> {
+    let mut args = vec!["mcp".into(), "update".into()];
+    args.extend(names.iter().map(|name| name.into()));
+    args.extend(scope_args(scope, dir)?);
+    if dry_run {
+        args.push("--dry-run".into());
+    }
+    args.push("--json".into());
     Ok(args)
 }
 
@@ -330,6 +362,37 @@ pub fn origin_tip(origin: Origin, source: Option<&str>, source_type: Option<&str
                 (None, None) => "Installed from a remote source".into(),
             }
         }
+    }
+}
+
+/// Tooltip text for an MCP origin badge. The badge follows the transport
+/// (remote = reached over HTTP, local = runs a command); a recorded registry
+/// install is named in the tooltip either way.
+pub fn mcp_origin_tip(
+    origin: Origin,
+    source: Option<&str>,
+    source_type: Option<&str>,
+    version: Option<&str>,
+) -> String {
+    let reach = match origin {
+        Origin::Remote => "Reached over HTTP(S)".to_string(),
+        Origin::Local => "Runs a local command (stdio)".to_string(),
+    };
+    let source = source.map(str::trim).filter(|text| !text.is_empty());
+    let kind = source_type.map(str::trim).filter(|text| !text.is_empty());
+    let version = version.map(str::trim).filter(|text| !text.is_empty());
+    let provenance = match (source, kind) {
+        (Some(source), Some(kind)) => Some(format!("{source} ({kind})")),
+        (Some(source), None) => Some(source.to_string()),
+        _ => kind.map(|kind| format!("a {kind} source")),
+    };
+    let provenance = provenance.map(|text| match version {
+        Some(version) => format!("{text} v{version}"),
+        None => text,
+    });
+    match provenance {
+        Some(text) => format!("{reach}; installed from {text}"),
+        None => reach,
     }
 }
 
@@ -543,7 +606,7 @@ pub fn registry_install_source(skill: &RegistrySkill) -> Result<String, String> 
     source_at(&skill.source, &skill.slug)
 }
 
-/// `skills install <source> … --json`, the registry install that prints a manage plan.
+/// `mcp install <name> … --json`, the registry install that records provenance.
 pub fn registry_install_args(
     scope: Scope,
     dir: Option<&str>,
@@ -553,6 +616,43 @@ pub fn registry_install_args(
     let mut args = install_args(scope, dir, source, dry_run)?;
     args.push("--json".into());
     Ok(args)
+}
+
+/// `mcp search <query> --limit N --json` against the Official MCP Registry.
+pub fn mcp_registry_search_args(query: &str, limit: usize) -> Result<Vec<String>, String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Err("Type a query to search the MCP registry.".into());
+    }
+    Ok(vec![
+        "mcp".into(),
+        "search".into(),
+        query.into(),
+        "--limit".into(),
+        limit.to_string(),
+        "--json".into(),
+    ])
+}
+
+/// `mcp browse --limit N --json`: the registry's newest servers.
+pub fn mcp_registry_browse_args(limit: usize) -> Vec<String> {
+    vec![
+        "mcp".into(),
+        "browse".into(),
+        "--limit".into(),
+        limit.to_string(),
+        "--json".into(),
+    ]
+}
+
+/// `mcp info <name> --json`: one server's packages and remotes.
+pub fn mcp_registry_info_args(name: &str) -> Result<Vec<String>, String> {
+    Ok(vec![
+        "mcp".into(),
+        "info".into(),
+        positional(name, "server name")?,
+        "--json".into(),
+    ])
 }
 
 /// `skills update [names…]`. With `dry_run` it is the check for updates;
@@ -791,6 +891,55 @@ impl RegistryInfo {
     }
 }
 
+/// One MCP server as the Official MCP Registry lists it.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct McpRegistryServer {
+    pub name: String,
+    pub version: String,
+    pub title: String,
+    pub description: String,
+}
+
+/// One page of MCP registry search or browse results.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct McpRegistryPage {
+    pub servers: Vec<McpRegistryServer>,
+    /// The cursor for the next page, when the registry has one.
+    pub next_cursor: Option<String>,
+}
+
+/// One downloadable package of an MCP server.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct McpRegistryPackage {
+    pub registry_type: String,
+    pub identifier: String,
+    pub version: String,
+    pub transport: String,
+    pub env_keys: Vec<String>,
+}
+
+/// One hosted endpoint of an MCP server.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct McpRegistryRemote {
+    pub remote_type: String,
+    pub url: String,
+    pub header_names: Vec<String>,
+    pub variables: Vec<String>,
+}
+
+/// `mcp info --json` for one server.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct McpRegistryInfo {
+    pub name: String,
+    pub version: String,
+    pub title: String,
+    pub description: String,
+    pub website: String,
+    pub status: String,
+    pub packages: Vec<McpRegistryPackage>,
+    pub remotes: Vec<McpRegistryRemote>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditStatus {
     Pass,
@@ -1022,6 +1171,94 @@ pub fn parse_info(text: &str) -> Result<RegistryInfo, String> {
         hash: field_opt(&value, "hash"),
         files,
     })
+}
+
+/// `mcp search` / `mcp browse --json`: one page of registry servers.
+pub fn parse_mcp_registry_list(text: &str) -> Result<McpRegistryPage, String> {
+    let value = document(text)?;
+    let servers = value
+        .get("servers")
+        .and_then(|item| item.as_array())
+        .map(|items| items.iter().filter_map(mcp_registry_server).collect())
+        .unwrap_or_default();
+    Ok(McpRegistryPage {
+        next_cursor: field_opt(&value, "nextCursor").filter(|cursor| !cursor.is_empty()),
+        servers,
+    })
+}
+
+fn mcp_registry_server(item: &Value) -> Option<McpRegistryServer> {
+    Some(McpRegistryServer {
+        name: field_opt(item, "name")?,
+        version: field_opt(item, "version").unwrap_or_default(),
+        title: field_opt(item, "title").unwrap_or_default(),
+        description: field_opt(item, "description").unwrap_or_default(),
+    })
+}
+
+/// `mcp info --json`: one server's packages and remotes.
+pub fn parse_mcp_registry_info(text: &str) -> Result<McpRegistryInfo, String> {
+    let value = document(text)?;
+    let server = value.get("server").unwrap_or(&value);
+    let packages = server
+        .get("packages")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(McpRegistryPackage {
+                        registry_type: field_opt(item, "registryType")?,
+                        identifier: field_opt(item, "identifier")?,
+                        version: field_opt(item, "version").unwrap_or_default(),
+                        transport: field_opt(item, "transport").unwrap_or_default(),
+                        env_keys: string_list(item, "envKeys"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let remotes = server
+        .get("remotes")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    Some(McpRegistryRemote {
+                        remote_type: field_opt(item, "type")?,
+                        url: field_opt(item, "url").unwrap_or_default(),
+                        header_names: string_list(item, "headerNames"),
+                        variables: string_list(item, "variables"),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(McpRegistryInfo {
+        name: field_opt(server, "name").unwrap_or_default(),
+        version: field_opt(server, "version").unwrap_or_default(),
+        title: field_opt(server, "title").unwrap_or_default(),
+        description: field_opt(server, "description").unwrap_or_default(),
+        website: field_opt(server, "websiteUrl").unwrap_or_default(),
+        status: field_opt(server, "status").unwrap_or_default(),
+        packages,
+        remotes,
+    })
+}
+
+fn string_list(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// `skills audit --json`. An empty list means the registry has no audits.
@@ -1372,6 +1609,31 @@ pub fn save_disabled(ids: &[String]) {
     write_list("synca.disabledProviders", ids);
 }
 
+pub fn sidebar_width() -> f32 {
+    parse_sidebar_width(read_string("synca.sidebarWidth").as_deref())
+}
+
+fn parse_sidebar_width(raw: Option<&str>) -> f32 {
+    raw.and_then(|text| text.trim().parse::<f32>().ok())
+        .filter(|width| width.is_finite())
+        .map_or(SIDEBAR_DEFAULT, |width| {
+            width.clamp(SIDEBAR_MIN, SIDEBAR_MAX)
+        })
+}
+
+pub fn save_sidebar_width(width: f32) {
+    let width = width.clamp(SIDEBAR_MIN, SIDEBAR_MAX);
+    let _ = Command::new("defaults")
+        .args([
+            "write",
+            DOMAIN,
+            "synca.sidebarWidth",
+            "-float",
+            &width.to_string(),
+        ])
+        .status();
+}
+
 /// Same keys as the Swift app's `synca.showActivity` and `synca.showSettings`.
 pub fn read_flag(key: &str) -> bool {
     matches!(
@@ -1526,6 +1788,18 @@ fn delete_key(key: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_stored_sidebar_width_is_clamped_and_junk_falls_back() {
+        assert_eq!(parse_sidebar_width(None), SIDEBAR_DEFAULT);
+        assert_eq!(parse_sidebar_width(Some("420")), 420.);
+        assert_eq!(parse_sidebar_width(Some(" 420.5 ")), 420.5);
+        assert_eq!(parse_sidebar_width(Some("600")), SIDEBAR_MAX);
+        assert_eq!(parse_sidebar_width(Some("100")), SIDEBAR_MIN);
+        assert_eq!(parse_sidebar_width(Some("abc")), SIDEBAR_DEFAULT);
+        assert_eq!(parse_sidebar_width(Some("NaN")), SIDEBAR_DEFAULT);
+        assert_eq!(parse_sidebar_width(Some("inf")), SIDEBAR_DEFAULT);
+    }
 
     #[test]
     fn plan_and_apply_match_the_cli_contract() {
@@ -1979,6 +2253,49 @@ mod tests {
         assert_eq!(browse.skills[0].source_type, "well-known");
         assert_eq!(browse.skills[0].id, "uizze.sh/ui-taste");
         assert!(registry_install_source(&browse.skills[0]).is_err());
+    }
+
+    #[test]
+    fn mcp_registry_fixtures_parse() {
+        let page =
+            parse_mcp_registry_list(include_str!("../fixtures/mcp-registry-search.json")).unwrap();
+        assert_eq!(page.servers.len(), 2);
+        assert_eq!(
+            page.servers[0].name,
+            "io.github.modelcontextprotocol/server-everything"
+        );
+        assert_eq!(page.servers[0].version, "0.0.1-se.9a2d88691934689d");
+        assert_eq!(page.servers[1].title, "Context7");
+        assert_eq!(page.next_cursor.as_deref(), Some("eyJvZmZzZXQiOjJ9"));
+
+        let info =
+            parse_mcp_registry_info(include_str!("../fixtures/mcp-registry-info.json")).unwrap();
+        assert_eq!(
+            info.name,
+            "io.github.modelcontextprotocol/server-everything"
+        );
+        assert_eq!(info.website, "https://modelcontextprotocol.io");
+        let package = &info.packages[0];
+        assert_eq!(package.registry_type, "npm");
+        assert_eq!(
+            package.identifier,
+            "@modelcontextprotocol/server-everything"
+        );
+        assert_eq!(package.env_keys, ["EVERYTHING_ENV", "DEBUG_LOG"]);
+        let remote = &info.remotes[0];
+        assert_eq!(remote.remote_type, "streamable-http");
+        assert_eq!(remote.url, "https://mcp.example.dev/mcp");
+        assert_eq!(remote.header_names, ["Authorization", "X-Api-Key"]);
+    }
+
+    #[test]
+    fn mcp_registry_server_reads_optional_trend_fields() {
+        let text =
+            r#"{"query":"x","count":1,"nextCursor":"","servers":[{"name":"a/b"},{"plain":1}]}"#;
+        let page = parse_mcp_registry_list(text).unwrap();
+        assert_eq!(page.servers.len(), 1, "a row without a name is skipped");
+        assert!(page.next_cursor.is_none(), "an empty cursor is no cursor");
+        assert_eq!(page.servers[0].title, "");
     }
 
     #[test]

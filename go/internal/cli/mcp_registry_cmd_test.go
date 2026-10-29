@@ -232,22 +232,42 @@ func TestMcpInstallHeaders(t *testing.T) {
 	 {"type":"streamable-http","url":"https://api.test/mcp","headers":[{"name":"Authorization","isRequired":true,"value":"Bearer hidden"}]}]}}`
 	mcpRegistryStub(t, required)
 	out, err := runCLI(t, "mcp", "install", "io.test/h", "--dry-run", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := anyStrings(decodeOne(t, out).(map[string]any)["notes"])
+	if !containsLine(notes, "header Authorization=••••••") || strings.Contains(out, "hidden") {
+		t.Fatalf("notes %v out %s", notes, out)
+	}
+
+	noValue := `{"server":{"name":"io.test/h","description":"d","version":"1.0.0","remotes":[
+	 {"type":"streamable-http","url":"https://api.test/mcp","headers":[{"name":"Authorization","isRequired":true}]}]}}`
+	mcpRegistryStub(t, noValue)
+	out, err = runCLI(t, "mcp", "install", "io.test/h", "--dry-run", "--json")
 	if code, _ := statusOf(t, err); code != ExitUsage {
 		t.Fatalf("code %d err %v", code, err)
 	}
-	if !strings.Contains(out, "Authorization") || strings.Contains(out, "hidden") {
+	if !strings.Contains(out, "Authorization") || !strings.Contains(out, "--header") {
 		t.Fatalf("message %s", out)
 	}
 
+	out, err = runCLI(t, "mcp", "install", "io.test/h", "--header", "Authorization=Bearer from-flag", "--dry-run", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "from-flag") {
+		t.Fatalf("header value leaked: %s", out)
+	}
+
 	optional := `{"server":{"name":"io.test/h","description":"d","version":"1.0.0","remotes":[
-	 {"type":"streamable-http","url":"https://api.test/mcp","headers":[{"name":"X-Trace","value":"internal"}]}]}}`
+	 {"type":"streamable-http","url":"https://api.test/mcp","headers":[{"name":"X-Trace"}]}]}}`
 	mcpRegistryStub(t, optional)
 	out, err = runCLI(t, "mcp", "install", "io.test/h", "--dry-run", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	notes := anyStrings(decodeOne(t, out).(map[string]any)["notes"])
-	if !containsLine(notes, "skipped optional header(s): X-Trace") || strings.Contains(out, "internal") {
+	notes = anyStrings(decodeOne(t, out).(map[string]any)["notes"])
+	if !containsLine(notes, "skipped optional header(s): X-Trace") {
 		t.Fatalf("notes %v", notes)
 	}
 }
@@ -321,4 +341,71 @@ func containsLine(lines []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestMcpInstallRecordsOriginAndListReportsIt(t *testing.T) {
+	home := setHome(t)
+	mcpRegistryStub(t, mcpRegistryDetailBody)
+	out, err := runCLI(t, "mcp", "install", "io.test/server", "--env", "API_KEY=x", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := asStrings(t, decodeOne(t, out).(map[string]any)["applied"])
+	if !containsLine(applied, "recorded origin of mcp server: io.test/server") {
+		t.Fatalf("applied %v", applied)
+	}
+	lock, err := os.ReadFile(filepath.Join(home, ".agents", ".mcp-lock.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"source": "io.test/server"`, `"variant": "npm"`, `"envKeys"`} {
+		if !strings.Contains(string(lock), want) {
+			t.Fatalf("lock missing %s: %s", want, lock)
+		}
+	}
+
+	list, err := runCLI(t, "mcp", "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := entryByKey(t, decodeOne(t, list), "server")
+	if entry["source"] != "io.test/server" || entry["source_type"] != "registry" || entry["source_version"] != "1.0.0" {
+		t.Fatalf("provenance %v %v %v", entry["source"], entry["source_type"], entry["source_version"])
+	}
+
+	// Removing the server forgets the origin.
+	if _, err := runCLI(t, "mcp", "remove", "server", "--yes", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	lock, err = os.ReadFile(filepath.Join(home, ".agents", ".mcp-lock.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(lock), "io.test/server") {
+		t.Fatalf("origin survived remove: %s", lock)
+	}
+}
+
+func TestMcpUpdateCommandDryRunAndUnknownKey(t *testing.T) {
+	setHome(t)
+	mcpRegistryStub(t, mcpRegistryDetailBody)
+	if _, err := runCLI(t, "mcp", "install", "io.test/server", "--env", "API_KEY=x", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI(t, "mcp", "update", "--dry-run", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := decodeOne(t, out).(map[string]any)
+	mustValidate(t, "manage-plan.json", doc)
+	notes := asStrings(t, doc["notes"])
+	if !containsLine(notes, "up to date: server (1.0.0)") {
+		t.Fatalf("notes %v", notes)
+	}
+
+	if _, err := runCLI(t, "mcp", "update", "nope", "--dry-run", "--json"); err == nil {
+		t.Fatal("updated a server with no recorded source")
+	} else if code, _ := statusOf(t, err); code != ExitUsage {
+		t.Fatalf("code %d", code)
+	}
 }

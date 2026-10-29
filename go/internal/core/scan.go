@@ -208,6 +208,22 @@ func ScanMcp(scope Scope, cwd string) []McpEntry {
 		out = append(out, e)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	if origins, err := readMcpLock(McpLockPath(scope, cwd)); err == nil {
+		for i := range out {
+			entry, ok := origins[out[i].Key]
+			if !ok {
+				continue
+			}
+			source, sourceType, version := entry.Source, entry.SourceType, entry.Version
+			out[i].Source = &source
+			if sourceType != "" {
+				out[i].SourceType = &sourceType
+			}
+			if version != "" {
+				out[i].SourceVersion = &version
+			}
+		}
+	}
 	return out
 }
 
@@ -235,7 +251,25 @@ func McpFingerprint(n *McpNormalized) string {
 	keys := append([]string{}, n.EnvKeys...)
 	sort.Strings(keys)
 	parts = append(parts, "env:"+strings.Join(keys, ","))
+	// Header values are secrets; the fingerprint covers their names only.
+	if headerKeys := headerKeysOf(n); len(headerKeys) > 0 {
+		sort.Strings(headerKeys)
+		parts = append(parts, "hdr:"+strings.Join(headerKeys, ","))
+	}
 	return HashBytes([]byte(strings.Join(parts, "|")))
+}
+
+// headerKeysOf falls back to the map keys so a normalized value built by hand
+// still fingerprints its headers.
+func headerKeysOf(n *McpNormalized) []string {
+	if len(n.HeaderKeys) > 0 {
+		return append([]string{}, n.HeaderKeys...)
+	}
+	keys := make([]string, 0, len(n.Headers))
+	for k := range n.Headers {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func ReadMcpServers(agent AgentKind, path string) (map[string]McpNormalized, error) {
@@ -323,7 +357,14 @@ func CanonicalTransport(raw, url *string, hasCommand bool) string {
 			return "sse"
 		}
 		return "http"
-	case "http", "remote", "streamable-http", "streamable_http", "url":
+	case "remote":
+		// OpenCode writes "remote" for both HTTP and SSE; the URL is the only
+		// hint left, so use the same /sse heuristic as an untyped entry.
+		if sseEndpoint {
+			return "sse"
+		}
+		return "http"
+	case "http", "streamable-http", "streamable_http", "url":
 		return "http"
 	case "":
 		if url != nil && !hasCommand {
@@ -373,6 +414,40 @@ func strSlice(v any) []string {
 	return out
 }
 
+// urlFrom reads the endpoint under any of the names agents use for it.
+func urlFrom(cfg map[string]any) *string {
+	for _, key := range []string{"url", "serverUrl", "httpUrl"} {
+		if u, ok := cfg[key]; ok {
+			if s := strPtr(u); s != nil && strings.TrimSpace(*s) != "" {
+				return s
+			}
+		}
+	}
+	return nil
+}
+
+// stringMap reads a string-valued object, marshalling other values so a
+// number or bool keeps its text form. Keys are returned sorted.
+func stringMap(v any) (map[string]string, []string) {
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return map[string]string{}, []string{}
+	}
+	out := map[string]string{}
+	keys := make([]string, 0, len(obj))
+	for k, value := range obj {
+		keys = append(keys, k)
+		if s, ok := value.(string); ok {
+			out[k] = s
+		} else {
+			b, _ := json.Marshal(value)
+			out[k] = string(b)
+		}
+	}
+	sort.Strings(keys)
+	return out, keys
+}
+
 func jsonToNormalized(cfg map[string]any) *McpNormalized {
 	var rawType *string
 	if t, ok := cfg["type"]; ok {
@@ -380,7 +455,7 @@ func jsonToNormalized(cfg map[string]any) *McpNormalized {
 	} else if t, ok := cfg["transport"]; ok {
 		rawType = strPtr(t)
 	}
-	url := strPtr(cfg["url"])
+	url := urlFrom(cfg)
 	_, hasCommand := cfg["command"]
 	transport := CanonicalTransport(rawType, url, hasCommand)
 
@@ -402,33 +477,23 @@ func jsonToNormalized(cfg map[string]any) *McpNormalized {
 		enabled = &v
 	}
 
-	env := map[string]string{}
-	envKeys := []string{}
-	var envObj map[string]any
-	if e, ok := cfg["env"].(map[string]any); ok {
-		envObj = e
-	} else if e, ok := cfg["environment"].(map[string]any); ok {
-		envObj = e
+	envSource, ok := cfg["env"]
+	if !ok {
+		envSource = cfg["environment"]
 	}
-	for k, v := range envObj {
-		envKeys = append(envKeys, k)
-		if s, ok := v.(string); ok {
-			env[k] = s
-		} else {
-			b, _ := json.Marshal(v)
-			env[k] = string(b)
-		}
-	}
-	sort.Strings(envKeys)
+	env, envKeys := stringMap(envSource)
+	headers, headerKeys := stringMap(cfg["headers"])
 
 	return &McpNormalized{
-		Transport: transport,
-		Command:   command,
-		URL:       url,
-		Args:      args,
-		Enabled:   enabled,
-		EnvKeys:   envKeys,
-		Env:       env,
+		Transport:  transport,
+		Command:    command,
+		URL:        url,
+		Args:       args,
+		Enabled:    enabled,
+		EnvKeys:    envKeys,
+		Env:        env,
+		HeaderKeys: headerKeys,
+		Headers:    headers,
 	}
 }
 
@@ -439,7 +504,7 @@ func tomlToNormalized(cfg map[string]any) *McpNormalized {
 	} else if t, ok := cfg["transport"]; ok {
 		rawType = strPtr(t)
 	}
-	url := strPtr(cfg["url"])
+	url := urlFrom(cfg)
 	_, hasCommand := cfg["command"]
 	transport := CanonicalTransport(rawType, url, hasCommand)
 
@@ -458,28 +523,18 @@ func tomlToNormalized(cfg map[string]any) *McpNormalized {
 		enabled = &b
 	}
 
-	env := map[string]string{}
-	envKeys := []string{}
-	if tbl, ok := cfg["env"].(map[string]any); ok {
-		for k, v := range tbl {
-			envKeys = append(envKeys, k)
-			if s, ok := v.(string); ok {
-				env[k] = s
-			} else {
-				b, _ := json.Marshal(v)
-				env[k] = string(b)
-			}
-		}
-	}
-	sort.Strings(envKeys)
+	env, envKeys := stringMap(cfg["env"])
+	headers, headerKeys := stringMap(cfg["headers"])
 
 	return &McpNormalized{
-		Transport: transport,
-		Command:   command,
-		URL:       url,
-		Args:      args,
-		Enabled:   enabled,
-		EnvKeys:   envKeys,
-		Env:       env,
+		Transport:  transport,
+		Command:    command,
+		URL:        url,
+		Args:       args,
+		Enabled:    enabled,
+		EnvKeys:    envKeys,
+		Env:        env,
+		HeaderKeys: headerKeys,
+		Headers:    headers,
 	}
 }

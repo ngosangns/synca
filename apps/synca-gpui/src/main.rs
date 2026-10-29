@@ -5,6 +5,7 @@
 mod bench;
 mod engine;
 mod markdown_view;
+mod mcp_registry;
 #[cfg(feature = "devtools")]
 mod perf;
 mod providers;
@@ -31,11 +32,12 @@ use gpui::{
     prelude::*, px, rems,
 };
 use ns_ui::{
-    Ask, IconTone, SIDEBAR_INSET, SIDEBAR_ROW_H, SIDEBAR_SECTION_H, SidebarKey, Tone, ask_banner,
-    button, chip, chrome_busy_wide, field, icon, icon_button, loading_pane, outline_button,
-    quiet_button, quiet_button_md, section_label, segmented, side_column, sidebar_button,
-    sidebar_empty, sidebar_keys, sidebar_reveal, sidebar_row, sidebar_scroll_tracked, sidebar_step,
-    skeleton_list, tab_strip, tab_strip_equal, text_field, theme, working_row,
+    Ask, IconTone, SIDEBAR_INSET, SIDEBAR_ROW_H, SIDEBAR_SECTION_H, SidebarKey, SidebarResize,
+    Tone, ask_banner, button, chip, chrome_busy_resizable, field, icon, icon_button, loading_pane,
+    outline_button, quiet_button, quiet_button_md, section_label, segmented, side_column,
+    sidebar_button, sidebar_empty, sidebar_keys, sidebar_reveal, sidebar_row,
+    sidebar_scroll_tracked, sidebar_step, skeleton_list, tab_strip, tab_strip_equal, text_field,
+    theme, working_row,
 };
 use serde::Deserialize;
 
@@ -46,7 +48,8 @@ gpui::actions!(
         ToggleSettings,
         InstallSkillTab,
         InstallMcpTab,
-        InstallRegistryTab
+        InstallRegistryTab,
+        InstallMcpRegistryTab
     ]
 );
 
@@ -66,13 +69,14 @@ enum McpTransportKind {
     Json,
 }
 
-/// The two tabs of the one Install dialog. Each keeps its own form fields, so
+/// The tabs of the one Install dialog. Each keeps its own form fields, so
 /// switching never clears what was typed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum InstallTab {
     Skill,
     Mcp,
     Registry,
+    McpRegistry,
 }
 
 impl InstallTab {
@@ -81,6 +85,7 @@ impl InstallTab {
             InstallTab::Skill => "skill",
             InstallTab::Mcp => "mcp",
             InstallTab::Registry => "registry",
+            InstallTab::McpRegistry => "mcp-registry",
         }
     }
 
@@ -89,6 +94,7 @@ impl InstallTab {
         match key {
             "mcp" => InstallTab::Mcp,
             "registry" => InstallTab::Registry,
+            "mcp-registry" => InstallTab::McpRegistry,
             _ => InstallTab::Skill,
         }
     }
@@ -98,6 +104,9 @@ impl InstallTab {
             InstallTab::Skill => "Choose a local or remote source, then preview the dry-run.",
             InstallTab::Mcp => "Define a connection, then preview the config.",
             InstallTab::Registry => "Find skills on skills.sh, then preview the install.",
+            InstallTab::McpRegistry => {
+                "Find servers in the Official MCP Registry, then preview the install."
+            }
         }
     }
 }
@@ -156,6 +165,8 @@ enum PickerAction {
     Unlink,
     Purge,
     RemoveMcp,
+    /// Remove the MCP server from the checked agents but keep the hub config.
+    UnlinkMcp,
 }
 
 impl PickerAction {
@@ -164,6 +175,7 @@ impl PickerAction {
             PickerAction::Unlink => "Unlink",
             PickerAction::Purge => "Purge",
             PickerAction::RemoveMcp => "Remove",
+            PickerAction::UnlinkMcp => "Unlink",
         }
     }
 }
@@ -203,6 +215,8 @@ enum Apply {
     Registry(String),
     /// Update the named skills, or every remote skill when empty.
     Update(Vec<String>),
+    /// Re-run `mcp update` for the named servers.
+    UpdateMcp(Vec<String>),
     /// Reinstall every remote skill the lock file records.
     Restore,
     AddMcp {
@@ -210,6 +224,8 @@ enum Apply {
         transport: String,
         command: String,
         url: String,
+        env: Vec<(String, String)>,
+        headers: Vec<(String, String)>,
         enabled: bool,
     },
 }
@@ -237,11 +253,28 @@ struct Entry {
     /// bytes / 4 for an MCP entry.
     tokens: Option<usize>,
     mismatch: bool,
-    /// Where a skill was installed from. MCP entries are always local.
+    /// Where the entry came from: a skill's lock file, or for MCP the registry
+    /// origin recorded at install. `None` fields mean local and unrecorded.
     origin: engine::Origin,
-    /// The lock file's source (`owner/repo`) and its type; `None` when local.
+    /// The lock file's source (`owner/repo`, registry name) and its type.
     source: Option<String>,
     source_type: Option<String>,
+    /// The recorded registry version; MCP only.
+    source_version: Option<String>,
+    /// What the server runs: transport, endpoint, env/header names. MCP only.
+    server: Option<ServerSpec>,
+}
+
+/// The preferred presence's normalized config of an MCP entry, for the detail
+/// pane's Server section.
+#[derive(Clone, Debug, Default)]
+struct ServerSpec {
+    transport: Option<String>,
+    /// The URL, or the command with its arguments.
+    endpoint: Option<String>,
+    enabled: Option<bool>,
+    env_keys: Vec<String>,
+    header_keys: Vec<String>,
 }
 
 struct PlanView {
@@ -263,6 +296,9 @@ struct MarkdownCache {
 
 /// Quiet period after a keystroke before the sidebar refilters.
 const QUERY_DEBOUNCE_MS: u64 = 130;
+
+/// Quiet period after the sidebar edge stops moving before the width is saved.
+const SIDEBAR_SAVE_MS: u64 = 250;
 
 /// Sidebar rows built above and below the viewport, so a fast scroll never
 /// shows a gap while the next frame catches up.
@@ -394,16 +430,20 @@ impl InventoryCache {
         self.origin = entries
             .iter()
             .map(|entry| {
-                (entry.kind == Kind::Skill).then(|| {
-                    (
+                let tip = match entry.kind {
+                    Kind::Skill => engine::origin_tip(
                         entry.origin,
-                        SharedString::from(engine::origin_tip(
-                            entry.origin,
-                            entry.source.as_deref(),
-                            entry.source_type.as_deref(),
-                        )),
-                    )
-                })
+                        entry.source.as_deref(),
+                        entry.source_type.as_deref(),
+                    ),
+                    Kind::Mcp => engine::mcp_origin_tip(
+                        entry.origin,
+                        entry.source.as_deref(),
+                        entry.source_type.as_deref(),
+                        entry.source_version.as_deref(),
+                    ),
+                };
+                Some((entry.origin, SharedString::from(tip)))
             })
             .collect();
         self.synced_n = entries.iter().map(|entry| entry.synced).collect();
@@ -677,12 +717,17 @@ struct SyncaWindow {
     mcp_transport_kind: McpTransportKind,
     mcp_command: String,
     mcp_url: String,
+    /// Multiline `KEY=VALUE` lines for the install form.
+    mcp_env: String,
+    mcp_headers: String,
     mcp_enabled: bool,
     /// Ely owns the caret, selection, and undo history of every field; the
     /// subscriptions mirror each value into the plain strings the CLI reads.
     source_input: Entity<TextInput>,
     name_input: Entity<TextInput>,
     command_input: Entity<TextInput>,
+    mcp_env_input: Entity<TextInput>,
+    mcp_headers_input: Entity<TextInput>,
     mcp_config: String,
     mcp_config_input: Entity<TextInput>,
     _mcp_config_sub: Subscription,
@@ -694,6 +739,8 @@ struct SyncaWindow {
     _command_sub: Subscription,
     _url_sub: Subscription,
     url_input: Entity<TextInput>,
+    _mcp_env_sub: Subscription,
+    _mcp_headers_sub: Subscription,
     _query_sub: Subscription,
     ask: Option<Ask>,
     pending: Option<Pending>,
@@ -718,10 +765,18 @@ struct SyncaWindow {
     registry: registry::RegistryState,
     registry_input: Entity<TextInput>,
     _registry_sub: Subscription,
+    /// The MCP Registry tab of the Install dialog.
+    mcp_registry: mcp_registry::McpRegistryState,
+    mcp_registry_input: Entity<TextInput>,
+    _mcp_registry_sub: Subscription,
     /// Settings → All skills.sh providers.
     providers: providers::ProvidersState,
     providers_input: Entity<TextInput>,
     _providers_sub: Subscription,
+    /// Sidebar width the drag edge changes, persisted in defaults.
+    sidebar_width: f32,
+    /// Bumped for every width change so only the latest save fires.
+    sidebar_job: u64,
 }
 
 impl SyncaWindow {
@@ -731,6 +786,16 @@ impl SyncaWindow {
         let name_input = cx.new(|cx| TextInput::new(window, cx).placeholder("server name"));
         let command_input = cx.new(|cx| TextInput::new(window, cx).placeholder("command"));
         let url_input = cx.new(|cx| TextInput::new(window, cx).placeholder("https://…"));
+        let mcp_env_input = cx.new(|cx| {
+            TextInput::new(window, cx)
+                .multi_line(3, 12)
+                .placeholder("API_KEY=…\nLOG_LEVEL=debug")
+        });
+        let mcp_headers_input = cx.new(|cx| {
+            TextInput::new(window, cx)
+                .multi_line(3, 12)
+                .placeholder("Authorization=Bearer …\nX-Api-Key=…")
+        });
         let mcp_config_input = cx.new(|cx| {
             TextInput::new(window, cx)
                 .multi_line(5, 12)
@@ -770,6 +835,16 @@ impl SyncaWindow {
             &url_input,
             window,
             mirror(&url_input, |this| &mut this.mcp_url),
+        );
+        let _mcp_env_sub = cx.subscribe_in(
+            &mcp_env_input,
+            window,
+            mirror(&mcp_env_input, |this| &mut this.mcp_env),
+        );
+        let _mcp_headers_sub = cx.subscribe_in(
+            &mcp_headers_input,
+            window,
+            mirror(&mcp_headers_input, |this| &mut this.mcp_headers),
         );
         let _mcp_config_sub = cx.subscribe_in(
             &mcp_config_input,
@@ -828,6 +903,28 @@ impl SyncaWindow {
         );
         let providers_input =
             cx.new(|cx| TextInput::new(window, cx).placeholder("Filter providers by name or id"));
+        let mcp_registry_input =
+            cx.new(|cx| TextInput::new(window, cx).placeholder("Search the Official MCP Registry"));
+        let _mcp_registry_sub = cx.subscribe_in(
+            &mcp_registry_input,
+            window,
+            |this, _, event: &InputEvent, _, cx| match event {
+                InputEvent::Changed => {
+                    let text = this.mcp_registry_input.read(cx).text().to_string();
+                    if text != this.mcp_registry.query {
+                        this.mcp_registry.query = text;
+                        this.mcp_registry_query_changed(cx);
+                    }
+                    cx.notify();
+                }
+                InputEvent::Submit => {
+                    this.mcp_registry.query = this.mcp_registry_input.read(cx).text().to_string();
+                    this.mcp_registry_search_now(cx);
+                    cx.notify();
+                }
+                _ => {}
+            },
+        );
         let _providers_sub = cx.subscribe_in(
             &providers_input,
             window,
@@ -878,14 +975,20 @@ impl SyncaWindow {
             mcp_transport_kind: McpTransportKind::Stdio,
             mcp_command: String::new(),
             mcp_url: String::new(),
+            mcp_env: String::new(),
+            mcp_headers: String::new(),
             mcp_enabled: true,
             source_input,
             name_input,
             command_input,
             url_input,
+            mcp_env_input,
+            mcp_headers_input,
             mcp_config: String::new(),
             mcp_config_input,
             _mcp_config_sub,
+            _mcp_env_sub,
+            _mcp_headers_sub,
             query: String::new(),
             query_input,
             _source_sub,
@@ -911,9 +1014,14 @@ impl SyncaWindow {
             registry: registry::RegistryState::new(),
             registry_input,
             _registry_sub,
+            mcp_registry: mcp_registry::McpRegistryState::new(),
+            mcp_registry_input,
+            _mcp_registry_sub,
             providers: providers::ProvidersState::new(),
             providers_input,
             _providers_sub,
+            sidebar_width: engine::sidebar_width(),
+            sidebar_job: 0,
         };
         window_state.reload(cx);
         window_state.load_activity();
@@ -1094,6 +1202,31 @@ impl SyncaWindow {
         .detach();
     }
 
+    /// Persists the sidebar width once a drag settles; a newer drag bumps the
+    /// job and the older timer does nothing.
+    fn schedule_sidebar_save(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_job = self.sidebar_job.wrapping_add(1);
+        let job = self.sidebar_job;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(SIDEBAR_SAVE_MS))
+                .await;
+            this.update(cx, |this, cx| {
+                if this.sidebar_job != job {
+                    return;
+                }
+                let width = this.sidebar_width;
+                // `defaults` shells out, so it must not run on the UI thread.
+                cx.background_spawn(async move {
+                    engine::save_sidebar_width(width);
+                })
+                .detach();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Sets the search from outside the input (dev commands, state restore)
     /// and refilters at once, so the next draw sees the new rows.
     #[cfg(feature = "devtools")]
@@ -1159,6 +1292,7 @@ impl SyncaWindow {
             KeyBinding::new("cmd-1", InstallSkillTab, None),
             KeyBinding::new("cmd-2", InstallMcpTab, None),
             KeyBinding::new("cmd-3", InstallRegistryTab, None),
+            KeyBinding::new("cmd-4", InstallMcpRegistryTab, None),
         ]);
         let app: &mut App = cx;
         let activity = entity.clone();
@@ -1177,6 +1311,12 @@ impl SyncaWindow {
         app.on_action(move |_: &InstallRegistryTab, app| {
             registry_tab.update(app, |this, cx| {
                 this.pick_install_tab(InstallTab::Registry, cx)
+            });
+        });
+        let mcp_registry_tab = entity.clone();
+        app.on_action(move |_: &InstallMcpRegistryTab, app| {
+            mcp_registry_tab.update(app, |this, cx| {
+                this.pick_install_tab(InstallTab::McpRegistry, cx)
             });
         });
         app.on_action(move |_: &ToggleSettings, app| {
@@ -1350,6 +1490,26 @@ impl SyncaWindow {
         }
     }
 
+    /// `mcp update --dry-run`: re-read the recorded registry source of the
+    /// named servers. Apply runs the same command without the dry run.
+    fn plan_mcp_updates(&mut self, names: Vec<String>, cx: &mut Context<Self>) {
+        match engine::mcp_update_args(self.scope, self.dir(), &names, true) {
+            Ok(args) => {
+                let title = match names.as_slice() {
+                    [one] => format!("update mcp · {one}"),
+                    many => format!("update {} MCP servers", many.len()),
+                };
+                self.run(
+                    engine::with_agents(args, &self.disabled),
+                    "dry-run",
+                    cx,
+                    After::Plan(title, Apply::UpdateMcp(names)),
+                );
+            }
+            Err(error) => self.toast(error, cx),
+        }
+    }
+
     /// `skills restore --dry-run`: what the lock file would reinstall.
     fn plan_restore(&mut self, cx: &mut Context<Self>) {
         match engine::restore_args(self.scope, self.dir(), true) {
@@ -1365,11 +1525,49 @@ impl SyncaWindow {
 
     /// Opens the Install dialog on `tab`.
     fn open_install(&mut self, tab: InstallTab, cx: &mut Context<Self>) {
+        if tab == InstallTab::Mcp {
+            self.reset_mcp_form(cx);
+        }
         self.onboarding = Some(tab);
         if tab == InstallTab::Registry {
             self.registry_activate(cx);
         }
+        if tab == InstallTab::McpRegistry {
+            self.mcp_registry_activate(cx);
+        }
         cx.notify();
+    }
+
+    /// Fills one mirrored install-form field from a dev request.
+    fn set_mcp_field(
+        slot: &mut String,
+        input: &Entity<TextInput>,
+        value: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(text) = value else {
+            return;
+        };
+        input.update(cx, |input, cx| input.set_text(text.to_string(), cx));
+        *slot = text.to_string();
+    }
+
+    /// Clears every MCP install-form field, inputs included.
+    fn reset_mcp_form(&mut self, cx: &mut Context<Self>) {
+        for (slot, input) in [
+            (&mut self.mcp_name, &self.name_input),
+            (&mut self.mcp_command, &self.command_input),
+            (&mut self.mcp_url, &self.url_input),
+            (&mut self.mcp_env, &self.mcp_env_input),
+            (&mut self.mcp_headers, &self.mcp_headers_input),
+            (&mut self.mcp_config, &self.mcp_config_input),
+        ] {
+            input.update(cx, |input, cx| input.set_text(String::new(), cx));
+            slot.clear();
+        }
+        self.mcp_transport_kind = McpTransportKind::Stdio;
+        self.mcp_transport = "stdio".into();
+        self.mcp_enabled = true;
     }
 
     fn pick_install_tab(&mut self, tab: InstallTab, cx: &mut Context<Self>) {
@@ -1377,6 +1575,9 @@ impl SyncaWindow {
             self.onboarding = Some(tab);
             if tab == InstallTab::Registry {
                 self.registry_activate(cx);
+            }
+            if tab == InstallTab::McpRegistry {
+                self.mcp_registry_activate(cx);
             }
             cx.notify();
         } else {
@@ -1426,14 +1627,49 @@ impl SyncaWindow {
             self.toast("Enter an MCP name or JSON config with a name.", cx);
             return;
         }
+        let env = match parse_key_lines("Environment", &self.mcp_env) {
+            Ok(pairs) => pairs,
+            Err(error) => {
+                self.toast(error, cx);
+                return;
+            }
+        };
+        let headers = match parse_key_lines("Headers", &self.mcp_headers) {
+            Ok(pairs) => pairs,
+            Err(error) => {
+                self.toast(error, cx);
+                return;
+            }
+        };
+        let command = self.mcp_command.trim();
+        let url = self.mcp_url.trim();
+        match self.mcp_transport_kind {
+            McpTransportKind::Stdio if command.is_empty() => {
+                self.toast("A stdio server needs a command.", cx);
+                return;
+            }
+            McpTransportKind::Http | McpTransportKind::Sse => {
+                if url.is_empty() {
+                    self.toast("An http or sse server needs a URL.", cx);
+                    return;
+                }
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    self.toast("The URL must start with http:// or https://.", cx);
+                    return;
+                }
+            }
+            _ => {}
+        }
         self.onboarding = None;
         match engine::add_mcp(
             self.scope,
             self.dir(),
             &name,
             &self.mcp_transport,
-            self.mcp_command.trim(),
-            self.mcp_url.trim(),
+            command,
+            url,
+            &env,
+            &headers,
             self.mcp_enabled,
             true,
         ) {
@@ -1441,8 +1677,10 @@ impl SyncaWindow {
                 let apply = Apply::AddMcp {
                     name: name.clone(),
                     transport: self.mcp_transport.clone(),
-                    command: self.mcp_command.trim().into(),
-                    url: self.mcp_url.trim().into(),
+                    command: command.into(),
+                    url: url.into(),
+                    env,
+                    headers,
                     enabled: self.mcp_enabled,
                 };
                 self.run(
@@ -1504,59 +1742,23 @@ impl SyncaWindow {
     }
 
     fn apply_json_mcp_fields(window: &mut SyncaWindow) -> Result<(), String> {
-        let value: serde_json::Value = serde_json::from_str(window.mcp_config.trim())
-            .map_err(|error| format!("Invalid MCP JSON: {error}"))?;
-        let root = value
-            .get("mcpServers")
-            .and_then(|value| value.as_object())
-            .and_then(|servers| servers.values().next())
-            .unwrap_or(&value);
-        let name = root
-            .get("name")
-            .and_then(|value| value.as_str())
-            .or_else(|| {
-                value
-                    .get("mcpServers")
-                    .and_then(|value| value.as_object())
-                    .and_then(|servers| servers.keys().next())
-                    .map(|value| value.as_str())
-            })
-            .ok_or_else(|| "MCP JSON needs a name or an mcpServers key.".to_string())?;
-        let transport = root
-            .get("transport")
-            .or_else(|| root.get("type"))
-            .and_then(|value| value.as_str())
-            .unwrap_or("stdio")
-            .to_lowercase();
-        window.mcp_name = name.to_string();
-        window.mcp_transport = transport.clone();
-        window.mcp_transport_kind = match transport.as_str() {
-            "http" | "remote" => McpTransportKind::Http,
+        let parsed = parse_json_mcp(&window.mcp_config)?;
+        window.mcp_name = parsed.name;
+        window.mcp_transport = parsed.transport.clone();
+        window.mcp_transport_kind = match parsed.transport.as_str() {
+            "http" => McpTransportKind::Http,
             "sse" => McpTransportKind::Sse,
             _ => McpTransportKind::Stdio,
         };
-        if let Some(url) = root.get("url").and_then(|value| value.as_str()) {
-            window.mcp_url = url.to_string();
+        if let Some(url) = parsed.url {
+            window.mcp_url = url;
         }
-        if let Some(command) = root.get("command").and_then(|value| value.as_str()) {
-            let args = root
-                .get("args")
-                .and_then(|value| value.as_array())
-                .map(|values| {
-                    values
-                        .iter()
-                        .filter_map(|value| value.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
-                .unwrap_or_default();
-            window.mcp_command = if args.is_empty() {
-                command.to_string()
-            } else {
-                format!("{command} {args}")
-            };
+        if let Some(command) = parsed.command {
+            window.mcp_command = command;
         }
-        if let Some(enabled) = root.get("enabled").and_then(|value| value.as_bool()) {
+        window.mcp_env = parsed.env;
+        window.mcp_headers = parsed.headers;
+        if let Some(enabled) = parsed.enabled {
             window.mcp_enabled = enabled;
         }
         Ok(())
@@ -1992,7 +2194,7 @@ impl SyncaWindow {
         let agents = self.target_agents(kind, &keys);
         if agents.is_empty() {
             match action {
-                PickerAction::Unlink => {
+                PickerAction::Unlink | PickerAction::UnlinkMcp => {
                     self.toast("Nothing to unlink.", cx);
                     return;
                 }
@@ -2032,6 +2234,7 @@ impl SyncaWindow {
             PickerAction::Unlink => self.ask_unlink(picker.keys, agents, cx),
             PickerAction::Purge => self.ask_purge(picker.keys, agents, cx),
             PickerAction::RemoveMcp => self.ask_remove_mcp(picker.keys, agents, false, cx),
+            PickerAction::UnlinkMcp => self.ask_remove_mcp(picker.keys, agents, true, cx),
         }
     }
 
@@ -2169,6 +2372,9 @@ impl SyncaWindow {
             PickerAction::RemoveMcp => {
                 "Unchecked agents keep their config until the next sync restores or removes it."
             }
+            PickerAction::UnlinkMcp => {
+                "Only the checked agents lose the server; the hub config keeps it, so a sync can restore it."
+            }
         };
         let mut body = div().flex().flex_col().gap_1().w_full();
         for agent in &picker.agents {
@@ -2265,18 +2471,23 @@ impl PlanView {
             Apply::Install(source) => Apply::Install(source.clone()),
             Apply::Registry(source) => Apply::Registry(source.clone()),
             Apply::Update(names) => Apply::Update(names.clone()),
+            Apply::UpdateMcp(names) => Apply::UpdateMcp(names.clone()),
             Apply::Restore => Apply::Restore,
             Apply::AddMcp {
                 name,
                 transport,
                 command,
                 url,
+                env,
+                headers,
                 enabled,
             } => Apply::AddMcp {
                 name: name.clone(),
                 transport: transport.clone(),
                 command: command.clone(),
                 url: url.clone(),
+                env: env.clone(),
+                headers: headers.clone(),
                 enabled: *enabled,
             },
         }
@@ -2332,14 +2543,19 @@ fn apply_now(
         Apply::Install(source) => engine::install_args(scope, dir, source, false),
         Apply::Registry(source) => engine::registry_install_args(scope, dir, source, false),
         Apply::Update(names) => engine::update_args(scope, dir, names, false),
+        Apply::UpdateMcp(names) => engine::mcp_update_args(scope, dir, names, false),
         Apply::Restore => engine::restore_args(scope, dir, false),
         Apply::AddMcp {
             name,
             transport,
             command,
             url,
+            env,
+            headers,
             enabled,
-        } => engine::add_mcp(scope, dir, name, transport, command, url, *enabled, false),
+        } => engine::add_mcp(
+            scope, dir, name, transport, command, url, env, headers, *enabled, false,
+        ),
     };
     match built {
         Ok(args) => {
@@ -2558,6 +2774,7 @@ impl Render for SyncaWindow {
                     ("skill", "skill", "Skill"),
                     ("mcp", "plug", "MCP server"),
                     ("registry", "globe", "Registry"),
+                    ("mcp-registry", "server", "MCP Registry"),
                 ],
                 tab.key(),
                 cx.listener(|this, value: &SharedString, _, cx| {
@@ -2569,6 +2786,7 @@ impl Render for SyncaWindow {
                 InstallTab::Skill => install_body(self, start, cx),
                 InstallTab::Mcp => mcp_body(self, start, cx),
                 InstallTab::Registry => registry::body(self, start, cx),
+                InstallTab::McpRegistry => mcp_registry::body(self, start, cx),
             };
             let mut dialog = Dialog::new("synca-onboarding", "Install", close).detail(tab.detail());
             // Ely's card is a fixed 440px; a narrow window gets the full-width form.
@@ -2581,7 +2799,7 @@ impl Render for SyncaWindow {
         let toasts = ToastViewport::new("synca-toasts", &self.toaster);
         div()
             .size_full()
-            .child(chrome_busy_wide(
+            .child(chrome_busy_resizable(
                 sidebar,
                 title,
                 body,
@@ -2596,6 +2814,24 @@ impl Render for SyncaWindow {
                 self.busy,
                 meta,
                 None,
+                SidebarResize::new(
+                    self.sidebar_width,
+                    engine::SIDEBAR_MIN,
+                    engine::SIDEBAR_MAX,
+                    {
+                        let entity = cx.entity();
+                        move |width, _, cx| {
+                            entity.update(cx, |this, cx| {
+                                if (this.sidebar_width - width).abs() < 0.5 {
+                                    return;
+                                }
+                                this.sidebar_width = width;
+                                this.schedule_sidebar_save(cx);
+                                cx.notify();
+                            });
+                        }
+                    },
+                ),
             ))
             .children(onboarding)
             .children(picker)
@@ -3063,7 +3299,7 @@ fn list_body(
     let state_badge = entry
         .mismatch
         .then(|| chip("Out of sync", Tone::Warn).into_any_element());
-    let origin_badge = (entry.kind == Kind::Skill).then(|| detail_origin_badge(index, entry));
+    let origin_badge = Some(detail_origin_badge(index, entry));
     let kind_label = if entry.kind == Kind::Skill {
         "Skill"
     } else {
@@ -3265,6 +3501,9 @@ fn list_body(
                 ))),
         );
     }
+    if let Some(section) = server_section(index, entry) {
+        body = body.child(section);
+    }
     let skill = entry.kind == Kind::Skill;
     if skill {
         // The tree, the default file and its preview are read once per
@@ -3312,6 +3551,86 @@ fn list_body(
         );
     }
     body
+}
+
+/// The SERVER section of an MCP entry's detail: a transport chip, the endpoint
+/// or command, enabled state, env/header names and the recorded provenance.
+/// Values were masked by the CLI, so only names are shown here.
+fn server_section(index: usize, entry: &Entry) -> Option<gpui::AnyElement> {
+    let spec = entry.server.as_ref()?;
+    let theme = theme();
+    let (transport, tone) = match spec.transport.as_deref() {
+        Some("http") => ("HTTP", Tone::Accent),
+        Some("sse") => ("SSE", Tone::Accent),
+        Some("stdio") => ("stdio", Tone::Neutral),
+        _ => ("unknown", Tone::Neutral),
+    };
+    let mut rows = div().flex().flex_col().gap_1().text_sm();
+    if let Some(endpoint) = &spec.endpoint {
+        rows = rows.child(div().child(selectable(
+            format!("detail-endpoint-{index}"),
+            endpoint.clone(),
+        )));
+    } else {
+        rows = rows.child(
+            div()
+                .text_color(theme.muted)
+                .child("No endpoint or command recorded"),
+        );
+    }
+    let mut facts: Vec<String> = Vec::new();
+    facts.push(match spec.enabled {
+        Some(true) => "Enabled".into(),
+        Some(false) => "Disabled".into(),
+        None => "Enabled state unknown".into(),
+    });
+    if !spec.env_keys.is_empty() {
+        facts.push(format!("env: {}", spec.env_keys.join(", ")));
+    }
+    if !spec.header_keys.is_empty() {
+        facts.push(format!("headers: {}", spec.header_keys.join(", ")));
+    }
+    rows = rows.child(
+        div()
+            .text_color(theme.muted)
+            .child(SharedString::from(facts.join(" · "))),
+    );
+    if let Some(source) = &entry.source {
+        let mut line = format!("Installed from {source}");
+        if let Some(version) = &entry.source_version {
+            line.push_str(&format!("@{version}"));
+        }
+        if let Some(kind) = &entry.source_type {
+            line.push_str(&format!(" ({kind})"));
+        }
+        rows = rows.child(div().text_color(theme.muted).child(line));
+    }
+    Some(
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_3()
+            .rounded_md()
+            .bg(theme.raised)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.muted)
+                            .child("SERVER"),
+                    )
+                    .child(chip(SharedString::from(transport), tone)),
+            )
+            .child(rows)
+            .into_any_element(),
+    )
 }
 
 /// Agents the entry is installed for: the count in the title, one chip each.
@@ -3572,7 +3891,25 @@ fn entry_actions(body: gpui::Div, entry: &Entry, cx: &mut Context<SyncaWindow>) 
             )),
         )
     } else {
-        let sync_name = name;
+        let sync_name = name.clone();
+        let update =
+            (entry.origin == engine::Origin::Remote && entry.source.is_some()).then(|| {
+                let tip = format!(
+                    "Re-read {} for a newer version (preview first)",
+                    entry.source.as_deref().unwrap_or("the registry")
+                );
+                tipped_button(
+                    "update-one-mcp",
+                    Some("refresh"),
+                    "Update",
+                    tip,
+                    ButtonVariant::Secondary,
+                    false,
+                    cx.listener(move |this, _, _, cx| {
+                        this.plan_mcp_updates(vec![name.clone()], cx)
+                    }),
+                )
+            });
         body.child(
             row.child(button(
                 "sync-mcp",
@@ -3582,11 +3919,20 @@ fn entry_actions(body: gpui::Div, entry: &Entry, cx: &mut Context<SyncaWindow>) 
                     this.plan_sync(Target::Mcp, Some(sync_name.clone()), cx)
                 }),
             ))
+            .children(update)
+            .child(quiet_button(
+                "unlink-mcp",
+                "unlink",
+                "Unlink…",
+                cx.listener(move |this, _, _, cx| {
+                    this.open_picker(PickerAction::UnlinkMcp, kind, cx);
+                }),
+            ))
             .child(divider())
             .child(outline_button(
                 "remove-mcp",
                 "trash",
-                "Remove…",
+                "Purge…",
                 cx.listener(move |this, _, _, cx| {
                     this.open_picker(PickerAction::RemoveMcp, kind, cx);
                 }),
@@ -4609,6 +4955,26 @@ fn mcp_body(
             body.child(section_label("Endpoint URL"))
                 .child(text_field("mcp-url", &window.url_input))
         })
+        .when(transport != McpTransportKind::Json, |body| {
+            body.child(
+                div()
+                    .id("mcp-env-label")
+                    .tooltip(Tooltip::text(
+                        "One KEY=VALUE per line. Values are never shown in plans, logs or the detail pane.",
+                    ))
+                    .child(section_label("Environment (KEY=VALUE per line)")),
+            )
+            .child(text_field("mcp-env", &window.mcp_env_input))
+            .child(
+                div()
+                    .id("mcp-headers-label")
+                    .tooltip(Tooltip::text(
+                        "One NAME=VALUE per line, for remote servers that need them. Values are never shown in plans, logs or the detail pane.",
+                    ))
+                    .child(section_label("Headers (NAME=VALUE per line)")),
+            )
+            .child(text_field("mcp-headers", &window.mcp_headers_input))
+        })
         .child(
             div()
                 .flex()
@@ -4812,6 +5178,12 @@ struct McpRow {
     presence: Vec<McpPresence>,
     #[serde(default)]
     mismatch: bool,
+    #[serde(default)]
+    source: Option<String>,
+    #[serde(default)]
+    source_type: Option<String>,
+    #[serde(default)]
+    source_version: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -4823,6 +5195,232 @@ struct McpPresence {
     fingerprint: String,
     #[serde(default)]
     normalized: Option<serde_json::Value>,
+}
+
+/// The MCP badge follows the transport: a server reached over HTTP or SSE is
+/// remote, a stdio command is local. A row without a normalized config (an old
+/// binary) stays local.
+fn mcp_origin(row: &McpRow) -> engine::Origin {
+    let transport = row
+        .presence
+        .iter()
+        .find(|item| item.agent == engine::CANONICAL_AGENT)
+        .or_else(|| row.presence.first())
+        .and_then(|item| item.normalized.as_ref())
+        .and_then(|value| value.get("transport"))
+        .and_then(|value| value.as_str())
+        .map(str::to_ascii_lowercase);
+    match transport.as_deref() {
+        Some("http") | Some("sse") => engine::Origin::Remote,
+        _ => engine::Origin::Local,
+    }
+}
+
+/// Quotes one argv part so `ParseCommandLine` splits it back exactly. Bare
+/// when there is nothing to quote, single-quoted otherwise.
+fn shell_quote(part: &str) -> String {
+    if !part.is_empty()
+        && part
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./:=@%^+,".contains(c))
+    {
+        return part.to_string();
+    }
+    format!("'{}'", part.replace('\'', "'\\''"))
+}
+
+/// Parses multiline `KEY=VALUE` lines for the install form. Blank lines and
+/// `#` comments are skipped; the error names the offending line number.
+fn parse_key_lines(label: &str, text: &str) -> Result<Vec<(String, String)>, String> {
+    let mut pairs = Vec::new();
+    for (offset, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((name, value)) = line.split_once('=') else {
+            return Err(format!("{label} line {}: expected KEY=VALUE", offset + 1));
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(format!(
+                "{label} line {}: the name before '=' is empty",
+                offset + 1
+            ));
+        }
+        pairs.push((name.to_string(), value.trim().to_string()));
+    }
+    Ok(pairs)
+}
+
+/// The install-form fields parsed out of pasted MCP JSON.
+struct McpImport {
+    name: String,
+    transport: String,
+    url: Option<String>,
+    command: Option<String>,
+    env: String,
+    headers: String,
+    enabled: Option<bool>,
+}
+
+/// Parses pasted MCP JSON into form fields. A declared `remote` says nothing
+/// about http vs sse, so the URL decides: `/sse` is SSE, anything else http.
+/// A command without a URL is stdio.
+fn parse_json_mcp(raw: &str) -> Result<McpImport, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw.trim()).map_err(|error| format!("Invalid MCP JSON: {error}"))?;
+    let root = value
+        .get("mcpServers")
+        .and_then(|value| value.as_object())
+        .and_then(|servers| servers.values().next())
+        .unwrap_or(&value);
+    let name = root
+        .get("name")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            value
+                .get("mcpServers")
+                .and_then(|value| value.as_object())
+                .and_then(|servers| servers.keys().next())
+                .map(|value| value.as_str())
+        })
+        .ok_or_else(|| "MCP JSON needs a name or an mcpServers key.".to_string())?;
+    let url = ["url", "serverUrl", "httpUrl"].iter().find_map(|key| {
+        root.get(*key)
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    });
+    let command: Option<Vec<String>> = match root.get("command") {
+        Some(serde_json::Value::Array(items)) => {
+            let parts: Vec<String> = items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::to_string)
+                .collect();
+            (!parts.is_empty()).then_some(parts)
+        }
+        Some(serde_json::Value::String(text)) if !text.trim().is_empty() => {
+            Some(vec![text.clone()])
+        }
+        _ => None,
+    };
+    let args: Vec<String> = root
+        .get("args")
+        .and_then(|value| value.as_array())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let heuristic = |url: Option<&str>| match url {
+        Some(url) if url.trim_end_matches('/').ends_with("/sse") => "sse",
+        Some(_) => "http",
+        None => "stdio",
+    };
+    let transport = match root
+        .get("transport")
+        .or_else(|| root.get("type"))
+        .and_then(|value| value.as_str())
+        .map(str::to_lowercase)
+    {
+        Some(declared) if declared == "remote" => heuristic(url).to_string(),
+        Some(declared) => declared,
+        None => match (&command, url) {
+            (Some(_), _) => "stdio".to_string(),
+            (None, _) => heuristic(url).to_string(),
+        },
+    };
+    let object_lines = |keys: &[&str]| -> String {
+        keys.iter()
+            .find_map(|key| {
+                root.get(*key)
+                    .and_then(|value| value.as_object())
+                    .map(|map| {
+                        map.iter()
+                            .filter_map(|(name, value)| {
+                                value.as_str().map(|value| format!("{name}={value}"))
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+            })
+            .unwrap_or_default()
+    };
+    Ok(McpImport {
+        name: name.to_string(),
+        transport,
+        url: url.map(str::to_string),
+        command: command.map(|parts| {
+            let mut quoted: Vec<String> = parts.iter().map(|part| shell_quote(part)).collect();
+            quoted.extend(args.iter().map(|arg| shell_quote(arg)));
+            quoted.join(" ")
+        }),
+        env: object_lines(&["env", "environment"]),
+        headers: object_lines(&["headers"]),
+        enabled: root.get("enabled").and_then(|value| value.as_bool()),
+    })
+}
+
+/// The server spec from the hub's normalized config, or the first agent that
+/// reported one. Values are already masked by the CLI; only names are shown.
+fn mcp_server_spec(row: &McpRow) -> Option<ServerSpec> {
+    let normalized = row
+        .presence
+        .iter()
+        .find(|item| item.agent == engine::CANONICAL_AGENT)
+        .or_else(|| row.presence.first())?
+        .normalized
+        .as_ref()?;
+    let transport = normalized
+        .get("transport")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_ascii_lowercase());
+    let command: Option<Vec<String>> = normalized
+        .get("command")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(str::to_string)
+                .collect()
+        });
+    let command = command.filter(|parts| !parts.is_empty());
+    let url = normalized
+        .get("url")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string);
+    let endpoint = match (&command, &url) {
+        (Some(parts), _) => Some(parts.join(" ")),
+        (None, Some(url)) => Some(url.clone()),
+        _ => None,
+    };
+    let names = |key: &str| -> Vec<String> {
+        normalized
+            .get(key)
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Some(ServerSpec {
+        transport,
+        endpoint,
+        enabled: normalized.get("enabled").and_then(|value| value.as_bool()),
+        env_keys: names("env_keys"),
+        header_keys: names("header_keys"),
+    })
 }
 
 /// A hash the CLI can compare. `dangling` and `missing` mean the link or its
@@ -5001,6 +5599,8 @@ fn load_entries(
                     origin: engine::Origin::from_field(row.origin.as_deref()),
                     source: row.source.filter(|text| !text.trim().is_empty()),
                     source_type: row.source_type.filter(|text| !text.trim().is_empty()),
+                    source_version: None,
+                    server: None,
                 });
             }
         }
@@ -5025,7 +5625,7 @@ fn load_entries(
                 entries.push(Entry {
                     kind: Kind::Mcp,
                     key: row.key.clone(),
-                    title: row.key,
+                    title: row.key.clone(),
                     description: String::new(),
                     paths: row
                         .presence
@@ -5037,9 +5637,11 @@ fn load_entries(
                     synced,
                     tokens,
                     mismatch: row.mismatch,
-                    origin: engine::Origin::Local,
-                    source: None,
-                    source_type: None,
+                    origin: mcp_origin(&row),
+                    source: row.source.clone(),
+                    source_type: row.source_type.clone(),
+                    source_version: row.source_version.clone(),
+                    server: mcp_server_spec(&row),
                 });
             }
         }
@@ -5194,10 +5796,22 @@ fn row_menu_for(
             IconName::Trash2,
         ));
     } else {
-        let remove_label = if one {
-            "Remove…".to_string()
+        let unlink_label = if one {
+            "Unlink…".to_string()
         } else {
-            format!("Remove {count} MCPs…")
+            format!("Unlink {count} MCPs…")
+        };
+        menu = menu.item(picker_menu_item(
+            entity.clone(),
+            PickerAction::UnlinkMcp,
+            kind,
+            unlink_label,
+            IconName::Link,
+        ));
+        let remove_label = if one {
+            "Purge…".to_string()
+        } else {
+            format!("Purge {count} MCPs…")
         };
         menu = menu.item(picker_menu_item(
             entity,
@@ -5332,8 +5946,8 @@ fn table_head(kind: Kind, sort: ListSort, cx: &mut Context<SyncaWindow>) -> gpui
     )
 }
 
-/// The header over the origin badges. MCP rows have no badge, but keep the
-/// column so both tables share one grid.
+/// The header over the origin badges. Remote/local by transport for MCP
+/// servers, source kind for skills.
 fn origin_head(kind: Kind) -> impl IntoElement {
     let head = div()
         .id("origin-head")
@@ -5346,13 +5960,17 @@ fn origin_head(kind: Kind) -> impl IntoElement {
         .text_size(px(11.))
         .font_weight(gpui::FontWeight::SEMIBOLD)
         .text_color(theme().muted);
-    if kind == Kind::Skill {
-        head.tooltip(Tooltip::text(
-            "Remote: installed from skills.sh or another remote source. Local: installed from a folder.",
-        ))
-        .child("Origin")
-    } else {
-        head
+    match kind {
+        Kind::Skill => head
+            .tooltip(Tooltip::text(
+                "Remote: installed from skills.sh or another remote source. Local: installed from a folder.",
+            ))
+            .child("Origin"),
+        Kind::Mcp => head
+            .tooltip(Tooltip::text(
+                "Remote: reaches the server over HTTP(S). Local: runs a local command (stdio).",
+            ))
+            .child("Origin"),
     }
 }
 
@@ -5448,8 +6066,9 @@ fn metric_cells(
         .child(metric_text(tokens, COL_TOKEN_W))
 }
 
-/// The `remote` / `local` badge of a skill row inside its fixed column. An
-/// MCP row keeps the empty column.
+/// The `remote` / `local` badge of a row inside its fixed column. Skills
+/// badge by source, MCP servers by transport; rows without an origin keep
+/// the empty column.
 fn origin_cell(index: usize, origin: Option<(engine::Origin, SharedString)>) -> gpui::Div {
     let cell = div()
         .w(px(COL_ORIGIN_W))
@@ -5476,13 +6095,21 @@ fn origin_cell(index: usize, origin: Option<(engine::Origin, SharedString)>) -> 
     )
 }
 
-/// The badge near a skill's title in the detail pane.
+/// The badge near a skill's or MCP server's title in the detail pane.
 fn detail_origin_badge(index: usize, entry: &Entry) -> gpui::AnyElement {
-    let tip = engine::origin_tip(
-        entry.origin,
-        entry.source.as_deref(),
-        entry.source_type.as_deref(),
-    );
+    let tip = match entry.kind {
+        Kind::Mcp => engine::mcp_origin_tip(
+            entry.origin,
+            entry.source.as_deref(),
+            entry.source_type.as_deref(),
+            entry.source_version.as_deref(),
+        ),
+        Kind::Skill => engine::origin_tip(
+            entry.origin,
+            entry.source.as_deref(),
+            entry.source_type.as_deref(),
+        ),
+    };
     div()
         .id(SharedString::from(format!("detail-origin-{index}")))
         .flex_none()
@@ -5793,10 +6420,13 @@ const DEV_COMMANDS: &[&str] = &[
     "fail",
     "panel",
     "mcp",
+    "mcp-update",
     "registry",
+    "mcpreg",
     "providers",
     "updates",
     "perf",
+    "sidebar",
 ];
 
 #[cfg(feature = "devtools")]
@@ -5804,8 +6434,13 @@ struct SyncaSelection<'a> {
     index: usize,
     key: &'a str,
     kind: &'a str,
-    /// `remote` or `local` for a skill, `None` for an MCP entry.
+    /// `remote` or `local`: a skill's source, an MCP server's transport.
     origin: Option<&'a str>,
+    /// The MCP transport (`http`, `sse`, `stdio`); skills have none.
+    transport: Option<&'a str>,
+    /// The recorded source (`owner/repo`, registry name) and its version.
+    source: Option<&'a str>,
+    source_version: Option<&'a str>,
 }
 
 #[cfg(feature = "devtools")]
@@ -5820,8 +6455,10 @@ struct SyncaDevState<'a> {
     selection: Option<SyncaSelection<'a>>,
     busy: bool,
     registry: serde_json::Value,
+    mcp_registry: serde_json::Value,
     providers: serde_json::Value,
     plan: Option<serde_json::Value>,
+    sidebar_width: f32,
 }
 
 #[cfg(feature = "devtools")]
@@ -5850,6 +6487,9 @@ fn synca_state_value(state: &SyncaDevState<'_>) -> serde_json::Value {
             "key": item.key,
             "kind": item.kind,
             "origin": item.origin,
+            "transport": item.transport,
+            "source": item.source,
+            "source_version": item.source_version,
         })
     });
     serde_json::json!({
@@ -5863,8 +6503,10 @@ fn synca_state_value(state: &SyncaDevState<'_>) -> serde_json::Value {
         "selection": selection,
         "busy": state.busy,
         "registry": state.registry,
+        "mcpRegistry": state.mcp_registry,
         "providers": state.providers,
         "plan": state.plan,
+        "sidebarWidth": state.sidebar_width,
     })
 }
 
@@ -5898,6 +6540,23 @@ fn synca_state_schema() -> serde_json::Value {
                     "seq": {"type": "integer", "minimum": 0}
                 }
             },
+            "mcpRegistry": {
+                "type": "object",
+                "properties": {
+                    "open": {"type": "boolean"},
+                    "view": {"enum": ["search", "browse"]},
+                    "query": {"type": "string"},
+                    "status": {"enum": ["idle", "loading", "ready", "error"]},
+                    "error": {"type": ["string", "null"]},
+                    "count": {"type": "integer", "minimum": 0},
+                    "summary": {"type": "string"},
+                    "selected": {"type": ["string", "null"]},
+                    "detail": {"type": "object"},
+                    "has_more": {"type": "boolean"},
+                    "loading_more": {"type": "boolean"},
+                    "seq": {"type": "integer", "minimum": 0}
+                }
+            },
             "providers": {
                 "type": "object",
                 "properties": {
@@ -5921,7 +6580,8 @@ fn synca_state_schema() -> serde_json::Value {
                     "actions": {"type": "integer", "minimum": 0},
                     "notes": {"type": "array", "items": {"type": "string"}}
                 }
-            }
+            },
+            "sidebarWidth": {"type": "number", "minimum": 240, "maximum": 560}
         }),
         &[
             "scope",
@@ -5931,7 +6591,9 @@ fn synca_state_schema() -> serde_json::Value {
             "project",
             "query",
             "registry",
+            "mcpRegistry",
             "providers",
+            "sidebarWidth",
         ],
     )
 }
@@ -5946,7 +6608,19 @@ fn dispatch_dev_drag(window: &mut Window, drag: (f32, f32, f32, f32), cx: &mut A
     };
     let (x, y, to_x, to_y) = drag;
     let at = |fx: f32, fy: f32| point(px(fx), px(fy));
-    let steps = 8;
+    // Small steps: a drag only starts once the pointer leaves its press point,
+    // so coarse steps would swallow part of the movement.
+    let steps = 24;
+    // Hover the start point first: element drags only start when the pressed
+    // hitbox is hovered, and hit tests read the last move position.
+    let _ = window.dispatch_event(
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: at(x, y),
+            pressed_button: None,
+            modifiers: Default::default(),
+        }),
+        cx,
+    );
     let _ = window.dispatch_event(
         PlatformInput::MouseDown(MouseDownEvent {
             button: MouseButton::Left,
@@ -5997,7 +6671,7 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
         ),
         ns_ui::DevCommand::new(
             "drag",
-            "Drag the pointer inside the window, in points. Selects markdown text.",
+            "Drag the pointer inside the window, in points. Selects markdown text or drags the sidebar edge.",
             true,
         )
         .arg("x", "number", true, "Start x, in window points.")
@@ -6058,11 +6732,43 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
             false,
             "\"activity\", \"settings\", or anything else to close.",
         ),
-        ns_ui::DevCommand::new("mcp", "Open the Install dialog on the MCP tab.", true).arg(
-            "transport",
+        ns_ui::DevCommand::new("mcp", "Open the Install dialog on the MCP tab.", true)
+            .arg(
+                "transport",
+                "string",
+                false,
+                "\"stdio\", \"http\", \"sse\", or \"json\". Default stdio.",
+            )
+            .arg("name", "string", false, "Fills the server name field.")
+            .arg(
+                "command",
+                "string",
+                false,
+                "Fills the command field (stdio only).",
+            )
+            .arg("url", "string", false, "Fills the endpoint URL field.")
+            .arg(
+                "env",
+                "string",
+                false,
+                "Fills the environment field; entries separated by `;`.",
+            )
+            .arg(
+                "headers",
+                "string",
+                false,
+                "Fills the headers field; entries separated by `;`.",
+            ),
+        ns_ui::DevCommand::new(
+            "mcp-update",
+            "Open the plan route with `synca mcp update --dry-run`. Nothing is applied.",
+            true,
+        )
+        .arg(
+            "name",
             "string",
             false,
-            "\"stdio\", \"http\", \"sse\", or \"json\". Default stdio.",
+            "The MCP key to update, or \"all\" (default) for every server with a recorded registry origin.",
         ),
         ns_ui::DevCommand::new(
             "registry",
@@ -6098,6 +6804,35 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
             "boolean",
             false,
             "When true, load the next browse page.",
+        ),
+        ns_ui::DevCommand::new(
+            "mcpreg",
+            "Open the Install dialog on the MCP Registry tab; this loads a list from the Official MCP Registry, which is read-only. Optionally set the view, the query, the selected result, or load more.",
+            true,
+        )
+        .arg(
+            "view",
+            "string",
+            false,
+            "\"search\" or \"browse\". Default: keep the current view.",
+        )
+        .arg(
+            "query",
+            "string",
+            false,
+            "Text for the search box. Non-empty runs a search.",
+        )
+        .arg(
+            "select",
+            "integer",
+            false,
+            "Index of the loaded result to select, which also reads its packages and remotes.",
+        )
+        .arg(
+            "more",
+            "boolean",
+            false,
+            "When true, load the next page by cursor.",
         ),
         ns_ui::DevCommand::new(
             "providers",
@@ -6140,6 +6875,17 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
         )
         .arg("label", "string", false, "Report name: letters, digits, - or _. Default run.")
         .arg("frames", "integer", false, "Frames per scenario, clamped to 1–1000. Default 60."),
+        ns_ui::DevCommand::new(
+            "sidebar",
+            "Set the sidebar width the drag edge controls and save it. UI state only; no CLI actions.",
+            true,
+        )
+        .arg(
+            "width",
+            "number",
+            true,
+            "Sidebar width in points, clamped to 240–560.",
+        ),
     ]
 }
 
@@ -6310,7 +7056,13 @@ impl ns_ui::DevControl for SyncaWindow {
                         } else {
                             "mcp"
                         },
-                        origin: (entry.kind == Kind::Skill).then(|| entry.origin.label()),
+                        origin: Some(entry.origin.label()),
+                        transport: entry
+                            .server
+                            .as_ref()
+                            .and_then(|spec| spec.transport.as_deref()),
+                        source: entry.source.as_deref(),
+                        source_version: entry.source_version.as_deref(),
                     })
                 });
                 Ok(synca_state_value(&SyncaDevState {
@@ -6327,6 +7079,10 @@ impl ns_ui::DevControl for SyncaWindow {
                         &self.registry,
                         self.onboarding == Some(InstallTab::Registry),
                     ),
+                    mcp_registry: mcp_registry::state_value(
+                        &self.mcp_registry,
+                        self.onboarding == Some(InstallTab::McpRegistry),
+                    ),
                     providers: providers::state_value(
                         &self.providers,
                         self.panel == Panel::Settings,
@@ -6338,6 +7094,7 @@ impl ns_ui::DevControl for SyncaWindow {
                             "notes": plan.notes,
                         })
                     }),
+                    sidebar_width: self.sidebar_width,
                 }))
             }
             "scope" => {
@@ -6377,14 +7134,14 @@ impl ns_ui::DevControl for SyncaWindow {
                 Ok(serde_json::json!({ "panel": request.get("name") }))
             }
             "mcp" => {
+                let text = |name: &str| request.get(name).and_then(|value| value.as_str());
                 self.onboarding = Some(InstallTab::Mcp);
-                self.mcp_transport_kind =
-                    match request.get("transport").and_then(|value| value.as_str()) {
-                        Some("http") => McpTransportKind::Http,
-                        Some("sse") => McpTransportKind::Sse,
-                        Some("json") => McpTransportKind::Json,
-                        _ => McpTransportKind::Stdio,
-                    };
+                self.mcp_transport_kind = match text("transport") {
+                    Some("http") => McpTransportKind::Http,
+                    Some("sse") => McpTransportKind::Sse,
+                    Some("json") => McpTransportKind::Json,
+                    _ => McpTransportKind::Stdio,
+                };
                 self.mcp_transport = match self.mcp_transport_kind {
                     McpTransportKind::Stdio => "stdio",
                     McpTransportKind::Http => "http",
@@ -6392,8 +7149,36 @@ impl ns_ui::DevControl for SyncaWindow {
                     McpTransportKind::Json => "json",
                 }
                 .into();
+                Self::set_mcp_field(&mut self.mcp_name, &self.name_input, text("name"), cx);
+                Self::set_mcp_field(
+                    &mut self.mcp_command,
+                    &self.command_input,
+                    text("command"),
+                    cx,
+                );
+                Self::set_mcp_field(&mut self.mcp_url, &self.url_input, text("url"), cx);
+                Self::set_mcp_field(&mut self.mcp_env, &self.mcp_env_input, text("env"), cx);
+                Self::set_mcp_field(
+                    &mut self.mcp_headers,
+                    &self.mcp_headers_input,
+                    text("headers"),
+                    cx,
+                );
                 cx.notify();
                 Ok(serde_json::json!({ "dialog": "mcp", "tab": "mcp" }))
+            }
+            "mcp-update" => {
+                let name = request
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("all");
+                let names: Vec<String> = if name == "all" {
+                    Vec::new()
+                } else {
+                    vec![name.to_string()]
+                };
+                self.plan_mcp_updates(names, cx);
+                Ok(serde_json::json!({ "mcp-update": name }))
             }
             "registry" => {
                 let text = |name: &str| request.get(name).and_then(|value| value.as_str());
@@ -6441,6 +7226,41 @@ impl ns_ui::DevControl for SyncaWindow {
                     "view": self.registry.view.key(),
                 }))
             }
+            "mcpreg" => {
+                let text = |name: &str| request.get(name).and_then(|value| value.as_str());
+                let view = match text("view") {
+                    Some("search") => Some(mcp_registry::McpRegistryView::Search),
+                    Some("browse") => Some(mcp_registry::McpRegistryView::Browse),
+                    Some(name) => {
+                        return Err(format!("unknown view \"{name}\"; use search or browse"));
+                    }
+                    None => None,
+                };
+                mcp_registry::dev_open(
+                    self,
+                    view,
+                    text("query"),
+                    None,
+                    request.get("more").and_then(|value| value.as_bool()) == Some(true),
+                    cx,
+                );
+                if let Some(index) = request.get("select").and_then(|value| value.as_u64()) {
+                    let index = index as usize;
+                    if index >= self.mcp_registry.servers.len() {
+                        return Err(format!(
+                            "no result {index}; {} loaded (the list may still be loading)",
+                            self.mcp_registry.servers.len()
+                        ));
+                    }
+                    self.mcp_registry_select(index, cx);
+                }
+                cx.notify();
+                Ok(serde_json::json!({
+                    "dialog": "install",
+                    "tab": "mcp-registry",
+                    "view": self.mcp_registry.view.key(),
+                }))
+            }
             "providers" => {
                 self.panel = Panel::Settings;
                 if let Some(query) = request.get("query").and_then(|value| value.as_str()) {
@@ -6482,6 +7302,16 @@ impl ns_ui::DevControl for SyncaWindow {
             "perf" => {
                 let (label, frames) = perf::arguments(request)?;
                 perf::start(self, label, frames, cx)
+            }
+            "sidebar" => {
+                let width = request
+                    .get("width")
+                    .and_then(|value| value.as_f64())
+                    .ok_or("sidebar needs width")? as f32;
+                self.sidebar_width = width.clamp(engine::SIDEBAR_MIN, engine::SIDEBAR_MAX);
+                self.schedule_sidebar_save(cx);
+                cx.notify();
+                Ok(serde_json::json!({ "sidebarWidth": self.sidebar_width }))
             }
             other => Err(reject_unknown(other)),
         }
@@ -6539,8 +7369,23 @@ mod dev_contract_tests {
         );
         assert_eq!(schema["type"], "object");
         let required = schema["required"].as_array().expect("required");
-        for key in ["protocol", "app", "screen", "selection", "busy"] {
+        for key in [
+            "protocol",
+            "app",
+            "screen",
+            "selection",
+            "busy",
+            "mcpRegistry",
+        ] {
             assert!(required.iter().any(|item| item == key), "{key}");
+        }
+        let selection = &schema["properties"]["selection"]["properties"];
+        for key in ["origin", "transport", "source", "source_version"] {
+            assert!(selection.get(key).is_some(), "selection.{key}");
+        }
+        let registry = &schema["properties"]["mcpRegistry"]["properties"];
+        for key in ["view", "status", "count", "selected", "detail"] {
+            assert!(registry.get(key).is_some(), "mcpRegistry.{key}");
         }
     }
 
@@ -6609,6 +7454,7 @@ mod dev_contract_tests {
                 plan: Some(
                     serde_json::json!({"title": "check updates", "actions": 1, "notes": ["update: demo"]}),
                 ),
+                sidebar_width: 320.,
             }),
             "synca",
         );
@@ -6636,6 +7482,7 @@ mod dev_contract_tests {
         assert_eq!(stamped["providers"]["present"], 0);
         assert_eq!(stamped["providers"]["query"], "");
         assert_eq!(stamped["plan"]["title"], "check updates");
+        assert_eq!(stamped["sidebarWidth"], 320.);
         assert_eq!(stamped["busy"], true);
         assert_eq!(stamped["protocol"], 1);
         assert_eq!(stamped["app"], "synca");
@@ -6654,6 +7501,7 @@ mod dev_contract_tests {
                 registry: crate::registry::state_value(&RegistryState::new(), false),
                 providers: crate::providers::state_value(&ProvidersState::new(), false),
                 plan: None,
+                sidebar_width: 320.,
             }),
             "synca",
         );
@@ -6811,6 +7659,141 @@ mod view_tests {
         .unwrap();
         assert_eq!(value["transport"], "http");
     }
+
+    #[test]
+    fn mcp_import_decides_transport_from_shape() {
+        let plain =
+            parse_json_mcp(r#"{"name":"a","type":"remote","url":"https://example.dev/mcp"}"#)
+                .unwrap();
+        assert_eq!(plain.transport, "http");
+        assert_eq!(plain.url.as_deref(), Some("https://example.dev/mcp"));
+        assert!(plain.command.is_none());
+
+        let sse = parse_json_mcp(r#"{"name":"a","url":"https://example.dev/sse"}"#).unwrap();
+        assert_eq!(sse.transport, "sse");
+
+        let server_url =
+            parse_json_mcp(r#"{"mcpServers":{"a":{"serverUrl":"https://example.dev/mcp"}}}"#)
+                .unwrap();
+        assert_eq!(server_url.name, "a");
+        assert_eq!(server_url.transport, "http");
+        assert_eq!(server_url.url.as_deref(), Some("https://example.dev/mcp"));
+
+        let stdio = parse_json_mcp(
+            r#"{"name":"a","command":["node","my server.js"],"args":["--x","y z"]}"#,
+        )
+        .unwrap();
+        assert_eq!(stdio.transport, "stdio");
+        assert_eq!(
+            stdio.command.as_deref(),
+            Some("node 'my server.js' --x 'y z'")
+        );
+    }
+
+    #[test]
+    fn mcp_import_reads_env_headers_and_enabled() {
+        let parsed = parse_json_mcp(
+            r#"{"name":"a","command":"npx","transport":"stdio",
+                "env":{"API_KEY":"s3cret","LOG_LEVEL":"debug"},
+                "headers":{"Authorization":"Bearer t"},
+                "environment":{"IGNORED":"yes"},"enabled":false}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.env, "API_KEY=s3cret\nLOG_LEVEL=debug");
+        assert_eq!(parsed.headers, "Authorization=Bearer t");
+        assert_eq!(parsed.enabled, Some(false));
+    }
+
+    #[test]
+    fn mcp_origin_follows_the_transport() {
+        let row = |normalized: serde_json::Value| McpRow {
+            key: "demo".into(),
+            presence: vec![McpPresence {
+                agent: engine::CANONICAL_AGENT.into(),
+                path: String::new(),
+                fingerprint: String::new(),
+                normalized: Some(normalized),
+            }],
+            mismatch: false,
+            source: None,
+            source_type: None,
+            source_version: None,
+        };
+        for transport in ["http", "sse", "HTTP"] {
+            assert_eq!(
+                mcp_origin(&row(serde_json::json!({"transport": transport}))),
+                engine::Origin::Remote,
+                "{transport} is remote"
+            );
+        }
+        assert_eq!(
+            mcp_origin(&row(
+                serde_json::json!({"transport":"stdio","command":["npx"]})
+            )),
+            engine::Origin::Local
+        );
+        let mut no_config = row(serde_json::json!({"transport":"http"}));
+        no_config.presence[0].normalized = None;
+        assert_eq!(mcp_origin(&no_config), engine::Origin::Local);
+        let fallback = McpRow {
+            key: "demo".into(),
+            presence: vec![
+                McpPresence {
+                    agent: "cursor".into(),
+                    path: String::new(),
+                    fingerprint: String::new(),
+                    normalized: Some(serde_json::json!({"transport":"stdio"})),
+                },
+                McpPresence {
+                    agent: engine::CANONICAL_AGENT.into(),
+                    path: String::new(),
+                    fingerprint: String::new(),
+                    normalized: Some(serde_json::json!({"transport":"sse"})),
+                },
+            ],
+            mismatch: false,
+            source: None,
+            source_type: None,
+            source_version: None,
+        };
+        assert_eq!(
+            mcp_origin(&fallback),
+            engine::Origin::Remote,
+            "the hub's transport wins over an earlier presence"
+        );
+    }
+
+    #[test]
+    fn key_lines_parse_pairs_and_report_bad_lines() {
+        let pairs = parse_key_lines(
+            "Environment",
+            "# comment\n\nAPI_KEY = s3cret\nLOG_LEVEL=debug\n",
+        )
+        .unwrap();
+        assert_eq!(
+            pairs,
+            vec![
+                ("API_KEY".to_string(), "s3cret".to_string()),
+                ("LOG_LEVEL".to_string(), "debug".to_string())
+            ]
+        );
+        assert_eq!(
+            parse_key_lines("Headers", "Authorization\n").unwrap_err(),
+            "Headers line 1: expected KEY=VALUE"
+        );
+        assert_eq!(
+            parse_key_lines("Headers", "=token\n").unwrap_err(),
+            "Headers line 1: the name before '=' is empty"
+        );
+    }
+
+    #[test]
+    fn shell_quote_keeps_a_command_line_round_trip_safe() {
+        assert_eq!(shell_quote("npx"), "npx");
+        assert_eq!(shell_quote("@scope/pkg"), "@scope/pkg");
+        assert_eq!(shell_quote("my server.js"), "'my server.js'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
     #[test]
     fn frontmatter_becomes_metadata_rows_and_body() {
         let (rows, body) =
@@ -6898,6 +7881,9 @@ mod view_tests {
                 },
             ],
             mismatch: false,
+            source: None,
+            source_type: None,
+            source_version: None,
         };
         assert_eq!(mcp_row_tokens(&row), mcp_tokens(Some(&hub)));
         let only_agent = McpRow {
@@ -6909,6 +7895,9 @@ mod view_tests {
                 normalized: Some(serde_json::json!({"command": "x"})),
             }],
             mismatch: false,
+            source: None,
+            source_type: None,
+            source_version: None,
         };
         assert!(mcp_row_tokens(&only_agent).is_some());
     }

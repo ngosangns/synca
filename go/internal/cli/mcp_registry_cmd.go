@@ -170,7 +170,7 @@ func runMcpInfo(f *flags, jsonOut bool) error {
 
 func runMcpInstall(f *flags, jsonOut bool) error {
 	if len(f.pos) != 1 {
-		return failUsage(jsonOut, "usage: synca mcp install <name> [--version V] [--name KEY] [--package npm|pypi|oci] [--transport stdio|http|sse] [--env KEY=VAL]... [--arg NAME=VAL]... [--dry-run]", "see: synca mcp --help")
+		return failUsage(jsonOut, "usage: synca mcp install <name> [--version V] [--name KEY] [--package npm|pypi|oci] [--transport stdio|http|sse] [--env KEY=VAL]... [--header NAME=VAL]... [--arg NAME=VAL]... [--dry-run]", "see: synca mcp --help")
 	}
 	scope, err := scopeOf(f)
 	if err != nil {
@@ -181,6 +181,10 @@ func runMcpInstall(f *flags, jsonOut bool) error {
 		return asCommandErr(jsonOut, err)
 	}
 	env, _, err := parseEnvPairs(f.lists["env"])
+	if err != nil {
+		return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
+	}
+	headers, _, err := parseHeaderPairs(f.lists["header"])
 	if err != nil {
 		return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
 	}
@@ -199,11 +203,24 @@ func runMcpInstall(f *flags, jsonOut bool) error {
 		PackageType: f.str("package", ""),
 		Transport:   f.str("transport", ""),
 		Env:         env,
+		Headers:     headers,
 		Args:        args,
 		Enabled:     f.boolVal("enabled"),
 	})
 	if err != nil {
 		return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
+	}
+	variant, err := core.SelectedMcpRegistryVariant(&rec.Server, f.str("package", ""), f.str("transport", ""))
+	if err != nil {
+		return asCommandErr(jsonOut, err)
+	}
+	origin := &core.McpLockEntry{
+		Source:     rec.Server.Name,
+		SourceType: "registry",
+		Version:    registryVersionLabel(rec.Server.Version),
+		Variant:    variant,
+		EnvKeys:    norm.EnvKeys,
+		HeaderKeys: norm.HeaderKeys,
 	}
 	dry := f.bools["dry-run"]
 	if !f.bools["force"] {
@@ -220,11 +237,48 @@ func runMcpInstall(f *flags, jsonOut bool) error {
 			break
 		}
 	}
-	plan, log, err := core.AddMcp(scope, cwdOf(f), key, norm, filter, dry)
+	plan, log, err := core.AddMcpWithOrigin(scope, cwdOf(f), key, norm, origin, filter, dry)
 	if err != nil {
 		return applyFailed(jsonOut, log, err)
 	}
 	plan.Notes = append(plan.Notes, notes...)
+	return finishManage(plan, log, dry, jsonOut)
+}
+
+// registryVersionLabel keeps "unknown" out of the lock when the registry omits
+// a version; the field stays empty so the JSON drops it.
+func registryVersionLabel(version string) string {
+	return strings.TrimSpace(version)
+}
+
+// runMcpUpdate re-reads recorded registry sources and rewrites changed
+// servers. The plan carries each server's own payload.
+func runMcpUpdate(f *flags, jsonOut bool) error {
+	version := f.str("version", "")
+	if version != "" && len(f.pos) > 1 {
+		return failUsage(jsonOut, "--version needs a single server name", "see: synca mcp --help")
+	}
+	scope, err := scopeOf(f)
+	if err != nil {
+		return failUsage(jsonOut, err.Error(), "see: synca mcp --help")
+	}
+	filter, err := agentsFilter(f)
+	if err != nil {
+		return asCommandErr(jsonOut, err)
+	}
+	plan, err := core.PlanUpdateMcp(scope, cwdOf(f), f.pos, filter, version)
+	if err != nil {
+		return asCommandErr(jsonOut, err)
+	}
+	dry := f.bools["dry-run"]
+	plan.DryRun = dry
+	var log []string
+	if !dry {
+		log, err = core.ApplyManagePlan(plan, nil)
+		if err != nil {
+			return applyFailed(jsonOut, log, err)
+		}
+	}
 	return finishManage(plan, log, dry, jsonOut)
 }
 

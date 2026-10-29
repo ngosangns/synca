@@ -17,6 +17,7 @@ type McpRegistryOptions struct {
 	PackageType string
 	Transport   string
 	Env         map[string]string
+	Headers     map[string]string
 	Args        map[string]string
 	Enabled     *bool
 }
@@ -49,6 +50,16 @@ func DefaultMcpRegistryKey(name string) (string, error) {
 	return seg, nil
 }
 
+// SelectedMcpRegistryVariant reports the variant label McpFromRegistry would
+// pick for these options, so a caller can record it without re-normalizing.
+func SelectedMcpRegistryVariant(server *mcpregistry.Server, packageType, transport string) (string, error) {
+	variant, err := selectMcpRegistryVariant(server, packageType, transport)
+	if err != nil {
+		return "", err
+	}
+	return variant.label, nil
+}
+
 // McpFromRegistry maps one registry server onto synca's normalized MCP model.
 // Values from --env and --arg override registry literals; secrets never appear
 // in the returned notes.
@@ -72,6 +83,9 @@ func McpFromRegistry(server *mcpregistry.Server, opts McpRegistryOptions) (strin
 	variant, err := selectMcpRegistryVariant(server, opts.PackageType, opts.Transport)
 	if err != nil {
 		return "", nil, nil, err
+	}
+	if variant.pkg != nil && len(opts.Headers) > 0 {
+		return "", nil, nil, fmt.Errorf("--header needs a remote registry server")
 	}
 	resolver, err := newRegistryResolver(opts)
 	if err != nil {
@@ -336,29 +350,53 @@ func normalizeRegistryRemote(server *mcpregistry.Server, remote *mcpregistry.Rem
 	default:
 		return nil, nil, fmt.Errorf("unsupported remote type %q", remote.Type)
 	}
-	var required, optional []string
-	for _, h := range remote.Headers {
-		name := strings.TrimSpace(h.Name)
-		if h.IsRequired {
-			if name == "" {
-				name = "(unnamed)"
-			}
-			required = append(required, name)
-			continue
-		}
-		if name != "" {
-			optional = append(optional, name)
-		}
-	}
-	if len(required) > 0 {
-		return nil, nil, fmt.Errorf("registry requires header(s) %s; synca cannot store MCP headers yet", strings.Join(required, ", "))
-	}
 	var notes []string
-	if len(optional) > 0 {
-		notes = append(notes, "skipped optional header(s): "+strings.Join(optional, ", "))
-	}
 	if _, err := r.resolveRemoteVariables(remote.Variables); err != nil {
 		return nil, nil, err
+	}
+	var headers []string
+	var headerValues = map[string]string{}
+	var missing []string
+	var skipped []string
+	for _, h := range remote.Headers {
+		name := strings.TrimSpace(h.Name)
+		if name == "" {
+			continue
+		}
+		value, ok := opts.Headers[name]
+		if !ok {
+			switch {
+			case h.Value != "":
+				value, ok = h.Value, true
+			case h.Default != "":
+				value, ok = h.Default, true
+			}
+		}
+		if ok {
+			resolved, unknown := substituteRegistryVars(value, r.vars)
+			if len(unknown) > 0 {
+				missing = append(missing, fmt.Sprintf("%s (needs %s)", name, strings.Join(unknown, ", ")))
+				continue
+			}
+			headers = append(headers, name)
+			headerValues[name] = resolved
+			if h.IsSecret || secretName(name) {
+				notes = append(notes, fmt.Sprintf("header %s=%s", name, SecretMask))
+			}
+			continue
+		}
+		if h.IsRequired {
+			missing = append(missing, name)
+			continue
+		}
+		skipped = append(skipped, name)
+	}
+	if len(missing) > 0 {
+		return nil, nil, fmt.Errorf("registry requires header(s) %s; pass --header NAME=VALUE", strings.Join(missing, ", "))
+	}
+	sort.Strings(headers)
+	if len(skipped) > 0 {
+		notes = append(notes, "skipped optional header(s): "+strings.Join(skipped, ", "))
 	}
 	rawURL := strings.TrimSpace(remote.URL)
 	if rawURL == "" {
@@ -378,6 +416,10 @@ func normalizeRegistryRemote(server *mcpregistry.Server, remote *mcpregistry.Rem
 	norm, err := McpFromParts(transport, nil, &resolved, opts.Enabled)
 	if err != nil {
 		return nil, nil, err
+	}
+	if len(headers) > 0 {
+		norm.HeaderKeys = headers
+		norm.Headers = headerValues
 	}
 	if typ == "sse" && norm.Transport != "sse" {
 		notes = append(notes, fmt.Sprintf("registry lists %s as sse but its URL does not end in /sse; stored as http", MaskURL(resolved)))
@@ -421,6 +463,12 @@ func newRegistryResolver(opts McpRegistryOptions) (*registryResolver, error) {
 			return nil, fmt.Errorf("invalid --arg name %q (use NAME=VALUE)", k)
 		}
 		r.argOverrides[name] = v
+	}
+	for k := range opts.Headers {
+		name := strings.TrimSpace(k)
+		if name == "" || strings.ContainsAny(name, " \t:") {
+			return nil, fmt.Errorf("invalid --header name %q (use NAME=VALUE)", k)
+		}
 	}
 	for k, v := range r.envOverrides {
 		r.vars[k] = v

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -27,6 +28,11 @@ type ManageAction struct {
 	// Origin is the lock entry a record_origin action writes. It is not part of
 	// the JSON plan.
 	Origin *LockEntry `json:"-"`
+	// Mcp is a per-action payload so a multi-server plan can carry a different
+	// config per action; when nil, the plan-wide mcpPayload is used.
+	Mcp *McpNormalized `json:"-"`
+	// McpOrigin is the lock entry a record_mcp_origin action writes.
+	McpOrigin *McpLockEntry `json:"-"`
 }
 
 // MarshalJSON matches the serde enum field order per variant.
@@ -236,6 +242,11 @@ func PlanAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter
 		for _, envKey := range norm.EnvKeys {
 			plan.Notes = append(plan.Notes, fmt.Sprintf("env %s=%s", envKey, SecretMask))
 		}
+		headerKeys := headerKeysOf(norm)
+		sort.Strings(headerKeys)
+		for _, name := range headerKeys {
+			plan.Notes = append(plan.Notes, fmt.Sprintf("header %s=%s", name, SecretMask))
+		}
 	}
 	plan.Actions = append(plan.Actions, ManageAction{
 		Kind: "upsert_mcp_hub", Hub: hub, Server: key,
@@ -299,6 +310,17 @@ func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind, keep
 	}
 	if !found {
 		return nil, fmt.Errorf("no MCP server named %s", name)
+	}
+	if !keepHub {
+		if lock := McpLockPath(scope, cwd); lock != "" {
+			if _, err := readMcpLock(lock); err == nil {
+				plan.Actions = append(plan.Actions, ManageAction{
+					Kind:   "forget_mcp_origin",
+					Path:   lock,
+					Server: key,
+				})
+			}
+		}
 	}
 	if len(plan.Actions) == 0 {
 		plan.Notes = append(plan.Notes, fmt.Sprintf("nothing to remove for mcp '%s'", key))
@@ -379,21 +401,45 @@ func applyManageAction(a ManageAction, mcpPayload *McpNormalized) ([]string, err
 			log = append(log, fmt.Sprintf("forgot origin of %s", a.SkillKey))
 		}
 	case "upsert_mcp_hub":
-		if mcpPayload == nil {
+		payload := a.Mcp
+		if payload == nil {
+			payload = mcpPayload
+		}
+		if payload == nil {
 			return log, fmt.Errorf("mcp payload required for UpsertMcpHub")
 		}
-		if err := UpsertMcpJSONHub(a.Hub, a.Server, mcpPayload); err != nil {
+		if err := UpsertMcpJSONHub(a.Hub, a.Server, payload); err != nil {
 			return log, err
 		}
 		log = append(log, fmt.Sprintf("hub upsert %s in %s", a.Server, a.Hub))
 	case "write_mcp_agent":
-		if mcpPayload == nil {
+		payload := a.Mcp
+		if payload == nil {
+			payload = mcpPayload
+		}
+		if payload == nil {
 			return log, fmt.Errorf("mcp payload required for WriteMcpAgent")
 		}
-		if err := WriteMcpToAgent(a.Path, agentByName(a.Agent), a.Server, mcpPayload); err != nil {
+		if err := WriteMcpToAgent(a.Path, agentByName(a.Agent), a.Server, payload); err != nil {
 			return log, err
 		}
 		log = append(log, fmt.Sprintf("wrote mcp %s -> %s (%s)", a.Server, a.Path, a.Agent))
+	case "record_mcp_origin":
+		if a.McpOrigin == nil {
+			return log, fmt.Errorf("mcp origin required for record_mcp_origin")
+		}
+		if err := RecordMcpOrigin(a.Path, a.Server, *a.McpOrigin); err != nil {
+			return log, err
+		}
+		log = append(log, fmt.Sprintf("recorded origin of mcp %s: %s", a.Server, a.McpOrigin.Source))
+	case "forget_mcp_origin":
+		removed, err := ForgetMcpOrigin(a.Path, a.Server)
+		if err != nil {
+			return log, err
+		}
+		if removed {
+			log = append(log, fmt.Sprintf("forgot origin of mcp %s", a.Server))
+		}
 	case "remove_mcp_hub":
 		if err := removeMcpFromJSONHub(a.Hub, a.Server); err != nil {
 			return log, err
@@ -531,9 +577,23 @@ func RemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, purge, 
 }
 
 func AddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter []AgentKind, dryRun bool) (*ManagePlan, []string, error) {
+	return AddMcpWithOrigin(scope, cwd, name, norm, nil, agentsFilter, dryRun)
+}
+
+// AddMcpWithOrigin plans an add and, when origin is set, records where the
+// server came from after the config writes succeed.
+func AddMcpWithOrigin(scope Scope, cwd, name string, norm *McpNormalized, origin *McpLockEntry, agentsFilter []AgentKind, dryRun bool) (*ManagePlan, []string, error) {
 	plan, err := PlanAddMcp(scope, cwd, name, norm, agentsFilter)
 	if err != nil {
 		return nil, nil, err
+	}
+	if origin != nil {
+		plan.Actions = append(plan.Actions, ManageAction{
+			Kind:      "record_mcp_origin",
+			Path:      McpLockPath(scope, cwd),
+			Server:    NormalizeKey(name),
+			McpOrigin: origin,
+		})
 	}
 	plan.DryRun = dryRun
 	if dryRun {
@@ -602,10 +662,12 @@ func McpFromParts(transport string, command []string, url *string, enabled *bool
 	requested := strings.ToLower(strings.TrimSpace(transport))
 	canonical := CanonicalTransport(&requested, url, len(command) > 0)
 	norm := &McpNormalized{
-		Transport: canonical,
-		Enabled:   enabled,
-		EnvKeys:   []string{},
-		Env:       map[string]string{},
+		Transport:  canonical,
+		Enabled:    enabled,
+		EnvKeys:    []string{},
+		Env:        map[string]string{},
+		HeaderKeys: []string{},
+		Headers:    map[string]string{},
 	}
 	switch canonical {
 	case "stdio":

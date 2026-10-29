@@ -773,6 +773,7 @@ func UpsertMcpJSONHub(hub, server string, norm *McpNormalized) error {
 	}
 	obj := NormalizedToJSON(norm)
 	mergeEnv(obj, servers[server])
+	mergeHeaders(obj, servers[server])
 	servers[server] = obj
 	return writeJSONPretty(hub, root)
 }
@@ -807,6 +808,38 @@ func mergeEnv(obj map[string]any, existing any) {
 	}
 	if len(env) > 0 {
 		obj["env"] = env
+	}
+}
+
+// mergeHeaders preserves header values already in a config, so a sync that
+// only knows header names from another agent never drops a secret.
+func mergeHeaders(obj map[string]any, existing any) {
+	old, ok := existing.(map[string]any)
+	if !ok {
+		return
+	}
+	oldHeaders, ok := old["headers"].(map[string]any)
+	if !ok {
+		return
+	}
+	headers := map[string]any{}
+	switch cur := obj["headers"].(type) {
+	case map[string]string:
+		for k, v := range cur {
+			headers[k] = v
+		}
+	case map[string]any:
+		for k, v := range cur {
+			headers[k] = v
+		}
+	}
+	for k, v := range oldHeaders {
+		if _, present := headers[k]; !present {
+			headers[k] = v
+		}
+	}
+	if len(headers) > 0 {
+		obj["headers"] = headers
 	}
 }
 
@@ -849,6 +882,9 @@ func NormalizedToJSON(norm *McpNormalized) map[string]any {
 	}
 	if len(norm.Env) > 0 {
 		obj["env"] = norm.Env
+	}
+	if len(norm.Headers) > 0 {
+		obj["headers"] = norm.Headers
 	}
 	return obj
 }
@@ -912,6 +948,7 @@ func writeMcpServersJSON(path, server string, norm *McpNormalized) error {
 	}
 	obj := NormalizedToJSON(norm)
 	mergeEnv(obj, servers[server])
+	mergeHeaders(obj, servers[server])
 	servers[server] = obj
 	return writeJSONPretty(path, root)
 }
@@ -940,6 +977,9 @@ func opencodeEntry(norm *McpNormalized) map[string]any {
 	if len(norm.Env) > 0 {
 		obj["environment"] = norm.Env
 	}
+	if len(norm.Headers) > 0 {
+		obj["headers"] = norm.Headers
+	}
 	return obj
 }
 
@@ -953,7 +993,7 @@ func writeOpencode(path, server string, norm *McpNormalized) error {
 		return err
 	}
 	obj := opencodeEntry(norm)
-	// preserve env (either key spelling)
+	// preserve env (either key spelling) and headers from the existing entry
 	if old, ok := mcp[server].(map[string]any); ok {
 		var oldEnv map[string]any
 		if e, ok := old["environment"].(map[string]any); ok {
@@ -973,6 +1013,7 @@ func writeOpencode(path, server string, norm *McpNormalized) error {
 				}
 			}
 		}
+		mergeHeaders(obj, old)
 	}
 	mcp[server] = obj
 	return writeJSONPretty(path, root)
@@ -997,11 +1038,19 @@ func writeGrokToml(path, server string, norm *McpNormalized) error {
 	}
 
 	existingEnv := map[string]string{}
+	existingHeaders := map[string]string{}
 	if old, ok := servers[server].(map[string]any); ok {
 		if env, ok := old["env"].(map[string]any); ok {
 			for k, v := range env {
 				if s, ok := v.(string); ok {
 					existingEnv[k] = s
+				}
+			}
+		}
+		if headers, ok := old["headers"].(map[string]any); ok {
+			for k, v := range headers {
+				if s, ok := v.(string); ok {
+					existingHeaders[k] = s
 				}
 			}
 		}
@@ -1037,6 +1086,18 @@ func writeGrokToml(path, server string, norm *McpNormalized) error {
 	}
 	if len(envTbl) > 0 {
 		tbl["env"] = envTbl
+	}
+	headerTbl := map[string]any{}
+	for k, v := range existingHeaders {
+		headerTbl[k] = v
+	}
+	for k, v := range norm.Headers {
+		if _, present := headerTbl[k]; !present {
+			headerTbl[k] = v
+		}
+	}
+	if len(headerTbl) > 0 {
+		tbl["headers"] = headerTbl
 	}
 	servers[server] = tbl
 

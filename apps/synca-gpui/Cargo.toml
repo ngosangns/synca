@@ -17,7 +17,7 @@ devtools = ["ns-ui/devtools"]
 ely-gpui-component = { git = "https://github.com/ELY-Open-Source/Ely-GPUI-Components", rev = "cd365e92ea0c4467c439b8253963461ba0f6d155" }
 gpui = { package = "gpui-pre", version = "=0.3.8" }
 markdown = "=1.0.0"
-ns-ui = { git = "https://github.com/ngosangns/ns-gpui", rev = "c589b091c79d0d80d497343e4fb1a41aad539b25" }
+ns-ui = { git = "https://github.com/ngosangns/ns-gpui", rev = "77c7176802166b6650692fb148191792c9a2e58e" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

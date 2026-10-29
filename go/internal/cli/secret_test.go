@@ -246,3 +246,54 @@ func TestMcpAddApplyStoresValueWithoutPrintingIt(t *testing.T) {
 		t.Fatal("apply did not store the env value")
 	}
 }
+
+func TestMcpAddHeadersStoresValuesWithoutPrintingThem(t *testing.T) {
+	home := setHome(t)
+	out, err := runCLI(t, "mcp", "add", "remote",
+		"--transport", "sse", "--url", "https://api.example/sse",
+		"--header", "Authorization=Bearer "+secretToken,
+		"--header", "X-Trace=abc",
+		"--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoSecret(t, "mcp add headers", out)
+	for _, want := range []string{
+		"header Authorization=" + core.SecretMask,
+		"header X-Trace=" + core.SecretMask,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("plan hid %q: %s", want, out)
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(home, ".agents", "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), secretToken) || !strings.Contains(string(body), `"X-Trace": "abc"`) {
+		t.Fatal("apply did not store the header values")
+	}
+
+	list, err := runCLI(t, "mcp", "list", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoSecret(t, "mcp list headers", list)
+	norm := entryByKey(t, decodeOne(t, list), "remote")["presence"].([]any)[0].(map[string]any)["normalized"].(map[string]any)
+	if norm["transport"] != "sse" {
+		t.Fatalf("transport %v", norm["transport"])
+	}
+	headers := norm["headers"].(map[string]any)
+	if headers["Authorization"] != core.SecretMask || headers["X-Trace"] != core.SecretMask {
+		t.Fatal("header values were not masked")
+	}
+
+	if _, err := runCLI(t, "mcp", "add", "bad", "--transport", "sse", "--url", "https://x/sse", "--header", "nope"); err == nil {
+		t.Fatal("accepted a header without a value")
+	} else if code, _ := statusOf(t, err); code != ExitUsage {
+		t.Fatalf("code %d", code)
+	}
+	if _, err := runCLI(t, "mcp", "add", "bad", "--transport", "stdio", "--command", "echo", "--header", "A=b"); err == nil {
+		t.Fatal("accepted a header on a stdio server")
+	}
+}

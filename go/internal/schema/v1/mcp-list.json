@@ -3,7 +3,7 @@
   "type": "array",
   "items": {
     "type": "object",
-    "required": ["key", "scope", "presence", "mismatch"],
+    "required": ["key", "scope", "presence", "mismatch", "source", "source_type", "source_version"],
     "properties": {
       "key": {"type": "string"},
       "scope": {"enum": ["user", "project"]},
@@ -19,7 +19,7 @@
             "path": {"type": "string"},
             "normalized": {
               "type": "object",
-              "required": ["transport", "command", "url", "args", "enabled", "env_keys"],
+              "required": ["transport", "command", "url", "args", "enabled", "env_keys", "header_keys"],
               "properties": {
                 "transport": {"type": "string"},
                 "command": {"type": ["array", "null"], "items": {"type": "string"}},
@@ -38,6 +38,12 @@
                   "description": "Env entries. Every value is \"••••••\" unless mcp list --reveal. Keys match env_keys.",
                   "type": "object",
                   "additionalProperties": {"type": "string"}
+                },
+                "header_keys": {"type": "array", "items": {"type": "string"}},
+                "headers": {
+                  "description": "Remote header values. Every value is \"••••••\" unless mcp list --reveal. Keys match header_keys.",
+                  "type": "object",
+                  "additionalProperties": {"type": "string"}
                 }
               }
             },
@@ -45,7 +51,13 @@
           }
         }
       },
-      "mismatch": {"type": "boolean"}
+      "mismatch": {"type": "boolean"},
+      "source": {
+        "description": "Registry name recorded at install, or null for a server not installed from a registry.",
+        "type": ["string", "null"]
+      },
+      "source_type": {"enum": ["registry", null]},
+      "source_version": {"type": ["string", "null"]}
     }
   }
 }
