@@ -138,7 +138,7 @@ synca skills remove my-skill --purge          # also delete canonical; asks you 
 synca skills remove my-skill --purge --yes
 ```
 
-`install` takes a source and copies the skill into the canonical dir, then links it into each agent dir:
+`install` takes a source, copies the skill into its home, then links it into each managed agent dir. A local folder lands in `.synca/local/skills`. A git or registry install lands in `.agents/skills`:
 
 - a local folder with `SKILL.md`, or a folder that holds exactly one skill folder (it also looks in `.agents/skills` and `skills`);
 - `owner/repo` shorthand (GitHub), or `owner/repo@skill` to pick one skill from a repository that holds many;
@@ -257,7 +257,7 @@ synca sync skills --dry-run --json
 
 Run with `--dry-run` first. The text plan is one compact JSON object per line. `--json` prints one document instead: `dryRun`, `scope`, `onConflict`, `actions` (those same objects), and `conflicts` (`skill`, `key`, `policy`). An apply adds `applied` and sets `dryRun` to false. Without `--json` the text is unchanged.
 
-Action kinds for skills and MCP: `ensure_canonical_copy`, `symlink_skill`, `ensure_mcp_hub`, `write_mcp_server`, `skip_same`, `skip_mcp_same`, `conflict_skill`, `conflict_mcp`. `ensure_mcp_hub` is an idempotent upsert and shows up even when the hub is already correct. Hooks use their own kinds (`write_hook`, `update_hook`, …); see [Hooks](#hooks).
+Action kinds for skills and MCP: `ensure_canonical_copy`, `symlink_skill`, `unlink_skill`, `ensure_mcp_hub`, `remove_mcp_hub`, `write_mcp_server`, `skip_same`, `skip_mcp_same`, `conflict_skill`, `conflict_mcp`. `ensure_mcp_hub` is an idempotent upsert and shows up even when the hub is already correct. `unlink_skill` and `remove_mcp_hub` drop a copy that sits in the other home. Hooks use their own kinds (`write_hook`, `update_hook`, …); see [Hooks](#hooks).
 
 `sync all` also runs the hooks phase when the scope is user and `~/.agents/hooks.json` exists. The JSON plan then gains a `hooks` object with the same shape as `hooks sync --json`; `--no-hooks` leaves it out. Unapproved hooks are skipped and listed (exit 0, or 7 with `--strict`). `--on-conflict keep-target` applies to skills and MCP; the hooks phase falls back to `skip`.
 
@@ -274,7 +274,7 @@ Never silent overwrite. A dry-run does not need `--yes`.
 Hooks are shell commands an agent runs on an event (before or after a tool, on prompt submit, on stop). Skills and MCP only copy data; a hook **runs code with your permissions**, so it is handled more strictly. The complete event/tool tables, JSON shapes and edit rules are in [`docs/hooks.md`](docs/hooks.md).
 
 ```bash
-~/.agents/skills/synca/scripts/hook-scaffold.sh block-rm --event PreToolUse --tools shell
+~/.synca/local/skills/synca/scripts/hook-scaffold.sh block-rm --event PreToolUse --tools shell
 synca hooks add block-rm --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh' --timeout 10 --dry-run
 synca hooks add block-rm --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh' --timeout 10
 synca hooks list
@@ -307,7 +307,7 @@ synca provider clear kiro --dry-run
 synca provider clear kiro --scope user --yes
 ```
 
-Deletes one agent's skill copies and MCP server entries in the scope. It refuses without `--yes` (unless `--dry-run`) and exits 6, including on a TTY. It never touches the canonical hub, and only removes the MCP server table or key from the agent's config, not the rest of the file. `agents` is not a valid provider. `--json` prints `{dryRun, scope, provider, lines}` where `lines` are the same strings as the text output.
+Deletes one agent's skill copies and MCP server entries in the scope. It refuses without `--yes` (unless `--dry-run`) and exits 6, including on a TTY. It never touches `.synca/local` or `.agents`, and only removes the MCP server table or key from the agent's config, not the rest of the file. `agents` is not a valid provider. `--json` prints `{dryRun, scope, provider, lines}` where `lines` are the same strings as the text output.
 
 ### Update
 
@@ -343,7 +343,7 @@ synca skill check
 synca skill check --json
 ```
 
-`skill install` writes the embedded copy of `skills/synca` (the source of truth in this repo), including `scripts/status.sh`, `scripts/plan.sh` and `scripts/hook-scaffold.sh`. The default destination is `~/.agents/skills/synca`; `--dest DIR` writes elsewhere. `skill check` exits 0 when that directory matches, 8 when it has drifted, and 3 when it is missing. The helper scripts need `jq` and the `synca` binary; `status.sh` and `plan.sh` are read-only, while `hook-scaffold.sh` only creates `~/.agents/hooks/<id>/check.sh` and never adds or trusts a hook.
+`skill install` writes the embedded copy of `skills/synca` (the source of truth in this repo), including `scripts/status.sh`, `scripts/plan.sh` and `scripts/hook-scaffold.sh`. The default destination is `~/.synca/local/skills/synca`; `--dest DIR` writes elsewhere. `skill check` exits 0 when that directory matches, 8 when it has drifted, and 3 when it is missing. The helper scripts need `jq` and the `synca` binary; `status.sh` and `plan.sh` are read-only, while `hook-scaffold.sh` only creates `~/.agents/hooks/<id>/check.sh` and never adds or trusts a hook.
 
 ### Exit codes
 
@@ -362,21 +362,24 @@ With `--json`, a failure prints one line on stdout: `{"error":{"code","exit","me
 
 ### Scope
 
-- `user` (default): `~/.agents/...` plus per-agent home dirs.
-- `project`: `<git-root>/.agents/...` plus repo-local agent dirs. The git root is the nearest parent of `--cwd` that contains `.git`. Outside a repo, `list` shows nothing and `install`, `add` and `remove` fail with "no project root".
-- Hooks are user scope only. `--scope project` is rejected for `hooks` and `sync hooks`.
+- `user` (default): local skills and MCP live in `~/.synca/local`. Installed skills and MCP live in `~/.agents`. Managed agents are linked or written from whichever home owns the item.
+- `project`: the same split under `<git-root>/.synca/local` and `<git-root>/.agents`. The first project install adds `.agents/` to `.git/info/exclude` and leaves `.synca/local` committable. `<git-root>/.mcp.json` is Claude's project file, written from both homes. The git root is the nearest parent of `--cwd` that contains `.git`. Outside a repo, `list` shows nothing and `install`, `add` and `remove` fail with "no project root".
+- Hooks are user scope only and stay in `~/.agents`. `--scope project` is rejected for `hooks` and `sync hooks`.
 
 ### Canonical paths
 
 | | User | Project |
 | --- | --- | --- |
-| Skills | `~/.agents/skills/<name>/` | `<git-root>/.agents/skills/<name>/` |
-| MCP hub | `~/.agents/mcp.json` | `<git-root>/.mcp.json` |
+| Local skills | `~/.synca/local/skills/<name>/` | `<git-root>/.synca/local/skills/<name>/` |
+| Installed skills | `~/.agents/skills/<name>/` | `<git-root>/.agents/skills/<name>/` |
+| Local MCP | `~/.synca/local/mcp.json` | `<git-root>/.synca/local/mcp.json` |
+| Installed MCP | `~/.agents/mcp.json` | `<git-root>/.agents/mcp.json` |
+| Claude project MCP | not used | `<git-root>/.mcp.json` |
 | Hooks hub | `~/.agents/hooks.json` | not supported |
 
 Hook scripts live in `~/.agents/hooks/<id>/`. Hook state (trust, lock, backups) lives in `~/.local/state/synca/hooks/`.
 
-Sync prefers **symlinks** from each agent's skills dir to the canonical dir. An agent dir that is itself a symlink to the canonical dir is left alone. MCP writers translate to each agent's format (JSON, Grok TOML, OpenCode `mcp` key) and preserve existing **env secrets** on the target when the source lacks a key. Hook writers translate event and tool names and edit shared settings files in place.
+Sync symlinks grok, devin, kiro, opencode, claude and cursor at the home that owns the skill. An agent dir that is itself a symlink to that home is left alone. A real skill directory with the same full tree becomes a symlink. A matching copy in the other home is removed. MCP writers translate to each agent's format (JSON, Grok TOML, OpenCode `mcp` key) and preserve existing **env secrets** on the target when the source lacks a key. Hook writers translate event and tool names and edit shared settings files in place. Agents that only read `.agents/skills` do not see skills that live in `.synca/local`.
 
 ### Agent paths
 

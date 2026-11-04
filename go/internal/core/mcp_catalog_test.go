@@ -13,7 +13,7 @@ import (
 func catalogTestHome(t *testing.T) string {
 	t.Helper()
 	home := realTempHome(t)
-	mustWrite(t, filepath.Join(home, ".agents", "mcp.json"), `{
+	mustWrite(t, filepath.Join(home, ".synca", "local", "mcp.json"), `{
 		"mcpServers": {
 			"demo": {"type": "stdio", "command": "echo", "args": ["hi"], "env": {"TOKEN": "example"}},
 			"docs": {"type": "http", "url": "https://example.com/mcp", "headers": {"Authorization": "Bearer example"}}
@@ -196,6 +196,10 @@ func TestPlanMcpCatalogImport(t *testing.T) {
 	if demo["env"].(map[string]any)["TOKEN"] != "example" {
 		t.Fatalf("hub demo %v", demo)
 	}
+	docs := readJSON(t, filepath.Join(home, ".synca", "local", "mcp.json"))["mcpServers"].(map[string]any)["docs"].(map[string]any)
+	if docs["url"] != "https://example.com/mcp" {
+		t.Fatalf("local docs %v", docs)
+	}
 	lock, err := ReadMcpLock(McpLockPath(ScopeUser, home))
 	if err != nil {
 		t.Fatal(err)
@@ -240,8 +244,8 @@ func TestPlanMcpCatalogImport(t *testing.T) {
 	if len(skipPlan.Actions) != 0 {
 		t.Fatalf("value-only change planned %v", skipPlan.Actions)
 	}
-	docs := readJSON(t, hub)["mcpServers"].(map[string]any)["docs"].(map[string]any)
-	if docs["headers"].(map[string]any)["Authorization"] != "Bearer example" {
+	docsAgain := readJSON(t, filepath.Join(home, ".synca", "local", "mcp.json"))["mcpServers"].(map[string]any)["docs"].(map[string]any)
+	if docsAgain["headers"].(map[string]any)["Authorization"] != "Bearer example" {
 		t.Fatalf("docs headers %v", docs["headers"])
 	}
 }

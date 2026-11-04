@@ -61,7 +61,7 @@ func gitURLFor(e LockEntry) string {
 // changed. With apply set the plan is applied before the clones are removed.
 // names limits the check to those skills.
 func PlanUpdateSkills(scope Scope, cwd string, names []string, agentsFilter []AgentKind, apply bool) (*ManagePlan, []string, error) {
-	if CanonicalSkillsDir(scope, cwd) == "" {
+	if InstalledSkillsDir(scope, cwd) == "" {
 		return nil, nil, fmt.Errorf("no project root for project scope")
 	}
 	keys, locks, missing := remoteLocks(scope, cwd, names)
@@ -207,7 +207,7 @@ func PlanUpdateSkills(scope Scope, cwd string, names []string, agentsFilter []Ag
 // that is not a remote skill is ignored. With apply set the plan is
 // applied before the clones are removed.
 func PlanRestoreSkills(scope Scope, cwd string, names []string, agentsFilter []AgentKind, apply bool) (*ManagePlan, []string, error) {
-	if CanonicalSkillsDir(scope, cwd) == "" {
+	if InstalledSkillsDir(scope, cwd) == "" {
 		return nil, nil, fmt.Errorf("no project root for project scope")
 	}
 	keys, locks, _ := remoteLocks(scope, cwd, names)
@@ -216,7 +216,7 @@ func PlanRestoreSkills(scope Scope, cwd string, names []string, agentsFilter []A
 		plan.Notes = append(plan.Notes, "no skills with a remote origin")
 		return plan, nil, nil
 	}
-	canonical := CanonicalSkillsDir(scope, cwd)
+	canonical := InstalledSkillsDir(scope, cwd)
 	var cleanups []func()
 	defer func() {
 		for _, c := range cleanups {

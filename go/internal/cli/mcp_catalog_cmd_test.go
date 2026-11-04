@@ -13,7 +13,7 @@ import (
 func catalogHubHome(t *testing.T) string {
 	t.Helper()
 	home := setHome(t)
-	writeFile(t, filepath.Join(home, ".agents", "mcp.json"), `{
+	writeFile(t, filepath.Join(home, ".synca", "local", "mcp.json"), `{
   "mcpServers": {
     "demo": {"type": "stdio", "command": "echo", "args": ["hi"], "env": {"TOKEN": "example"}},
     "docs": {"type": "http", "url": "https://example.com/mcp"}
@@ -131,8 +131,12 @@ func TestMcpImportApplyNeedsYesThenWrites(t *testing.T) {
 	if doc["dryRun"] != false || len(doc["applied"].([]any)) == 0 {
 		t.Fatalf("%v", doc)
 	}
-	hub := decodeFile(t, filepath.Join(home, ".agents", "mcp.json")).(map[string]any)
+	hub := decodeFile(t, filepath.Join(home, ".synca", "local", "mcp.json")).(map[string]any)
 	demo := hub["mcpServers"].(map[string]any)["demo"].(map[string]any)
+	installed := decodeFile(t, filepath.Join(home, ".agents", "mcp.json")).(map[string]any)
+	if _, ok := installed["mcpServers"].(map[string]any)["docs"]; !ok {
+		t.Fatalf("registry import missing from .agents: %#v", installed)
+	}
 	if demo["command"] != "echo" || demo["env"].(map[string]any)["TOKEN"] != "example" {
 		t.Fatalf("hub demo %v", demo)
 	}

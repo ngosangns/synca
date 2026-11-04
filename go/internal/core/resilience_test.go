@@ -162,21 +162,21 @@ func TestForceSymlinkRestoresDirectoryOnFailure(t *testing.T) {
 // One bad action must not stop the others. The failing skill gets no link.
 func TestApplyPlanContinuesAfterFailure(t *testing.T) {
 	home := realTempHome(t)
-	agents := filepath.Join(home, ".agents", "skills")
+	store := filepath.Join(home, ".synca", "local", "skills")
 	grok := filepath.Join(home, ".grok", "skills")
 	writeSkill(t, grok, "good", "g")
 	writeSkill(t, grok, "bad", "b")
-	mustMkdir(t, agents)
+	mustMkdir(t, store)
 
 	plan, err := PlanSyncSkills(ScopeUser, home, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Block the canonical copy of "bad" with a file that cannot be replaced.
-	if err := os.Chmod(agents, 0o555); err != nil {
+	// Block the canonical copy with a directory that cannot be written.
+	if err := os.Chmod(store, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(agents, 0o755) })
+	t.Cleanup(func() { _ = os.Chmod(store, 0o755) })
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}

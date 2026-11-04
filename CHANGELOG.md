@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- **Two homes:** a registry or git install lives in `.agents` (`~/.agents` or `<git-root>/.agents`) and that copy is the original synced to the other agents. Project `.agents/` is gitignored through `.git/info/exclude`. A local skill or `mcp add` lives in `.synca/local` and that copy is the original for those items. The two homes are not mirrors of each other. Hooks stay in `~/.agents`. On sync, a managed agent's real skill directory whose full tree matches its home is replaced with a symlink.
+
 ## 0.6.0
 
 - **mcp export and import:** `synca mcp export [--out FILE]` writes the scope hub to a catalog (`mcp-catalog.json`, mode 0600). Each server uses the agent config shape plus its recorded registry origin. Without `--out` the catalog is printed on stdout. `synca mcp import <file|url>` installs every server into the hub and the selected agent configs. A missing key is an add, a different fingerprint is an update, and a match is skipped so this machine keeps its env and header values. Off a TTY an apply needs `--yes`. The catalog stores env and header values in plain text.

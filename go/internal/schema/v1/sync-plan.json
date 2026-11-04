@@ -41,9 +41,11 @@
               "ensure_canonical_copy",
               "ensure_mcp_hub",
               "fetch_skill",
+              "remove_mcp_hub",
               "skip_mcp_same",
               "skip_same",
               "symlink_skill",
+              "unlink_skill",
               "write_mcp_server"
             ]
           },

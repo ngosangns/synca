@@ -428,13 +428,24 @@ func TestPlanSyncMcpRecordsSingleScope(t *testing.T) {
 	if plan.Scope != "user" {
 		t.Errorf("scope = %q", plan.Scope)
 	}
+	sawDrop := false
+	foreign := filepath.Join(home, ".agents", "mcp.json")
 	for _, a := range plan.Actions {
-		if a.Kind == "ensure_mcp_hub" && !strings.HasSuffix(a.Hub, ".agents/mcp.json") {
-			t.Errorf("hub = %s", a.Hub)
+		if a.Kind == "ensure_mcp_hub" && !strings.HasSuffix(a.Hub, filepath.Join(".synca", "local", "mcp.json")) {
+			t.Errorf("local hub = %s", a.Hub)
+		}
+		if a.Kind == "remove_mcp_hub" && a.Hub == foreign {
+			sawDrop = true
+		}
+		if (a.Kind == "write_mcp_server" || a.Kind == "skip_mcp_same") && a.Path == foreign {
+			t.Errorf("local server rewritten into .agents: %+v", a)
 		}
 		if a.Kind == "write_mcp_server" && strings.Contains(a.Path, "/proj/") {
 			t.Errorf("user mcp write leaked: %s", a.Path)
 		}
+	}
+	if !sawDrop {
+		t.Errorf("plan left the lock-less server in .agents: %+v", plan.Actions)
 	}
 }
 
@@ -477,7 +488,7 @@ func TestSyncNeverSelfLinksCanonicalThroughAliasedRoot(t *testing.T) {
 	for i := 0; i < 3; i++ { // converges and stays put
 		syncAll(t, proj)
 	}
-	canon := filepath.Join(proj, ".agents/skills/unit-test")
+	canon := filepath.Join(proj, ".synca", "local", "skills", "unit-test")
 	fi, err := os.Lstat(canon)
 	if err != nil {
 		t.Fatal(err)
@@ -504,8 +515,9 @@ func TestSyncNeverSelfLinksCanonicalThroughAliasedRoot(t *testing.T) {
 
 func TestSyncRepairsSelfReferencingCanonicalLeftByOlderVersions(t *testing.T) {
 	proj := aliasedProject(t)
-	canon := filepath.Join(proj, ".agents/skills/unit-test")
-	if err := os.Symlink("unit-test", canon); err != nil { // the broken state older binaries produced
+	canon := filepath.Join(proj, ".synca", "local", "skills", "unit-test")
+	broken := filepath.Join(proj, ".agents/skills/unit-test")
+	if err := os.Symlink("unit-test", broken); err != nil { // the broken state older binaries produced
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
@@ -561,7 +573,7 @@ func TestRemoveSkillNeverDeletesCanonicalThroughAliasedRoot(t *testing.T) {
 	if _, _, err := RemoveSkill(ScopeProject, proj, "unit-test", nil, false, false); err != nil { // unlink only
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(proj, ".agents/skills/unit-test/SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(proj, ".synca", "local", "skills", "unit-test", "SKILL.md")); err != nil {
 		t.Fatalf("unlink deleted the canonical copy through the aliased root: %v", err)
 	}
 }

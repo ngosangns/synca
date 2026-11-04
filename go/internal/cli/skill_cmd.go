@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/ngosangns/synca/go/internal/core"
 )
 
 // The embedded tree is a mirror of the repo's skills/synca directory.
@@ -22,7 +24,7 @@ func printSkillHelp() {
   synca skill install [--dest DIR]
   synca skill check [--dest DIR] [--json]
 
-install writes the embedded synca skill. The default dest is ~/.agents/skills/synca.
+install writes the embedded synca skill. The default dest is ~/.synca/local/skills/synca.
 check compares that directory with the embedded copy. Exit 0 when they match,
 8 on drift, 3 when the directory is missing.
 `)
@@ -142,7 +144,7 @@ func skillDest(flag string) (string, error) {
 		if err != nil || home == "" {
 			return "", fmt.Errorf("HOME is not set")
 		}
-		dest = filepath.Join(home, ".agents", "skills", "synca")
+		dest = filepath.Join(core.LocalSkillsDir(core.ScopeUser, ""), "synca")
 	}
 	if !filepath.IsAbs(dest) {
 		abs, err := filepath.Abs(dest)

@@ -121,19 +121,49 @@ func validateMcpCatalogConfig(name string, norm *McpNormalized) error {
 	return nil
 }
 
-// BuildMcpCatalog reads the scope's hub into a catalog, attaching the lock
-// origins when present. A missing hub yields an empty catalog.
+// readOptionalMcpHub reads one MCP JSON file. A missing file is an empty map.
+func readOptionalMcpHub(path string) (map[string]McpNormalized, error) {
+	if path == "" {
+		return map[string]McpNormalized{}, nil
+	}
+	servers, err := ReadMcpServers(AgentAgents, path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return map[string]McpNormalized{}, nil
+		}
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return servers, nil
+}
+
+// catalogServerInstalled reports a catalog row whose origin is a registry install.
+func catalogServerInstalled(origin *McpCatalogOrigin) bool {
+	return origin != nil && origin.SourceType == "registry" && origin.Source != ""
+}
+
+// BuildMcpCatalog reads both homes into one catalog. A name in both files keeps
+// the installed copy. Lock origins are attached either way. Missing files yield
+// an empty catalog.
 func BuildMcpCatalog(scope Scope, cwd string) (*McpCatalog, error) {
-	hub := CanonicalMcpPath(scope, cwd)
-	if hub == "" {
+	installedPath := InstalledMcpPath(scope, cwd)
+	localPath := LocalMcpPath(scope, cwd)
+	if installedPath == "" || localPath == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
-	servers, err := ReadMcpServers(AgentAgents, hub)
+	local, err := readOptionalMcpHub(localPath)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("%s: %w", hub, err)
-		}
-		servers = map[string]McpNormalized{}
+		return nil, err
+	}
+	installed, err := readOptionalMcpHub(installedPath)
+	if err != nil {
+		return nil, err
+	}
+	servers := make(map[string]McpNormalized, len(local)+len(installed))
+	for name, norm := range local {
+		servers[name] = norm
+	}
+	for name, norm := range installed {
+		servers[name] = norm
 	}
 	origins, _ := ReadMcpLock(McpLockPath(scope, cwd))
 	out := &McpCatalog{Version: McpCatalogVersion, Servers: make(map[string]McpCatalogServer, len(servers))}
@@ -226,13 +256,18 @@ type McpCatalogDiff struct {
 // the hub are skipped, and a value-only env change is an update of keys, not a
 // secret clobber: the fingerprint covers env names only.
 func PlanMcpCatalogImport(scope Scope, cwd, source string, catalog *McpCatalog, agentsFilter []AgentKind) (*ManagePlan, []McpCatalogDiff, error) {
-	hub := CanonicalMcpPath(scope, cwd)
-	if hub == "" {
+	installedPath := InstalledMcpPath(scope, cwd)
+	localPath := LocalMcpPath(scope, cwd)
+	if installedPath == "" || localPath == "" {
 		return nil, nil, fmt.Errorf("no project root for project scope")
 	}
-	existing, err := ReadMcpServers(AgentAgents, hub)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, fmt.Errorf("%s: %w", hub, err)
+	installedServers, err := readOptionalMcpHub(installedPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	localServers, err := readOptionalMcpHub(localPath)
+	if err != nil {
+		return nil, nil, err
 	}
 	plan := &ManagePlan{
 		Scope:  scope.String(),
@@ -250,6 +285,12 @@ func PlanMcpCatalogImport(scope Scope, cwd, source string, catalog *McpCatalog, 
 	for _, key := range keys {
 		server := catalog.Servers[key]
 		norm := server.Config
+		hub := localPath
+		existing := localServers
+		if catalogServerInstalled(server.Origin) {
+			hub = installedPath
+			existing = installedServers
+		}
 		action := "add"
 		if old, ok := existing[key]; ok {
 			if McpFingerprint(&old) == McpFingerprint(&norm) {
@@ -280,7 +321,7 @@ func PlanMcpCatalogImport(scope Scope, cwd, source string, catalog *McpCatalog, 
 			ManageAction{Kind: "upsert_mcp_hub", Hub: hub, Server: key, Mcp: &payload},
 		)
 		for _, r := range McpConfigPaths(scope, cwd) {
-			if r.Agent == AgentAgents {
+			if pathsEqual(r.Path, installedPath) || pathsEqual(r.Path, localPath) {
 				continue
 			}
 			if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {

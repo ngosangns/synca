@@ -167,7 +167,7 @@ func TestMcpAddDryRunMasksEnv(t *testing.T) {
 	if !containsAll(notes, "env DISCORD_TOKEN="+core.SecretMask, "env LOG_LEVEL="+core.SecretMask) {
 		t.Fatal("dry-run notes hid an env key")
 	}
-	if _, err := os.Stat(filepath.Join(home, ".agents", "mcp.json")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".synca", "local", "mcp.json")); !os.IsNotExist(err) {
 		t.Fatal("dry-run wrote the hub")
 	}
 }
@@ -238,7 +238,7 @@ func TestMcpAddApplyStoresValueWithoutPrintingIt(t *testing.T) {
 	if !strings.Contains(out, "DISCORD_TOKEN="+core.SecretMask) {
 		t.Fatal("apply plan hid the env key")
 	}
-	body, err := os.ReadFile(filepath.Join(home, ".agents", "mcp.json"))
+	body, err := os.ReadFile(filepath.Join(home, ".synca", "local", "mcp.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestMcpAddHeadersStoresValuesWithoutPrintingThem(t *testing.T) {
 			t.Fatalf("plan hid %q: %s", want, out)
 		}
 	}
-	body, err := os.ReadFile(filepath.Join(home, ".agents", "mcp.json"))
+	body, err := os.ReadFile(filepath.Join(home, ".synca", "local", "mcp.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

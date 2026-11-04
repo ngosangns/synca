@@ -7,7 +7,7 @@ description: "Browse, install, and sync skills, MCP configs and hooks across cod
 
 `synca` keeps one canonical copy of each skill, MCP server and hook and links or writes it to each agent. Use the CLI. Do not hand-edit per-agent directories.
 
-Do not edit `~/.agents/skills/synca` by hand. Edit this repo's `skills/synca/SKILL.md`, then run `synca skill install`.
+Do not edit `~/.synca/local/skills/synca` by hand. Edit this repo's `skills/synca/SKILL.md`, then run `synca skill install`.
 
 ## Mutate rule
 
@@ -23,11 +23,13 @@ These are destructive and need `--yes` when stdin is not a TTY: `skills remove -
 
 ## Layout
 
-- Skills: `~/.agents/skills/<name>/` (user), `<git-root>/.agents/skills/<name>/` (project).
-- MCP hub: `~/.agents/mcp.json` (user), `<git-root>/.mcp.json` (project).
-- Hooks hub: `~/.agents/hooks.json` (user scope only), scripts in `~/.agents/hooks/<id>/`. Written to Claude, Grok and Devin.
+- Local skills: `~/.synca/local/skills/<name>/` (user), `<git-root>/.synca/local/skills/<name>/` (project). This is the original for a folder install and for this bundled skill.
+- Installed skills: `~/.agents/skills/<name>/` (user), `<git-root>/.agents/skills/<name>/` (project, gitignored). This is the original for a git or registry install. Do not copy these into `.synca/local`.
+- Local MCP: `~/.synca/local/mcp.json` and `<git-root>/.synca/local/mcp.json` (`mcp add`). Installed MCP: `~/.agents/mcp.json` and `<git-root>/.agents/mcp.json` (registry). Project Claude also gets `<git-root>/.mcp.json`.
+- Managed agents (grok, devin, kiro, opencode, claude, cursor) are symlinked or rewritten from the home that owns the item. An agent that only reads `.agents/skills` does not see local skills.
+- Hooks hub: `~/.agents/hooks.json` (user scope only), scripts in `~/.agents/hooks/<id>/`. Written to Claude, Grok and Devin. Hooks are not stored under `.synca/local`.
 - Hook state: trust `~/.local/state/synca/hooks/trust.json` (0600), ownership `lock.json`, backups in `backups/` (last 20 per file).
-- Agents: grok, devin, kiro, opencode, claude, cursor, plus canonical `agents`. Pi (`~/.pi`) and OMP (`~/.omp`) are ignored and never deleted.
+- Agents: grok, devin, kiro, opencode, claude, cursor. `.agents` is the installed home, not a seventh mirror. Pi (`~/.pi`) and OMP (`~/.omp`) are ignored and never deleted.
 - `--scope user` is the default. `--scope project` needs a git repository, or `--cwd`.
 - Helpers installed with this skill: `scripts/status.sh`, `scripts/plan.sh`, `scripts/hook-scaffold.sh`.
 
@@ -38,7 +40,7 @@ Is everything in sync for every agent:
 ```bash
 synca doctor --json
 synca sync skills --key X --dry-run --json
-~/.agents/skills/synca/scripts/status.sh
+~/.synca/local/skills/synca/scripts/status.sh
 ```
 
 `doctor` exits 0 when clean and 8 when it finds drift, a dangling symlink, a missing link, or an MCP difference. `conflict_skill` in the sync plan means copies of X differ. `status.sh` also reports hook trust and pending state and exits 8 on doctor drift.
@@ -46,9 +48,9 @@ synca sync skills --key X --dry-run --json
 Review a plan without writing:
 
 ```bash
-~/.agents/skills/synca/scripts/plan.sh all
-~/.agents/skills/synca/scripts/plan.sh skills --key X
-~/.agents/skills/synca/scripts/plan.sh all --json
+~/.synca/local/skills/synca/scripts/plan.sh all
+~/.synca/local/skills/synca/scripts/plan.sh skills --key X
+~/.synca/local/skills/synca/scripts/plan.sh all --json
 ```
 
 Install a skill for every agent:
@@ -112,7 +114,7 @@ A hook is a shell command an agent runs on an event. It executes code with the u
 Create a script, then add and approve the hook:
 
 ```bash
-~/.agents/skills/synca/scripts/hook-scaffold.sh my-check --event PreToolUse --tools shell
+~/.synca/local/skills/synca/scripts/hook-scaffold.sh my-check --event PreToolUse --tools shell
 synca hooks add my-check --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh' --dry-run
 synca hooks add my-check --event PreToolUse --tools shell --command '{{hook_dir}}/check.sh'
 # now tell the user to run, in their terminal:
@@ -178,7 +180,7 @@ synca update [--check] [--force] [--json]
 
 ## Helper scripts
 
-Installed at `~/.agents/skills/synca/scripts/` (or `<skill-dir>/scripts/` in the repo). They need `jq` and the `synca` binary (`SYNCA_BIN` overrides the lookup).
+Installed at `~/.synca/local/skills/synca/scripts/` (or `<skill-dir>/scripts/` in the repo). They need `jq` and the `synca` binary (`SYNCA_BIN` overrides the lookup).
 
 - `status.sh [--scope user|project] [--cwd DIR] [--json]` — read-only version, counts, doctor findings, and hook trust/state summary. Exit 0 clean, 8 doctor drift, 3 unavailable.
 - `plan.sh [skills|mcp|hooks|all] [--scope] [--cwd] [--key] [--agents] [--json]` — read-only `sync --dry-run --json`, summarized by action kind, conflicts, untrusted hooks and lossy warnings. `--json` prints the raw plan.

@@ -438,7 +438,7 @@ func TestProviderClearJSONAndGate(t *testing.T) {
 
 func TestDoctorReports(t *testing.T) {
 	home := setHome(t)
-	writeFile(t, filepath.Join(home, ".agents", "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Alpha\n")
+	writeFile(t, filepath.Join(home, ".synca", "local", "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Alpha\n")
 	writeFile(t, filepath.Join(home, ".pi", "agent", "skills", "orphan", "SKILL.md"), "---\nname: orphan\n---\npi\n")
 	writeFile(t, filepath.Join(home, ".omp", "agent", "skills", "orphan", "SKILL.md"), "---\nname: orphan\n---\nomp\n")
 	writeFile(t, filepath.Join(home, ".pi", "agent", "mcp.json"), `{"mcpServers":{"pi-only":{"command":"echo"}}}`)
@@ -459,7 +459,7 @@ func TestDoctorReports(t *testing.T) {
 	}
 
 	writeFile(t, filepath.Join(home, ".grok", "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Same\n")
-	writeFile(t, filepath.Join(home, ".agents", "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Same\n")
+	writeFile(t, filepath.Join(home, ".synca", "local", "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Same\n")
 	text, err = runCLI(t, "doctor")
 	code, stderr = statusOf(t, err)
 	if code != 0 || strings.Contains(text, "drift ") {
@@ -502,18 +502,21 @@ func TestDoctorReports(t *testing.T) {
 	}
 
 	home = setHome(t)
-	writeFile(t, filepath.Join(home, ".agents", "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Alpha\n")
+	writeFile(t, filepath.Join(home, ".synca", "local", "skills", "alpha", "SKILL.md"), "---\nname: alpha\n---\n# Alpha\n")
+	if err := os.MkdirAll(filepath.Join(home, ".agents", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(home, ".cursor", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	text, err = runCLI(t, "doctor")
 	code, _ = statusOf(t, err)
-	if code != 8 || !strings.Contains(text, "missing cursor alpha ") {
+	if code != 8 || !strings.Contains(text, "missing cursor alpha ") || strings.Contains(text, "missing agents alpha ") {
 		t.Fatalf("missing code %d text %q err %v", code, text, err)
 	}
 
 	home = setHome(t)
-	writeFile(t, filepath.Join(home, ".agents", "mcp.json"), `{"mcpServers":{"demo":{"command":"echo"}}}`)
+	writeFile(t, filepath.Join(home, ".synca", "local", "mcp.json"), `{"mcpServers":{"demo":{"command":"echo"}}}`)
 	writeFile(t, filepath.Join(home, ".cursor", "mcp.json"), `{"mcpServers":{"demo":{"command":"other"},"extra":{"command":"echo"}}}`)
 	out, err = runCLI(t, "doctor", "--json")
 	code, stderr = statusOf(t, err)
@@ -621,7 +624,7 @@ func TestSkillInstallAndCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	def := filepath.Join(home, ".agents", "skills", "synca")
+	def := filepath.Join(home, ".synca", "local", "skills", "synca")
 	if out != "installed synca skill at "+def+"\n" {
 		t.Fatalf("default dest %q", out)
 	}

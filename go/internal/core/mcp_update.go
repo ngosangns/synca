@@ -22,7 +22,7 @@ func PlanUpdateMcp(scope Scope, cwd string, keys []string, agentsFilter []AgentK
 	if err != nil {
 		return nil, err
 	}
-	hub := CanonicalMcpPath(scope, cwd)
+	hub := InstalledMcpPath(scope, cwd)
 	if hub == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
@@ -48,7 +48,7 @@ func PlanUpdateMcp(scope Scope, cwd string, keys []string, agentsFilter []AgentK
 
 	var writers []agentPath
 	for _, r := range McpConfigPaths(scope, cwd) {
-		if r.Agent == AgentAgents {
+		if pathsEqual(r.Path, hub) || pathsEqual(r.Path, LocalMcpPath(scope, cwd)) {
 			continue
 		}
 		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {

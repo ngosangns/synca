@@ -104,12 +104,14 @@ func skillKeyFromDir(dir string) string {
 // origin on a skill the lock file lists as remote removes that record, since
 // the installed copy is now a local one.
 func PlanInstallSkill(scope Scope, cwd, sourceDir string, agentsFilter []AgentKind, origin *LockEntry) (*ManagePlan, error) {
-	canonical := CanonicalSkillsDir(scope, cwd)
+	remote := origin != nil && origin.Remote()
+	canonical := SkillOriginalDir(scope, cwd, remote)
 	if canonical == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
 	key := skillKeyFromDir(sourceDir)
 	canonSkill := filepath.Join(canonical, key)
+	foreign := SkillOriginalDir(scope, cwd, !remote)
 	plan := &ManagePlan{
 		Scope:  scope.String(),
 		DryRun: true,
@@ -119,7 +121,7 @@ func PlanInstallSkill(scope Scope, cwd, sourceDir string, agentsFilter []AgentKi
 		Kind: "copy_skill", From: sourceDir, To: canonSkill, SkillKey: key,
 	})
 	for _, r := range SkillRoots(scope, cwd) {
-		if r.Agent == AgentAgents {
+		if pathsEqual(r.Path, canonical) || pathsEqual(r.Path, foreign) {
 			continue
 		}
 		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
@@ -168,7 +170,11 @@ func presenceAgentIn(name string, filter []AgentKind) bool {
 func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, purge bool) (*ManagePlan, error) {
 	requested := key
 	key = NormalizeKey(key)
-	canonical := CanonicalSkillsDir(scope, cwd)
+	remote := false
+	if e, ok := ReadLock(scope, cwd)[key]; ok {
+		remote = e.Remote()
+	}
+	canonical := SkillOriginalDir(scope, cwd, remote)
 	if canonical == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
@@ -181,13 +187,16 @@ func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, pur
 	// from the key (folder "gitbutler", name "but"). Act on the paths the scan
 	// actually found for this key instead of guessing <root>/<key>.
 	found := false
+	localHome := LocalSkillsDir(scope, cwd)
+	installedHome := InstalledSkillsDir(scope, cwd)
 	for _, e := range ScanSkills(scope, cwd) {
 		if e.Key != key {
 			continue
 		}
 		found = true
 		for _, p := range e.Presence {
-			if p.Agent == AgentAgents.String() {
+			parent := filepath.Dir(p.Path)
+			if pathsEqual(parent, localHome) || pathsEqual(parent, installedHome) {
 				if purge {
 					plan.Actions = append(plan.Actions, ManageAction{
 						Kind: "purge_canonical_skill", Path: p.Path, SkillKey: key,
@@ -227,8 +236,13 @@ func PlanRemoveSkill(scope Scope, cwd, key string, agentsFilter []AgentKind, pur
 }
 
 func PlanAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter []AgentKind) (*ManagePlan, error) {
+	return planAddMcp(scope, cwd, name, norm, agentsFilter, false)
+}
+
+func planAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter []AgentKind, installed bool) (*ManagePlan, error) {
 	key := NormalizeKey(name)
-	hub := CanonicalMcpPath(scope, cwd)
+	hub := McpOriginalPath(scope, cwd, installed)
+	foreign := McpOriginalPath(scope, cwd, !installed)
 	if hub == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
@@ -252,7 +266,7 @@ func PlanAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter
 		Kind: "upsert_mcp_hub", Hub: hub, Server: key,
 	})
 	for _, r := range McpConfigPaths(scope, cwd) {
-		if r.Agent == AgentAgents {
+		if pathsEqual(r.Path, hub) || pathsEqual(r.Path, foreign) {
 			continue
 		}
 		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
@@ -267,7 +281,7 @@ func PlanAddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter
 
 func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind, keepHub bool) (*ManagePlan, error) {
 	key := NormalizeKey(name)
-	if CanonicalMcpPath(scope, cwd) == "" {
+	if InstalledMcpPath(scope, cwd) == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
 	if keepHub && len(agentsFilter) == 0 {
@@ -292,7 +306,7 @@ func PlanRemoveMcp(scope Scope, cwd, name string, agentsFilter []AgentKind, keep
 			// The hub is removed whenever the server is in it, including when
 			// --agents limits which agent configs are edited. --keep-hub keeps
 			// the hub so the next sync can restore the agent links.
-			if p.Agent == AgentAgents.String() {
+			if pathsEqual(p.Path, LocalMcpPath(scope, cwd)) || pathsEqual(p.Path, InstalledMcpPath(scope, cwd)) {
 				if !keepHub {
 					plan.Actions = append(plan.Actions, ManageAction{
 						Kind: "remove_mcp_hub", Hub: p.Path, Server: key,
@@ -559,6 +573,7 @@ func InstallSkill(scope Scope, cwd, source string, agentsFilter []AgentKind, dry
 	if dryRun {
 		return plan, nil, nil
 	}
+	ensureInstalledGitignored(scope, cwd)
 	log, err := ApplyManagePlan(plan, nil)
 	return plan, log, err
 }
@@ -583,7 +598,8 @@ func AddMcp(scope Scope, cwd, name string, norm *McpNormalized, agentsFilter []A
 // AddMcpWithOrigin plans an add and, when origin is set, records where the
 // server came from after the config writes succeed.
 func AddMcpWithOrigin(scope Scope, cwd, name string, norm *McpNormalized, origin *McpLockEntry, agentsFilter []AgentKind, dryRun bool) (*ManagePlan, []string, error) {
-	plan, err := PlanAddMcp(scope, cwd, name, norm, agentsFilter)
+	installed := origin != nil && origin.Registry()
+	plan, err := planAddMcp(scope, cwd, name, norm, agentsFilter, installed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -599,6 +615,7 @@ func AddMcpWithOrigin(scope Scope, cwd, name string, norm *McpNormalized, origin
 	if dryRun {
 		return plan, nil, nil
 	}
+	ensureInstalledGitignored(scope, cwd)
 	log, err := ApplyManagePlan(plan, norm)
 	return plan, log, err
 }
@@ -713,8 +730,7 @@ func ClearProvider(scope Scope, cwd, name string, dryRun bool) ([]string, error)
 	if !ok {
 		return nil, fmt.Errorf("unknown provider %q", name)
 	}
-	canonical := CanonicalSkillsDir(scope, cwd)
-	if scope == ScopeProject && canonical == "" {
+	if scope == ScopeProject && InstalledSkillsDir(scope, cwd) == "" {
 		return nil, fmt.Errorf("no project root for project scope")
 	}
 	var log []string
@@ -722,7 +738,7 @@ func ClearProvider(scope Scope, cwd, name string, dryRun bool) ([]string, error)
 		if r.Agent != agent {
 			continue
 		}
-		line, err := clearSkillsRoot(r.Path, canonical, dryRun)
+		line, err := clearSkillsRoot(r.Path, []string{LocalSkillsDir(scope, cwd), InstalledSkillsDir(scope, cwd)}, dryRun)
 		if err != nil {
 			return log, err
 		}
@@ -744,13 +760,15 @@ func ClearProvider(scope Scope, cwd, name string, dryRun bool) ([]string, error)
 	return log, nil
 }
 
-func clearSkillsRoot(root, canonical string, dryRun bool) (string, error) {
+func clearSkillsRoot(root string, homes []string, dryRun bool) (string, error) {
 	info, err := os.Lstat(root)
 	if err != nil {
 		return "skills: nothing at " + root, nil
 	}
-	if rootAliasesCanonical(root, canonical) && info.Mode()&os.ModeSymlink == 0 {
-		return "", fmt.Errorf("refusing to delete %s: it is the canonical skills directory", root)
+	for _, canonical := range homes {
+		if pathsEqual(root, canonical) || (rootAliasesCanonical(root, canonical) && info.Mode()&os.ModeSymlink == 0) {
+			return "", fmt.Errorf("refusing to delete %s: it is the canonical skills directory", root)
+		}
 	}
 	verb := "removed"
 	if dryRun {

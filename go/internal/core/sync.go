@@ -94,25 +94,8 @@ type SyncPlan struct {
 
 func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey string) (*SyncPlan, error) {
 	skills := ScanSkills(scope, cwd)
-	canonical := CanonicalSkillsDir(scope, cwd)
-	if canonical == "" {
+	if scope == ScopeProject && InstalledSkillsDir(scope, cwd) == "" {
 		return nil, fmt.Errorf("no project root for project scope")
-	}
-	var targets []agentPath
-	for _, r := range SkillRoots(scope, cwd) {
-		if r.Agent == AgentAgents {
-			continue
-		}
-		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
-			continue
-		}
-		// A root that is itself the canonical dir (e.g. .cursor/skills -> ../.agents/skills)
-		// already sees every canonical skill; "linking" into it would replace the
-		// canonical copy with a link to itself.
-		if rootAliasesCanonical(r.Path, canonical) {
-			continue
-		}
-		targets = append(targets, r)
 	}
 
 	plan := &SyncPlan{Scope: scope.String(), DryRun: true, Actions: []SyncAction{}}
@@ -133,7 +116,10 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 			continue
 		}
 
-		source := pickPresence(skill.Presence)
+		remote := skillIsRemote(skill.Origin)
+		canonical := SkillOriginalDir(scope, cwd, remote)
+		foreign := SkillOriginalDir(scope, cwd, !remote)
+		source := pickPresence(skill.Presence, canonical)
 		if source == nil {
 			// Only dangling links exist: there is no content to copy. Copying from
 			// them would create an empty canonical skill.
@@ -165,7 +151,13 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 			}
 		}
 
-		for _, t := range targets {
+		foreignSkill := filepath.Join(foreign, skill.Key)
+		if shouldDropForeign(foreignSkill, canonSkill, source, sourceReal) {
+			plan.Actions = append(plan.Actions, SyncAction{
+				Kind: "unlink_skill", Path: foreignSkill, SkillKey: skill.Key,
+			})
+		}
+		for _, t := range skillSyncTargets(scope, cwd, canonical, foreign, agentsFilter) {
 			link := filepath.Join(t.Path, skill.Key)
 			if _, err := os.Lstat(link); err == nil {
 				if fi, err := os.Lstat(link); err == nil && fi.Mode()&os.ModeSymlink != 0 {
@@ -198,6 +190,14 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 							continue
 						}
 					}
+				}
+				if st, lerr := os.Lstat(link); lerr == nil && st.Mode()&os.ModeSymlink == 0 && st.IsDir() &&
+					relinkRealSkill(link, canonSkill, source, sourceReal) {
+					plan.Actions = append(plan.Actions, SyncAction{
+						Kind: "symlink_skill", Link: link, Target: canonSkill,
+						SkillKey: skill.Key, Agent: t.Agent.String(),
+					})
+					continue
 				}
 				plan.Actions = append(plan.Actions, SyncAction{
 					Kind: "skip_same", Path: link, SkillKey: skill.Key,
@@ -239,8 +239,8 @@ func physicalPath(p string) string {
 	return filepath.Join(dir, base)
 }
 
-// rootAliasesCanonical reports whether an agent skills root is the canonical
-// skills dir reached through a symlink (e.g. .cursor/skills -> ../.agents/skills).
+// rootAliasesCanonical reports whether an agent skills root is the store
+// reached through a symlink (e.g. .cursor/skills -> ../.synca/local/skills).
 func rootAliasesCanonical(root, canonical string) bool {
 	a, ea := filepath.EvalSymlinks(root)
 	b, eb := filepath.EvalSymlinks(canonical)
@@ -253,25 +253,28 @@ func canonSame(a, b string) bool {
 	return ea == nil && eb == nil && ra == rb
 }
 
-// pickPresence returns the copy to sync from: the canonical one when it has
-// content, else the first live copy. Dangling links never qualify.
-func pickPresence(p []SkillPresence) *SkillPresence {
+// pickPresence returns the copy to sync from. The store wins when it has
+// content. Otherwise the first live copy wins. Dangling links never qualify.
+// Two presences can both be tagged agents (the store and the .agents mirror).
+func pickPresence(p []SkillPresence, canonical string) *SkillPresence {
+	var live *SkillPresence
 	for i := range p {
-		if p[i].Agent == "agents" && p[i].ContentHash != HashDangling {
+		if p[i].ContentHash == HashDangling {
+			continue
+		}
+		if pathsEqual(filepath.Dir(p[i].Path), canonical) {
 			return &p[i]
 		}
-	}
-	for i := range p {
-		if p[i].ContentHash != HashDangling {
-			return &p[i]
+		if live == nil {
+			live = &p[i]
 		}
 	}
-	return nil
+	return live
 }
 
-func pickMcpPresence(p []McpPresence) *McpPresence {
+func pickMcpPresence(p []McpPresence, hub string) *McpPresence {
 	for i := range p {
-		if p[i].Agent == "agents" {
+		if pathsEqual(p[i].Path, hub) {
 			return &p[i]
 		}
 	}
@@ -281,21 +284,92 @@ func pickMcpPresence(p []McpPresence) *McpPresence {
 	return nil
 }
 
-func PlanSyncMcp(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey string) (*SyncPlan, error) {
-	mcps := ScanMcp(scope, cwd)
-	hub := CanonicalMcpPath(scope, cwd)
-	if hub == "" {
-		return nil, fmt.Errorf("no project root for project scope")
+func preferSkill(p []SkillPresence, canonical string) *SkillPresence {
+	if chosen := pickPresence(p, canonical); chosen != nil {
+		return chosen
 	}
+	return &p[0]
+}
+
+func preferMcp(p []McpPresence, hub string) *McpPresence {
+	if chosen := pickMcpPresence(p, hub); chosen != nil {
+		return chosen
+	}
+	return &p[0]
+}
+
+// relinkRealSkill reports whether a real skill directory should become a
+// symlink to the store. Equal full trees are safe to replace. HashSkillDir
+// hashes only SKILL.md, so it would drop extra files. When the store does
+// not exist yet, only the directory that supplies the copy is linked, after
+// that copy runs.
+func skillSyncTargets(scope Scope, cwd, canonical, foreign string, agentsFilter []AgentKind) []agentPath {
+	var targets []agentPath
+	for _, r := range SkillRoots(scope, cwd) {
+		if pathsEqual(r.Path, canonical) || pathsEqual(r.Path, foreign) {
+			continue
+		}
+		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
+			continue
+		}
+		if rootAliasesCanonical(r.Path, canonical) || rootAliasesCanonical(r.Path, foreign) {
+			continue
+		}
+		targets = append(targets, r)
+	}
+	return targets
+}
+
+func mcpSyncWriters(scope Scope, cwd, hub, foreign string, agentsFilter []AgentKind) []agentPath {
 	var writers []agentPath
 	for _, r := range McpConfigPaths(scope, cwd) {
-		if r.Agent == AgentAgents {
+		if pathsEqual(r.Path, hub) || pathsEqual(r.Path, foreign) {
 			continue
 		}
 		if agentsFilter != nil && !agentIn(r.Agent, agentsFilter) {
 			continue
 		}
 		writers = append(writers, r)
+	}
+	return writers
+}
+
+func shouldDropForeign(link, canonSkill string, source *SkillPresence, sourceReal string) bool {
+	fi, err := os.Lstat(link)
+	if err != nil {
+		return false
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return true
+	}
+	if !fi.IsDir() {
+		return false
+	}
+	if st, err := os.Stat(canonSkill); err == nil && st.IsDir() {
+		return hashTree(link, false) == hashTree(canonSkill, false)
+	}
+	from := source.Path
+	if source.IsSymlink {
+		from = sourceReal
+	}
+	return pathsEqual(link, from)
+}
+
+func relinkRealSkill(link, canonSkill string, source *SkillPresence, sourceReal string) bool {
+	if st, err := os.Stat(canonSkill); err == nil && st.IsDir() {
+		return hashTree(link, false) == hashTree(canonSkill, false)
+	}
+	from := source.Path
+	if source.IsSymlink {
+		from = sourceReal
+	}
+	return pathsEqual(link, from)
+}
+
+func PlanSyncMcp(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey string) (*SyncPlan, error) {
+	mcps := ScanMcp(scope, cwd)
+	if scope == ScopeProject && InstalledMcpPath(scope, cwd) == "" {
+		return nil, fmt.Errorf("no project root for project scope")
 	}
 
 	plan := &SyncPlan{Scope: scope.String(), DryRun: true, Actions: []SyncAction{}}
@@ -313,15 +387,23 @@ func PlanSyncMcp(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey stri
 			})
 			continue
 		}
-		source := pickMcpPresence(entry.Presence)
+		installed := mcpIsInstalled(entry.SourceType)
+		hub := McpOriginalPath(scope, cwd, installed)
+		foreign := McpOriginalPath(scope, cwd, !installed)
+		source := pickMcpPresence(entry.Presence, hub)
 		if source == nil {
 			continue
 		}
 		plan.Actions = append(plan.Actions, SyncAction{
 			Kind: "ensure_mcp_hub", Hub: hub, Server: entry.Key, SourceAgent: source.Agent,
 		})
-		for _, w := range writers {
-			if p := findMcpAgent(entry.Presence, w.Agent); p != nil && p.Fingerprint == source.Fingerprint {
+		if findMcpAtPath(entry.Presence, foreign) != nil {
+			plan.Actions = append(plan.Actions, SyncAction{
+				Kind: "remove_mcp_hub", Hub: foreign, Server: entry.Key,
+			})
+		}
+		for _, w := range mcpSyncWriters(scope, cwd, hub, foreign, agentsFilter) {
+			if p := findMcpAtPath(entry.Presence, w.Path); p != nil && p.Fingerprint == source.Fingerprint {
 				plan.Actions = append(plan.Actions, SyncAction{
 					Kind: "skip_mcp_same", Path: w.Path, Server: entry.Key,
 					Reason: fmt.Sprintf("already present for %s", w.Agent),
@@ -336,9 +418,9 @@ func PlanSyncMcp(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey stri
 	return plan, nil
 }
 
-func findMcpAgent(p []McpPresence, a AgentKind) *McpPresence {
+func findMcpAtPath(p []McpPresence, path string) *McpPresence {
 	for i := range p {
-		if p[i].Agent == a.String() {
+		if pathsEqual(p[i].Path, path) {
 			return &p[i]
 		}
 	}
@@ -364,9 +446,10 @@ func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecis
 		mcpByKey[mcps[i].Key] = &mcps[i]
 	}
 
+	ensureInstalledGitignored(scope, cwd)
 	skillSource := map[string]string{}
 	for _, s := range skills {
-		p := pickPresence(s.Presence)
+		p := pickPresence(s.Presence, SkillOriginalDir(scope, cwd, skillIsRemote(s.Origin)))
 		if p == nil {
 			continue
 		}
@@ -380,7 +463,8 @@ func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecis
 	}
 	mcpSource := map[string]*McpNormalized{}
 	for _, m := range mcps {
-		if p := pickMcpPresence(m.Presence); p != nil {
+		hub := McpOriginalPath(scope, cwd, mcpIsInstalled(m.SourceType))
+		if p := pickMcpPresence(m.Presence, hub); p != nil {
 			mcpSource[m.Key] = p.Normalized
 		}
 	}
@@ -420,6 +504,16 @@ func ApplyPlan(plan *SyncPlan, cwd string, scope Scope, decisions *ConflictDecis
 		case "symlink_skill":
 			err := ForceSymlink(a.Link, a.Target, a.Agent, &out)
 			return out, err
+		case "unlink_skill":
+			if err := RemovePath(a.Path); err != nil {
+				return out, err
+			}
+			out = append(out, "unlinked "+a.Path)
+		case "remove_mcp_hub":
+			if err := removeMcpFromJSONHub(a.Hub, a.Server); err != nil {
+				return out, err
+			}
+			out = append(out, fmt.Sprintf("hub remove %s from %s", a.Server, a.Hub))
 		case "ensure_mcp_hub":
 			norm := mcpSource[a.Server]
 			if norm == nil {
@@ -475,14 +569,8 @@ func agentByName(name string) AgentKind {
 	return AgentCursor
 }
 
-func pickSkillWinner(entry *SkillEntry, policy ConflictPolicy) *SkillPresence {
-	source := &entry.Presence[0]
-	for i := range entry.Presence {
-		if entry.Presence[i].Agent == "agents" {
-			source = &entry.Presence[i]
-			break
-		}
-	}
+func pickSkillWinner(entry *SkillEntry, policy ConflictPolicy, canonical string) *SkillPresence {
+	source := preferSkill(entry.Presence, canonical)
 	switch policy {
 	case ConflictKeepSource:
 		return source
@@ -499,14 +587,8 @@ func pickSkillWinner(entry *SkillEntry, policy ConflictPolicy) *SkillPresence {
 	return nil
 }
 
-func pickMcpWinner(entry *McpEntry, policy ConflictPolicy) *McpPresence {
-	source := &entry.Presence[0]
-	for i := range entry.Presence {
-		if entry.Presence[i].Agent == "agents" {
-			source = &entry.Presence[i]
-			break
-		}
-	}
+func pickMcpWinner(entry *McpEntry, policy ConflictPolicy, hub string) *McpPresence {
+	source := preferMcp(entry.Presence, hub)
 	switch policy {
 	case ConflictKeepSource:
 		return source
@@ -523,16 +605,18 @@ func pickMcpWinner(entry *McpEntry, policy ConflictPolicy) *McpPresence {
 
 func resolveSkillConflict(scope Scope, cwd string, entry *SkillEntry, policy ConflictPolicy) ([]string, error) {
 	var log []string
-	winner := pickSkillWinner(entry, policy)
+	remote := skillIsRemote(entry.Origin)
+	canonical := SkillOriginalDir(scope, cwd, remote)
+	foreign := SkillOriginalDir(scope, cwd, !remote)
+	if canonical == "" {
+		return log, fmt.Errorf("no canonical skills dir")
+	}
+	winner := pickSkillWinner(entry, policy, canonical)
 	winnerReal := winner.Path
 	if winner.IsSymlink {
 		if r, err := filepath.EvalSymlinks(winner.Path); err == nil {
 			winnerReal = r
 		}
-	}
-	canonical := CanonicalSkillsDir(scope, cwd)
-	if canonical == "" {
-		return log, fmt.Errorf("no canonical skills dir")
 	}
 	canonSkill := filepath.Join(canonical, entry.Key)
 	if err := os.MkdirAll(filepath.Dir(canonSkill), 0o755); err != nil {
@@ -548,7 +632,7 @@ func resolveSkillConflict(scope Scope, cwd string, entry *SkillEntry, policy Con
 		log = append(log, fmt.Sprintf("conflict skill %s: keep %s (already canonical)", entry.Key, winner.Agent))
 	}
 	for _, r := range SkillRoots(scope, cwd) {
-		if r.Agent == AgentAgents || rootAliasesCanonical(r.Path, canonical) {
+		if pathsEqual(r.Path, canonical) || pathsEqual(r.Path, foreign) || rootAliasesCanonical(r.Path, canonical) || rootAliasesCanonical(r.Path, foreign) {
 			continue
 		}
 		link := filepath.Join(r.Path, entry.Key)
@@ -561,17 +645,19 @@ func resolveSkillConflict(scope Scope, cwd string, entry *SkillEntry, policy Con
 
 func resolveMcpConflict(scope Scope, cwd string, entry *McpEntry, policy ConflictPolicy) ([]string, error) {
 	var log []string
-	winner := pickMcpWinner(entry, policy)
-	hub := CanonicalMcpPath(scope, cwd)
+	installed := mcpIsInstalled(entry.SourceType)
+	hub := McpOriginalPath(scope, cwd, installed)
+	foreign := McpOriginalPath(scope, cwd, !installed)
 	if hub == "" {
 		return log, fmt.Errorf("no mcp hub")
 	}
+	winner := pickMcpWinner(entry, policy, hub)
 	if err := UpsertMcpJSONHub(hub, entry.Key, winner.Normalized); err != nil {
 		return log, err
 	}
 	log = append(log, fmt.Sprintf("conflict mcp %s: keep %s → hub %s", entry.Key, winner.Agent, hub))
 	for _, r := range McpConfigPaths(scope, cwd) {
-		if r.Agent == AgentAgents {
+		if pathsEqual(r.Path, hub) || pathsEqual(r.Path, foreign) {
 			continue
 		}
 		if err := WriteMcpToAgent(r.Path, r.Agent, entry.Key, winner.Normalized); err != nil {

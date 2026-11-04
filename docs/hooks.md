@@ -174,7 +174,7 @@ synca hooks add block-rm --event PreToolUse --tools shell \
 The command does not create script files. Put them in `~/.agents/hooks/<id>/` yourself, or use the bundled scaffold:
 
 ```bash
-~/.agents/skills/synca/scripts/hook-scaffold.sh block-rm --event PreToolUse --tools shell
+~/.synca/local/skills/synca/scripts/hook-scaffold.sh block-rm --event PreToolUse --tools shell
 ```
 
 `hook-scaffold.sh` writes only `check.sh` (mode 0755), refuses to overwrite without `--force`, and prints the exact `hooks add` and `hooks trust` commands. It never edits the hub and never approves anything.

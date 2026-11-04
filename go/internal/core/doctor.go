@@ -58,18 +58,21 @@ func Doctor(scope Scope, cwd string) (*DoctorReport, error) {
 		Missing:  []LinkIssue{},
 		MCP:      []McpIssue{},
 	}
-	canonical := CanonicalSkillsDir(scope, cwd)
 	skills := ScanSkills(scope, cwd)
 	canonByKey := map[string]SkillPresence{}
+	homeByKey := map[string]string{}
 	for _, skill := range skills {
+		home := SkillOriginalDir(scope, cwd, skillIsRemote(skill.Origin))
+		homeByKey[skill.Key] = home
 		for _, p := range skill.Presence {
-			if p.Agent == AgentAgents.String() {
+			if pathsEqual(filepath.Dir(p.Path), home) {
 				canonByKey[skill.Key] = p
 			}
 		}
 	}
 	for _, skill := range skills {
 		canon, hasCanon := canonByKey[skill.Key]
+		home := homeByKey[skill.Key]
 		for _, p := range skill.Presence {
 			if p.ContentHash == HashDangling || (p.IsSymlink && isDanglingLink(p.Path)) {
 				report.Dangling = append(report.Dangling, LinkIssue{
@@ -80,7 +83,7 @@ func Doctor(scope Scope, cwd string) (*DoctorReport, error) {
 				})
 				continue
 			}
-			if p.Agent == AgentAgents.String() || p.IsSymlink || !hasCanon {
+			if pathsEqual(filepath.Dir(p.Path), home) || p.IsSymlink || !hasCanon {
 				continue
 			}
 			if canon.ContentHash == HashDangling || canon.ContentHash == "" || canon.ContentHash == "missing" {
@@ -102,15 +105,17 @@ func Doctor(scope Scope, cwd string) (*DoctorReport, error) {
 		if !ok || canon.ContentHash == HashDangling || canon.ContentHash == "missing" {
 			continue
 		}
-		present := map[string]bool{}
+		presentRoot := map[string]bool{}
 		for _, p := range skill.Presence {
-			present[p.Agent] = true
+			presentRoot[filepath.Clean(filepath.Dir(p.Path))] = true
 		}
+		home := homeByKey[skill.Key]
+		foreign := SkillOriginalDir(scope, cwd, !skillIsRemote(skill.Origin))
 		for _, root := range SkillRoots(scope, cwd) {
-			if root.Agent == AgentAgents || present[root.Agent.String()] {
+			if pathsEqual(root.Path, home) || pathsEqual(root.Path, foreign) || presentRoot[filepath.Clean(root.Path)] {
 				continue
 			}
-			if rootAliasesCanonical(root.Path, canonical) {
+			if rootAliasesCanonical(root.Path, home) {
 				continue
 			}
 			st, err := os.Stat(root.Path)
@@ -163,21 +168,40 @@ func linkTarget(p SkillPresence) string {
 	return *p.SymlinkTarget
 }
 
+func readHub(path string, issues *[]McpIssue) map[string]McpNormalized {
+	out := map[string]McpNormalized{}
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() {
+		return out
+	}
+	servers, err := ReadMcpServers(AgentAgents, path)
+	if err != nil {
+		*issues = append(*issues, McpIssue{
+			Agent: AgentAgents.String(), Server: "", Path: path, Reason: "unreadable",
+		})
+		return out
+	}
+	return servers
+}
+
 func doctorMCP(scope Scope, cwd string) []McpIssue {
 	var issues []McpIssue
-	hubPath := CanonicalMcpPath(scope, cwd)
-	hub := map[string]McpNormalized{}
-	if st, err := os.Stat(hubPath); err == nil && !st.IsDir() {
-		if servers, err := ReadMcpServers(AgentAgents, hubPath); err == nil {
-			hub = servers
-		} else {
-			issues = append(issues, McpIssue{
-				Agent: AgentAgents.String(), Server: "", Path: hubPath, Reason: "unreadable",
-			})
-		}
+	installedPath := InstalledMcpPath(scope, cwd)
+	localPath := LocalMcpPath(scope, cwd)
+	installed := readHub(installedPath, &issues)
+	local := readHub(localPath, &issues)
+	hubOf := map[string]string{}
+	normOf := map[string]McpNormalized{}
+	for name, norm := range local {
+		hubOf[name] = localPath
+		normOf[name] = norm
+	}
+	for name, norm := range installed {
+		hubOf[name] = installedPath
+		normOf[name] = norm
 	}
 	for _, root := range McpConfigPaths(scope, cwd) {
-		if root.Agent == AgentAgents {
+		if pathsEqual(root.Path, installedPath) || pathsEqual(root.Path, localPath) {
 			continue
 		}
 		st, err := os.Stat(root.Path)
@@ -187,32 +211,32 @@ func doctorMCP(scope Scope, cwd string) []McpIssue {
 		servers, err := ReadMcpServers(root.Agent, root.Path)
 		if err != nil {
 			issues = append(issues, McpIssue{
-				Agent: root.Agent.String(), Path: root.Path, Hub: hubPath, Reason: "unreadable",
+				Agent: root.Agent.String(), Path: root.Path, Reason: "unreadable",
 			})
 			continue
 		}
 		seen := map[string]bool{}
 		for name, norm := range servers {
 			seen[name] = true
-			h, ok := hub[name]
+			h, ok := normOf[name]
 			if !ok {
 				issues = append(issues, McpIssue{
-					Agent: root.Agent.String(), Server: name, Path: root.Path, Hub: hubPath, Reason: "only in agent",
+					Agent: root.Agent.String(), Server: name, Path: root.Path, Reason: "only in agent",
 				})
 				continue
 			}
 			if McpFingerprint(&norm) != McpFingerprint(&h) {
 				issues = append(issues, McpIssue{
-					Agent: root.Agent.String(), Server: name, Path: root.Path, Hub: hubPath, Reason: "differs",
+					Agent: root.Agent.String(), Server: name, Path: root.Path, Hub: hubOf[name], Reason: "differs",
 				})
 			}
 		}
-		for name := range hub {
+		for name := range normOf {
 			if seen[name] {
 				continue
 			}
 			issues = append(issues, McpIssue{
-				Agent: root.Agent.String(), Server: name, Path: root.Path, Hub: hubPath, Reason: "missing from agent",
+				Agent: root.Agent.String(), Server: name, Path: root.Path, Hub: hubOf[name], Reason: "missing from agent",
 			})
 		}
 	}

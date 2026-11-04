@@ -296,7 +296,7 @@ func TestSyncFromRegistryLeavesLocalSkillsAndSurvivesOutage(t *testing.T) {
 	reg.failTree = true
 	reg.failDl = true
 	t.Setenv("PATH", t.TempDir())
-	mustWrite(t, filepath.Join(home, ".agents/skills/mine/SKILL.md"), md("mine", "local"))
+	mustWrite(t, filepath.Join(home, ".synca/local/skills/mine/SKILL.md"), md("mine", "local"))
 	if err := RecordOrigin(LockPath(ScopeUser, home), "gone", LockEntry{Source: "o/r", SourceType: "github", SkillPath: "skills/gone/SKILL.md", FolderHash: strings.Repeat("1", 40)}); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestSyncFromRegistryLeavesLocalSkillsAndSurvivesOutage(t *testing.T) {
 	if !warned {
 		t.Errorf("no warning for the skill that could not be fetched: %v", res.Warnings)
 	}
-	if got := readFile(t, filepath.Join(home, ".agents/skills/mine/SKILL.md")); !strings.Contains(got, "local") {
+	if got := readFile(t, filepath.Join(home, ".synca/local/skills/mine/SKILL.md")); !strings.Contains(got, "local") {
 		t.Error("local skill touched")
 	}
 	if reg.dlHits.Load() != 0 {

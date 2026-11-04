@@ -511,7 +511,7 @@ func TestLiveListsMatchSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantText := "Skills (user)\n  alpha  [agents,grok]\n  beta  [agents]\n2 skill(s)\n"
+	wantText := "Skills (user)\n  alpha  [agents,agents,grok]\n  beta  [agents,agents]\n2 skill(s)\n"
 	if text != wantText {
 		t.Fatalf("skills text:\n%q", text)
 	}
@@ -535,7 +535,7 @@ func TestLiveListsMatchSchemas(t *testing.T) {
 		t.Fatalf("alpha %#v", alpha)
 	}
 	presence := alpha["presence"].([]any)
-	if len(presence) != 2 {
+	if len(presence) != 3 {
 		t.Fatalf("alpha presence %d", len(presence))
 	}
 	var sawLink bool
@@ -610,13 +610,25 @@ func contractHome(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
-	writeFile(t, filepath.Join(home, ".agents", "skills", "alpha", "SKILL.md"), "---\nname: alpha\ndescription: Alpha skill\n---\n# Alpha\n")
-	writeFile(t, filepath.Join(home, ".agents", "skills", "beta", "SKILL.md"), "---\nname: beta\n---\n# Beta\n")
+	for _, skill := range []struct{ name, body string }{
+		{"alpha", "---\nname: alpha\ndescription: Alpha skill\n---\n# Alpha\n"},
+		{"beta", "---\nname: beta\n---\n# Beta\n"},
+	} {
+		dir := filepath.Join(home, ".synca", "local", "skills", skill.name)
+		writeFile(t, filepath.Join(dir, "SKILL.md"), skill.body)
+		link := filepath.Join(home, ".agents", "skills", skill.name)
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(dir, link); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(home, ".grok", "skills"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(
-		filepath.Join(home, ".agents", "skills", "alpha"),
+		filepath.Join(home, ".synca", "local", "skills", "alpha"),
 		filepath.Join(home, ".grok", "skills", "alpha"),
 	); err != nil {
 		t.Fatal(err)
