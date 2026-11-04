@@ -41,6 +41,62 @@ type manageAppliedDocument struct {
 	Applied []string `json:"applied"`
 }
 
+// manageCatalogDocument is the mcp import output: a manage plan plus the
+// per-server diffs the catalog produced.
+type manageCatalogDocument struct {
+	manageDocument
+	Diffs []core.McpCatalogDiff `json:"diffs"`
+}
+
+type manageAppliedCatalogDocument struct {
+	manageAppliedDocument
+	Diffs []core.McpCatalogDiff `json:"diffs"`
+}
+
+func writeManageJSON(plan *core.ManagePlan, dry bool, log []string) error {
+	return writeManageJSONDoc(manageDocument{DryRun: dry, Scope: plan.Scope, Actions: planActions(plan), Notes: planNotes(plan)}, dry, log)
+}
+
+func writeManageJSONDoc(doc manageDocument, dry bool, log []string) error {
+	if dry {
+		return writeJSON(doc)
+	}
+	if log == nil {
+		log = []string{}
+	}
+	return writeJSON(manageAppliedDocument{manageDocument: doc, Applied: log})
+}
+
+func writeManageCatalogJSON(plan *core.ManagePlan, dry bool, log []string, diffs []core.McpCatalogDiff) error {
+	if diffs == nil {
+		diffs = []core.McpCatalogDiff{}
+	}
+	doc := manageDocument{DryRun: dry, Scope: plan.Scope, Actions: planActions(plan), Notes: planNotes(plan)}
+	if dry {
+		return writeJSON(manageCatalogDocument{manageDocument: doc, Diffs: diffs})
+	}
+	if log == nil {
+		log = []string{}
+	}
+	return writeJSON(manageAppliedCatalogDocument{manageAppliedDocument: manageAppliedDocument{manageDocument: doc, Applied: log}, Diffs: diffs})
+}
+
+func planActions(plan *core.ManagePlan) []core.ManageAction {
+	actions := plan.Actions
+	if actions == nil {
+		actions = []core.ManageAction{}
+	}
+	return actions
+}
+
+func planNotes(plan *core.ManagePlan) []string {
+	notes := plan.Notes
+	if notes == nil {
+		notes = []string{}
+	}
+	return notes
+}
+
 type providerDocument struct {
 	DryRun   bool     `json:"dryRun"`
 	Scope    string   `json:"scope"`
@@ -84,25 +140,6 @@ func writeSyncJSON(plan *core.SyncPlan, policy string, dry bool, applied []strin
 		applied = []string{}
 	}
 	return writeJSON(syncAppliedDocument{syncDocument: doc, Applied: applied})
-}
-
-func writeManageJSON(plan *core.ManagePlan, dry bool, log []string) error {
-	actions := plan.Actions
-	if actions == nil {
-		actions = []core.ManageAction{}
-	}
-	notes := plan.Notes
-	if notes == nil {
-		notes = []string{}
-	}
-	doc := manageDocument{DryRun: dry, Scope: plan.Scope, Actions: actions, Notes: notes}
-	if dry {
-		return writeJSON(doc)
-	}
-	if log == nil {
-		log = []string{}
-	}
-	return writeJSON(manageAppliedDocument{manageDocument: doc, Applied: log})
 }
 
 func finishManage(plan *core.ManagePlan, log []string, dry, jsonOut bool) error {

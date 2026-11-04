@@ -239,10 +239,13 @@ func sortedKeys[V any](m map[string]V) []string {
 func McpFingerprint(n *McpNormalized) string {
 	var parts []string
 	parts = append(parts, n.Transport)
-	if n.Command != nil {
+	if len(n.Command) > 0 {
 		parts = append(parts, "cmd:"+strings.Join(n.Command, "\x1f"))
 	}
-	if n.Args != nil {
+	// An absent list and an empty one are the same config, so len() — a
+	// round-trip through a catalog or another agent format must not invent a
+	// difference.
+	if len(n.Args) > 0 {
 		parts = append(parts, "args:"+strings.Join(n.Args, "\x1f"))
 	}
 	if n.URL != nil {

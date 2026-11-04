@@ -86,7 +86,7 @@ synca --version       # synca 0.4.0
 
 ```text
 synca skills <list|install|remove> [flags]
-synca mcp <list|add|remove|search|browse|info|install> [flags]
+synca mcp <list|add|remove|update|probe|search|browse|info|install|export|import> [flags]
 synca hooks <list|add|remove|trust|untrust|sync> [flags]
 synca sync <skills|mcp|hooks|all> [flags]
 synca provider clear <name> [--scope --cwd --yes --dry-run --json]
@@ -220,6 +220,9 @@ synca mcp probe context7 linear --json
 synca mcp remove my-server --scope user --dry-run
 synca mcp remove my-server --scope user --yes
 synca mcp remove my-server --agents cursor --keep-hub
+synca mcp export --out mcp-catalog.json
+synca mcp import mcp-catalog.json --dry-run
+synca mcp import https://example.com/mcp-catalog.json --yes
 ```
 
 `mcp search`, `browse`, `info` and `install` read the official MCP Registry (`registry.modelcontextprotocol.io`) and need no token. `search` matches the server name only (the registry's limit), `browse` follows registry name order rather than popularity, and `info` lists the packages and remotes of one version. `--version` defaults to `latest`. `MCP_REGISTRY_URL` changes the registry and `MCP_REGISTRY_TOKEN` adds a Bearer token for a subregistry. JSON output is `mcp-registry-search.json` for `search`, `mcp-registry-browse.json` for `browse` and `mcp-registry-info.json` for `info`; it prints env, header and variable names but never their values.
@@ -235,6 +238,8 @@ The installed key is the last segment of the registry name (`ai.2kw/mcp-server` 
 `mcp add` and `mcp remove` both accept `--dry-run`. `mcp remove` deletes the server from the hub and from agent configs, so off a TTY it exits 6 unless you pass `--yes`. With `--keep-hub --agents a,b` it removes the server from those agent configs only and keeps it in the hub; that unlink is reversible (the next `sync mcp` adds it back) and needs no `--yes`. `--keep-hub` without `--agents` is a usage error.
 
 `mcp add` flags: `--transport stdio|http|sse` (default `stdio`; `local` means stdio, `remote` follows the URL — `http`, or `sse` when it ends in `/sse`), `--command` (required for stdio, split like a shell line), `--url` (required for http and sse), `--env KEY=VAL` (repeatable; the plan shows the key with the value masked), `--header NAME=VAL` (repeatable; masked like env), `--enabled true|false`. `sse` is kept only when the URL ends in `/sse`; otherwise the server is stored as `http`.
+
+`mcp export [--out FILE]` writes the scope's hub to a catalog: a JSON file (`mcp-catalog.json`) whose `servers` use the same shape agent configs do, plus each server's recorded registry origin. Without `--out` the catalog is printed on stdout. `mcp import <file|url>` reads a catalog from a path (or `~`-relative) or an http(s) URL and installs every server into the hub and agent configs, recording origins so `mcp update` keeps working. It is additive: servers only in the hub stay. A server the hub lacks is an `add`, one whose command, args, URL or env/header names differ is an `update`, and a matching one is skipped (`same`) — so a re-import never clobbers this machine's env and header values. Off a TTY an apply needs `--yes`; `--dry-run` and `--json` print the `manage-plan.json` document plus a `diffs` array (`key`, `action`). The catalog stores env and header values in plain text — keep it in a private repo and never commit one with real secrets to a public one.
 
 ### Sync
 

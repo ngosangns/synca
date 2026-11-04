@@ -154,6 +154,8 @@ enum Pending {
         target: Target,
         keys: Vec<String>,
     },
+    /// Sync every skill and MCP in one `synca sync all` run.
+    SyncAll,
     ClearProvider(String),
     InstallUpdate,
     ClearActivity,
@@ -1596,6 +1598,7 @@ impl SyncaWindow {
         match engine::mcp_update_args(self.scope, self.dir(), &names, true) {
             Ok(args) => {
                 let title = match names.as_slice() {
+                    [] => "check mcp updates".to_string(),
                     [one] => format!("update mcp · {one}"),
                     many => format!("update {} MCP servers", many.len()),
                 };
@@ -1925,6 +1928,17 @@ impl SyncaWindow {
                     }
                 }
                 self.run_batch(commands, "synced", cx);
+            }
+            Pending::SyncAll => {
+                match engine::sync_apply(self.scope, self.dir(), Target::All, None) {
+                    Ok(args) => self.run(
+                        engine::with_agents(args, &self.disabled),
+                        "synced",
+                        cx,
+                        After::Reload,
+                    ),
+                    Err(error) => self.toast(error, cx),
+                }
             }
             Pending::ClearProvider(id) => self.clear_provider(id, cx),
             Pending::InstallUpdate => self.run(
@@ -2449,6 +2463,16 @@ impl SyncaWindow {
             "Applies the hub copy over the selected agent links, skipping conflicts.",
             &format!("Sync {count}"),
             Pending::SyncMany { target, keys },
+            cx,
+        );
+    }
+
+    fn ask_sync_all(&mut self, cx: &mut Context<Self>) {
+        self.ask_for(
+            "Sync all?",
+            "Applies the hub copy of every skill and MCP server to the enabled agents, skipping conflicts.",
+            "Sync all",
+            Pending::SyncAll,
             cx,
         );
     }
@@ -2996,9 +3020,9 @@ fn sync_actions(cx: &mut Context<SyncaWindow>) -> impl IntoElement + use<> {
                     "sync-all",
                     "sync",
                     "Sync all",
-                    "Sync all (preview first)",
+                    "Confirm, then sync every skill and MCP server to the enabled agents",
                     None,
-                    cx.listener(|this, _, _, cx| this.plan_sync(Target::All, None, cx)),
+                    cx.listener(|this, _, _, cx| this.ask_sync_all(cx)),
                 ))),
         )
         .child(
@@ -3014,6 +3038,14 @@ fn sync_actions(cx: &mut Context<SyncaWindow>) -> impl IntoElement + use<> {
                     "Check skills installed from skills.sh for newer versions (preview first)",
                     None,
                     cx.listener(|this, _, _, cx| this.plan_updates(Vec::new(), cx)),
+                )))
+                .child(sync_cell(sidebar_button(
+                    "check-mcp-updates",
+                    "search",
+                    "Check MCP updates",
+                    "Check MCP servers installed from the registry for newer versions (preview first)",
+                    None,
+                    cx.listener(|this, _, _, cx| this.plan_mcp_updates(Vec::new(), cx)),
                 )))
                 .child(sync_cell(sidebar_button(
                     "restore-lock",
@@ -5776,6 +5808,23 @@ fn keys_for_kind(entries: &[Entry], bulk: &BTreeSet<usize>, kind: Kind) -> Vec<S
         .collect()
 }
 
+/// Keys among `keys` that an update can refresh: remote skills, and MCP
+/// servers with a recorded registry source — the detail pane's Update rule.
+/// A mixed selection updates only the entries that qualify.
+fn updatable_keys(entries: &[Entry], keys: &[String], kind: Kind) -> Vec<String> {
+    keys.iter()
+        .filter(|key| {
+            entries.iter().any(|candidate| {
+                candidate.key == **key
+                    && candidate.kind == kind
+                    && candidate.origin == engine::Origin::Remote
+                    && (kind == Kind::Skill || candidate.source.is_some())
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// One menu row that opens the agent picker over the selection.
 fn picker_menu_item(
     entity: Entity<SyncaWindow>,
@@ -5795,6 +5844,7 @@ fn picker_menu_item(
 fn row_menu_for(
     index: usize,
     entry: &Entry,
+    entries: &[Entry],
     keys: Vec<String>,
     cx: &mut Context<SyncaWindow>,
 ) -> ElyMenu {
@@ -5822,7 +5872,7 @@ fn row_menu_for(
     menu = menu.item({
         let sync = entity.clone();
         ElyMenuItem::new(sync_label)
-            .icon(IconName::RefreshCw)
+            .icon(IconName::Repeat)
             .on_click(move |_, app| {
                 sync.update(app, |this, cx| {
                     if one {
@@ -5834,6 +5884,30 @@ fn row_menu_for(
                 })
             })
     });
+    let update_keys = updatable_keys(entries, &keys, kind);
+    if !update_keys.is_empty() {
+        let update_label = if update_keys.len() == 1 {
+            "Update".to_string()
+        } else if kind == Kind::Skill {
+            format!("Update {} skills…", update_keys.len())
+        } else {
+            format!("Update {} MCPs…", update_keys.len())
+        };
+        menu = menu.item({
+            let update = entity.clone();
+            ElyMenuItem::new(update_label)
+                .icon(IconName::RefreshCw)
+                .on_click(move |_, app| {
+                    update.update(app, |this, cx| {
+                        if kind == Kind::Skill {
+                            this.plan_updates(update_keys.clone(), cx);
+                        } else {
+                            this.plan_mcp_updates(update_keys.clone(), cx);
+                        }
+                    })
+                })
+        });
+    }
     menu = menu.separator();
     if kind == Kind::Skill {
         let unlink_label = if one {
@@ -6366,7 +6440,7 @@ fn inventory_group(
         } else {
             vec![entries[index].key.clone()]
         };
-        let menu = row_menu_for(index, &entries[index], keys, cx);
+        let menu = row_menu_for(index, &entries[index], entries, keys, cx);
         list = list.child(
             ContextMenu::new(SharedString::from(format!("row-menu-{index}")), menu)
                 .manual(request)
@@ -6684,6 +6758,7 @@ fn synca_state_schema() -> serde_json::Value {
                     "status": {"enum": ["idle", "loading", "ready", "error"]},
                     "error": {"type": ["string", "null"]},
                     "query": {"type": "string"},
+                    "sort": {"type": "string"},
                     "count": {"type": "integer", "minimum": 0},
                     "managed": {"type": "integer", "minimum": 0},
                     "present": {"type": "integer", "minimum": 0},
@@ -6956,7 +7031,7 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
         ),
         ns_ui::DevCommand::new(
             "providers",
-            "Open Settings on the providers list (synca providers list, read-only) and optionally set its filter.",
+            "Open Settings on the providers list (synca providers list, read-only) and optionally set its filter or order.",
             true,
         )
         .arg(
@@ -6970,6 +7045,12 @@ fn dev_commands() -> Vec<ns_ui::DevCommand> {
             "boolean",
             false,
             "When true, ask the CLI for the list again.",
+        )
+        .arg(
+            "sort",
+            "string",
+            false,
+            "Order for the list: name, status, or skills, each with an optional -desc suffix; \"load\" restores load order.",
         ),
         ns_ui::DevCommand::new(
             "updates",
@@ -7389,6 +7470,11 @@ impl ns_ui::DevControl for SyncaWindow {
                         .update(cx, |input, cx| input.set_text(text.clone(), cx));
                     self.providers_set_query(text, cx);
                 }
+                if let Some(value) = request.get("sort").and_then(|value| value.as_str()) {
+                    let sort = crate::providers::parse_sort(value)?;
+                    self.providers.sort = sort;
+                    self.providers.refilter();
+                }
                 if request.get("reload").and_then(|value| value.as_bool()) == Some(true) {
                     self.providers_invalidate(cx);
                 } else {
@@ -7398,6 +7484,7 @@ impl ns_ui::DevControl for SyncaWindow {
                 Ok(serde_json::json!({
                     "panel": "settings",
                     "query": self.providers.query,
+                    "sort": self.providers.sort.label(),
                 }))
             }
             "updates" => {
@@ -7440,6 +7527,7 @@ impl ns_ui::DevControl for SyncaWindow {
 
 #[cfg(all(test, feature = "devtools"))]
 mod dev_contract_tests {
+    use super::mcp_registry::McpRegistryState;
     use super::providers::ProvidersState;
     use super::registry::RegistryState;
     use super::{
@@ -7499,10 +7587,11 @@ mod dev_contract_tests {
         ] {
             assert!(required.iter().any(|item| item == key), "{key}");
         }
-        let selection = &schema["properties"]["selection"]["properties"];
-        for key in ["origin", "transport", "source", "source_version"] {
-            assert!(selection.get(key).is_some(), "selection.{key}");
-        }
+        let selection = &schema["properties"]["selection"];
+        assert!(
+            selection.get("anyOf").is_some() || selection.get("properties").is_some(),
+            "selection is object or null"
+        );
         let registry = &schema["properties"]["mcpRegistry"]["properties"];
         for key in ["view", "status", "count", "selected", "detail"] {
             assert!(registry.get(key).is_some(), "mcpRegistry.{key}");
@@ -7518,9 +7607,9 @@ mod dev_contract_tests {
             .find(|command| command.name == "providers")
             .expect("providers command");
         let args: Vec<&str> = command.args.iter().map(|arg| arg.name.as_str()).collect();
-        assert_eq!(args, ["query", "reload"]);
+        assert_eq!(args, ["query", "reload", "sort"]);
         let properties = &spec.state_schema["properties"]["providers"]["properties"];
-        for key in ["count", "managed", "present", "query"] {
+        for key in ["count", "managed", "present", "query", "sort"] {
             assert!(properties.get(key).is_some(), "{key}");
         }
         assert!(
@@ -7567,9 +7656,13 @@ mod dev_contract_tests {
                     key: "skill:demo",
                     kind: "skill",
                     origin: Some("remote"),
+                    transport: None,
+                    source: None,
+                    source_version: None,
                 }),
                 busy: true,
                 registry: crate::registry::state_value(&RegistryState::new(), true),
+                mcp_registry: crate::mcp_registry::state_value(&McpRegistryState::new(), true),
                 providers: crate::providers::state_value(&ProvidersState::new(), true),
                 plan: Some(
                     serde_json::json!({"title": "check updates", "actions": 1, "notes": ["update: demo"]}),
@@ -7589,6 +7682,9 @@ mod dev_contract_tests {
         assert_eq!(stamped["selection"]["key"], "skill:demo");
         assert_eq!(stamped["selection"]["kind"], "skill");
         assert_eq!(stamped["selection"]["origin"], "remote");
+        for key in ["transport", "source", "source_version"] {
+            assert!(stamped["selection"].get(key).is_some(), "selection.{key}");
+        }
         assert_eq!(stamped["registry"]["open"], true);
         assert_eq!(stamped["registry"]["view"], "trending");
         assert_eq!(stamped["registry"]["status"], "idle");
@@ -7601,6 +7697,7 @@ mod dev_contract_tests {
         assert_eq!(stamped["providers"]["managed"], 0);
         assert_eq!(stamped["providers"]["present"], 0);
         assert_eq!(stamped["providers"]["query"], "");
+        assert_eq!(stamped["providers"]["sort"], "load");
         assert_eq!(stamped["plan"]["title"], "check updates");
         assert_eq!(stamped["sidebarWidth"], 320.);
         assert_eq!(stamped["busy"], true);
@@ -7619,6 +7716,7 @@ mod dev_contract_tests {
                 selection: None,
                 busy: false,
                 registry: crate::registry::state_value(&RegistryState::new(), false),
+                mcp_registry: crate::mcp_registry::state_value(&McpRegistryState::new(), false),
                 providers: crate::providers::state_value(&ProvidersState::new(), false),
                 plan: None,
                 sidebar_width: 320.,
@@ -7663,6 +7761,56 @@ mod view_tests {
         ];
         let nodes = tree_nodes(&items);
         assert_eq!(nodes.len(), 2, "one folder and one file at the top");
+    }
+
+    fn menu_entry(kind: Kind, key: &str, origin: engine::Origin, source: Option<&str>) -> Entry {
+        Entry {
+            kind,
+            key: key.into(),
+            title: key.into(),
+            description: String::new(),
+            paths: Vec::new(),
+            links: Vec::new(),
+            synced: None,
+            tokens: None,
+            probed_at: None,
+            probe_error: None,
+            mismatch: false,
+            origin,
+            source: source.map(str::to_string),
+            source_type: None,
+            source_version: None,
+            server: None,
+        }
+    }
+
+    #[test]
+    fn update_keys_keep_remote_skills_and_sourced_mcps() {
+        let entries = vec![
+            menu_entry(
+                Kind::Skill,
+                "remote-skill",
+                engine::Origin::Remote,
+                Some("owner/repo"),
+            ),
+            menu_entry(Kind::Skill, "local-skill", engine::Origin::Local, None),
+            menu_entry(
+                Kind::Mcp,
+                "sourced-mcp",
+                engine::Origin::Remote,
+                Some("registry/server"),
+            ),
+            menu_entry(Kind::Mcp, "plain-mcp", engine::Origin::Remote, None),
+        ];
+        let keys: Vec<String> = ["remote-skill", "local-skill", "sourced-mcp", "plain-mcp"]
+            .iter()
+            .map(|key| key.to_string())
+            .collect();
+        assert_eq!(
+            updatable_keys(&entries, &keys, Kind::Skill),
+            ["remote-skill"]
+        );
+        assert_eq!(updatable_keys(&entries, &keys, Kind::Mcp), ["sourced-mcp"]);
     }
 
     #[test]

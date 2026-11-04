@@ -114,6 +114,7 @@ func TestEmbeddedSchemasAreValidJSON(t *testing.T) {
 		"hooks-plan.json",
 		"hooks-trust.json",
 		"manage-plan.json",
+		"mcp-catalog.json",
 		"mcp-list.json",
 		"mcp-probe.json",
 		"mcp-registry-browse.json",
@@ -173,6 +174,7 @@ func TestGoldenFilesMatchSchemas(t *testing.T) {
 		{"mcp-registry-browse.json", "mcp-registry-browse.json"},
 		{"mcp-registry-info.json", "mcp-registry-info.json"},
 		{"mcp-probe.json", "mcp-probe.json"},
+		{"mcp-catalog.json", "mcp-catalog.json"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.file, func(t *testing.T) {

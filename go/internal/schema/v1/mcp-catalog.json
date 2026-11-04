@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A portable MCP catalog: synca mcp export writes it, synca mcp import installs it. Per-server objects use the same shape agent configs do. env and header values are verbatim — keep catalogs private.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "servers"],
+  "properties": {
+    "version": {
+      "description": "Catalog format version. 1 is the only one so far.",
+      "type": "integer",
+      "const": 1
+    },
+    "servers": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "description": "Transport: stdio, http or sse. Inferred from the url and command when absent.",
+            "type": "string"
+          },
+          "command": {
+            "description": "stdio only: the executable, or a full argv array.",
+            "type": ["string", "array"],
+            "items": {"type": "string"}
+          },
+          "args": {
+            "description": "stdio only: arguments after the executable.",
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "url": {
+            "description": "http and sse only: the server URL.",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "false marks a server the agents should not load.",
+            "type": "boolean"
+          },
+          "env": {
+            "description": "Environment values, stored verbatim.",
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "headers": {
+            "description": "Remote header values, stored verbatim.",
+            "type": "object",
+            "additionalProperties": {"type": "string"}
+          },
+          "origin": {
+            "description": "Registry provenance carried from the mcp lock file, so mcp update keeps working after a re-import.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "sourceType"],
+            "properties": {
+              "source": {"type": "string"},
+              "sourceType": {"const": "registry"},
+              "version": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

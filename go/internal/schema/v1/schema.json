@@ -29,6 +29,8 @@
         "mcp browse",
         "mcp info",
         "mcp install",
+        "mcp export",
+        "mcp import",
         "sync skills",
         "sync mcp",
         "sync all",

@@ -195,7 +195,7 @@ func printHelp() {
 
 USAGE:
   synca skills <list|install|remove> [flags]
-  synca mcp <list|add|remove|update|probe|search|browse|info|install> [flags]
+  synca mcp <list|add|remove|update|probe|search|browse|info|install|export|import> [flags]
   synca hooks <list|add|remove|trust|untrust|sync> [flags]
   synca sync <skills|mcp|hooks|all> [flags]
   synca provider clear <name> [--scope --cwd --yes --dry-run]
@@ -267,6 +267,9 @@ func printMcpHelp() {
                        [--header NAME=VAL]... [--arg NAME=VAL]... [--enabled true|false]
                        [--scope user|project] [--cwd <dir>] [--agents a,b]
                        [--dry-run] [--force] [--json]
+  synca mcp export [--out FILE] [--scope user|project] [--cwd <dir>] [--json]
+  synca mcp import <file|url> [--scope user|project] [--cwd <dir>]
+                  [--agents a,b] [--dry-run] [--yes] [--json]
 
 --keep-hub removes the server from the selected agent configs and keeps it in
 the hub; the next sync adds it back. It needs --agents.
@@ -296,6 +299,17 @@ and MCP_REGISTRY_TOKEN adds a Bearer token for a subregistry.
 mcp update re-reads the registry for servers whose origin was recorded by
 mcp install, keeps their env values, and rewrites changed servers. Servers
 without a recorded registry source are skipped with a note.
+
+mcp export writes the scope's hub to a catalog: a JSON file whose servers use
+the same shape agent configs do, plus the recorded registry origins. Without
+--out the catalog is printed on stdout. The file holds env and header values
+in plain text — keep it in a private repo and out of screenshots.
+
+mcp import reads a catalog file (or http(s) URL) and installs every server
+into the hub and the selected agent configs, recording origins so mcp update
+keeps working. Servers already matching the hub are skipped; a changed one is
+upserted. --dry-run prints the plan first. The import is additive: servers
+only in the hub are left alone.
 
 mcp probe connects to each server (initialize, then tools/list, resources/list
 and prompts/list) and estimates its context cost: every definition serialized
@@ -446,7 +460,7 @@ func runMcp(args []string) error {
 	f := parseFlags(rest, mcpBoolFlags())
 	jsonOut := f.bools["json"]
 	switch sub {
-	case "list", "add", "remove", "update", "probe", "search", "browse", "info", "install":
+	case "list", "add", "remove", "update", "probe", "search", "browse", "info", "install", "export", "import":
 	default:
 		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
 	}
@@ -564,6 +578,10 @@ func runMcp(args []string) error {
 			}
 		}
 		return finishManage(plan, log, dry, jsonOut)
+	case "export":
+		return runMcpExport(scope, f, jsonOut)
+	case "import":
+		return runMcpImport(scope, f, jsonOut)
 	default:
 		return failUsage(jsonOut, fmt.Sprintf("unknown mcp command '%s'", sub), "see: synca mcp --help")
 	}
@@ -588,6 +606,10 @@ func mcpAllow(sub string) map[string]bool {
 	case "install":
 		return allow("version", "name", "transport", "package", "env", "header", "arg", "enabled",
 			"scope", "cwd", "agents", "dry-run", "force", "json", "help")
+	case "export":
+		return allow("out", "scope", "cwd", "json", "help")
+	case "import":
+		return allow("scope", "cwd", "agents", "dry-run", "yes", "json", "help")
 	default:
 		return allow("help")
 	}

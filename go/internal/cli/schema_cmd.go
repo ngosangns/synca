@@ -183,6 +183,19 @@ func commandSpecs() []commandSpec {
 			schemaFile: "manage-plan.json",
 		},
 		{
+			path:       "mcp export",
+			summary:    "Write the scope's hub to a catalog JSON file (or stdout without --out). Values are verbatim; keep catalogs private",
+			flags:      []string{"--out", "--scope", "--cwd", "--json"},
+			schemaFile: "mcp-catalog.json",
+		},
+		{
+			path:       "mcp import",
+			summary:    "Install every server from a catalog file or URL into the hub and agent configs. Matching servers are skipped; the import is additive",
+			mutates:    true,
+			flags:      []string{"--scope", "--cwd", "--agents", "--dry-run", "--yes", "--json"},
+			schemaFile: "manage-plan.json",
+		},
+		{
 			path:       "sync skills",
 			summary:    "Sync skills to each agent. First fetches missing remote skills from skills.sh (--update also refreshes changed ones; --no-registry skips this). --json prints the plan. keep-source and keep-target are destructive and need --yes off a TTY",
 			mutates:    true,

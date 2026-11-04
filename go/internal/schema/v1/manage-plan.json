@@ -42,6 +42,19 @@
       }
     },
     "notes": {"type": "array", "items": {"type": "string"}},
-    "applied": {"type": "array", "items": {"type": "string"}}
+    "applied": {"type": "array", "items": {"type": "string"}},
+    "diffs": {
+      "description": "mcp import only: what the plan would do per catalog server. add means the hub lacks the key, update means its config differs, same means it is skipped.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "action"],
+        "properties": {
+          "key": {"type": "string"},
+          "action": {"enum": ["add", "update", "same"]}
+        }
+      }
+    }
   }
 }

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "servers": {
+    "demo": {
+      "type": "stdio",
+      "command": "echo",
+      "args": ["hi"],
+      "env": {"TOKEN": "example"},
+      "enabled": true
+    },
+    "docs": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "headers": {"Authorization": "Bearer example"}
+    },
+    "registry-server": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@example/server"],
+      "origin": {
+        "source": "io.example/server",
+        "sourceType": "registry",
+        "version": "1.2.3"
+      }
+    }
+  }
+}

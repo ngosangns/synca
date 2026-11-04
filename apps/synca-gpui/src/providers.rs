@@ -4,7 +4,9 @@
 //! their choice in the disabled list, the rest in the enabled list (the CLI
 //! cannot sync or clear them yet). The six rows render even before the list
 //! loads or when the CLI cannot answer. A sequence number per request keeps a
-//! slow answer from replacing a newer one.
+//! slow answer from replacing a newer one. Sort buttons beside the filter
+//! reorder the rows: name, status, or skills, with the sidebar tables'
+//! ascending → descending → load order click cycle.
 
 use ely_gpui_component::buttons::ButtonVariant;
 use ely_gpui_component::feedback::{EmptyState, InlineMessage};
@@ -30,6 +32,81 @@ const LIST_H: f32 = 324.;
 const READ_ONLY_TIP: &str =
     "Saved as a preference. The CLI currently syncs skills to the six built-in agents.";
 
+/// Which key the rows are ordered by. `None` keeps load order: managed
+/// agents first, then the installed ones, then the rest, each by name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) enum ProviderSortColumn {
+    #[default]
+    None,
+    Name,
+    Status,
+    Skills,
+}
+
+/// One click sorts ascending, another reverses, a third restores load order —
+/// the cycle the sidebar tables use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) struct ProviderSort {
+    pub(crate) column: ProviderSortColumn,
+    pub(crate) ascending: bool,
+}
+
+impl ProviderSort {
+    fn next(self, column: ProviderSortColumn) -> Self {
+        if self.column != column {
+            Self {
+                column,
+                ascending: true,
+            }
+        } else if self.ascending {
+            Self {
+                column,
+                ascending: false,
+            }
+        } else {
+            Self::default()
+        }
+    }
+
+    /// The `sort` value the dev `state` command reports.
+    pub(crate) fn label(self) -> &'static str {
+        match (self.column, self.ascending) {
+            (ProviderSortColumn::None, _) => "load",
+            (ProviderSortColumn::Name, true) => "name-asc",
+            (ProviderSortColumn::Name, false) => "name-desc",
+            (ProviderSortColumn::Status, true) => "status-asc",
+            (ProviderSortColumn::Status, false) => "status-desc",
+            (ProviderSortColumn::Skills, true) => "skills-asc",
+            (ProviderSortColumn::Skills, false) => "skills-desc",
+        }
+    }
+}
+
+/// `sort=` on the dev `providers` command: "name", "status", or "skills",
+/// each with an optional "-desc" suffix; "load" restores load order.
+pub(crate) fn parse_sort(text: &str) -> Result<ProviderSort, String> {
+    let (base, ascending) = match text.strip_suffix("-desc") {
+        Some(base) => (base, false),
+        None => (text, true),
+    };
+    let column = match base {
+        "load" => ProviderSortColumn::None,
+        "name" => ProviderSortColumn::Name,
+        "status" => ProviderSortColumn::Status,
+        "skills" => ProviderSortColumn::Skills,
+        other => {
+            return Err(format!(
+                "unknown sort \"{other}\"; use name, status, skills, or load"
+            ));
+        }
+    };
+    // "load" has no direction: both spellings mean the default order.
+    Ok(ProviderSort {
+        column,
+        ascending: column != ProviderSortColumn::None && ascending,
+    })
+}
+
 pub(crate) struct ProvidersState {
     pub(crate) query: String,
     /// Bumped for every request and every invalidation; an answer for an
@@ -38,8 +115,9 @@ pub(crate) struct ProvidersState {
     pub(crate) status: Load<()>,
     /// Every provider, sorted by name.
     pub(crate) list: Vec<ProviderInfo>,
-    /// Indexes into `list` of the rows that match `query`.
+    /// Indexes into `list` of the rows that match `query`, in `sort` order.
     pub(crate) shown: Vec<usize>,
+    pub(crate) sort: ProviderSort,
     /// The answer describes project folders (the Workspace scope).
     pub(crate) project: bool,
     /// The Workspace scope has no folder yet, so the answer lists user folders.
@@ -55,6 +133,7 @@ impl ProvidersState {
             status: Load::Idle,
             list: Vec::new(),
             shown: Vec::new(),
+            sort: ProviderSort::default(),
             project: false,
             fallback: false,
             scroll: ScrollHandle::new(),
@@ -68,16 +147,36 @@ impl ProvidersState {
             .find(|item| item.managed && item.synca_agent.as_deref() == Some(id))
     }
 
-    /// Rebuilds `shown` from `list` and `query`.
+    /// Rebuilds `shown` from `list`, `query`, and `sort`.
     pub(crate) fn refilter(&mut self) {
         let needle = self.query.trim().to_lowercase();
-        self.shown = self
+        let mut shown: Vec<usize> = self
             .list
             .iter()
             .enumerate()
             .filter(|(_, item)| item.matches(&needle))
             .map(|(index, _)| index)
             .collect();
+        let column = self.sort.column;
+        if column != ProviderSortColumn::None {
+            let ascending = self.sort.ascending;
+            let list = &self.list;
+            shown.sort_by(|&left, &right| {
+                let (a, b) = (&list[left], &list[right]);
+                let ord = match column {
+                    ProviderSortColumn::None => std::cmp::Ordering::Equal,
+                    ProviderSortColumn::Name => {
+                        a.title().to_lowercase().cmp(&b.title().to_lowercase())
+                    }
+                    ProviderSortColumn::Status => status_rank(a).cmp(&status_rank(b)),
+                    ProviderSortColumn::Skills => a.skills.cmp(&b.skills),
+                }
+                .then_with(|| a.title().to_lowercase().cmp(&b.title().to_lowercase()))
+                .then_with(|| a.id.cmp(&b.id));
+                if ascending { ord } else { ord.reverse() }
+            });
+        }
+        self.shown = shown;
     }
 }
 
@@ -88,6 +187,17 @@ fn status_label(info: &ProviderInfo) -> (&'static str, Tone) {
         ("installed", Tone::Ok)
     } else {
         ("not installed", Tone::Neutral)
+    }
+}
+
+/// The sort order of the status chip: managed, installed, not installed.
+fn status_rank(info: &ProviderInfo) -> u8 {
+    if info.managed {
+        0
+    } else if info.present {
+        1
+    } else {
+        2
     }
 }
 
@@ -174,6 +284,19 @@ impl SyncaWindow {
             .set_offset(gpui::point(px(0.), px(0.)));
         cx.notify();
     }
+
+    pub(crate) fn providers_set_sort(
+        &mut self,
+        column: ProviderSortColumn,
+        cx: &mut Context<Self>,
+    ) {
+        self.providers.sort = self.providers.sort.next(column);
+        self.providers.refilter();
+        self.providers
+            .scroll
+            .set_offset(gpui::point(px(0.), px(0.)));
+        cx.notify();
+    }
 }
 
 /// The JSON the `state` dev command reports under `providers`.
@@ -188,6 +311,7 @@ pub(crate) fn state_value(state: &ProvidersState, open: bool) -> serde_json::Val
         "status": state.status.label(),
         "error": error,
         "query": state.query,
+        "sort": state.sort.label(),
         "count": state.list.len(),
         "managed": state.list.iter().filter(|item| item.managed).count(),
         "present": state.list.iter().filter(|item| item.present).count(),
@@ -283,7 +407,19 @@ pub(crate) fn section(
                             "Every agent toggles on or off. Synca currently syncs skills and MCP servers to the six built-in agents; other choices are saved.",
                         ),
                 )
-                .child(text_field("providers-query", &window.providers_input))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div().flex_1().min_w(px(0.)).child(text_field(
+                                "providers-query",
+                                &window.providers_input,
+                            )),
+                        )
+                        .child(sort_row(window, cx)),
+                )
                 .child(
                     div()
                         .flex_1()
@@ -301,6 +437,55 @@ pub(crate) fn section(
             body.child(list_view(window, cx))
         }
     }
+}
+
+/// The sort buttons beside the filter box, in the sidebar tables' language:
+/// one click sorts ascending, another reverses, a third restores load order.
+fn sort_row(window: &SyncaWindow, cx: &mut Context<SyncaWindow>) -> gpui::Div {
+    let sort = window.providers.sort;
+    let mut row = div().flex_none().flex().items_center().gap_3();
+    for (column, label) in [
+        (ProviderSortColumn::Name, "Name"),
+        (ProviderSortColumn::Status, "Status"),
+        (ProviderSortColumn::Skills, "Skills"),
+    ] {
+        row = row.child(sort_button(column, label, sort, cx));
+    }
+    row
+}
+
+fn sort_button(
+    column: ProviderSortColumn,
+    label: &str,
+    sort: ProviderSort,
+    cx: &mut Context<SyncaWindow>,
+) -> impl IntoElement {
+    let theme = theme();
+    let active = sort.column == column;
+    let name = label.to_lowercase();
+    let tip: SharedString = if !active {
+        format!("Sort by {name}").into()
+    } else if sort.ascending {
+        format!("Sorted by {name}, ascending. Click to reverse.").into()
+    } else {
+        format!("Sorted by {name}, descending. Click to restore load order.").into()
+    };
+    div()
+        .id(SharedString::from(format!("providers-sort-{name}")))
+        .flex()
+        .items_center()
+        .text_size(px(11.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(if active { theme.text } else { theme.muted })
+        .cursor_pointer()
+        .tooltip(Tooltip::text(tip))
+        .hover(move |style| style.text_color(theme.accent))
+        .on_click(cx.listener(move |this, _, _, cx| this.providers_set_sort(column, cx)))
+        .child(if active {
+            format!("{label} {}", if sort.ascending { "↑" } else { "↓" })
+        } else {
+            label.to_string()
+        })
 }
 
 /// The six toggle rows, built from the PROVIDERS table so the sync toggles
@@ -573,5 +758,153 @@ mod tests {
         state.seq = first;
         state.seq = state.seq.wrapping_add(1);
         assert_ne!(state.seq, first);
+    }
+
+    #[test]
+    fn the_sorter_reorders_the_rows() {
+        let mut state = loaded();
+        // Load order keeps the managed agents first.
+        assert_eq!(state.list[state.shown[0]].id, "claude-code");
+
+        // Name ascending ignores the status groups.
+        state.sort = ProviderSort {
+            column: ProviderSortColumn::Name,
+            ascending: true,
+        };
+        state.refilter();
+        let titles: Vec<&str> = state
+            .shown
+            .iter()
+            .map(|&at| state.list[at].title())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Amp",
+                "Claude Code",
+                "cline",
+                "Cursor",
+                "Eve",
+                "Goose",
+                "Kiro CLI",
+                "Zencoder"
+            ]
+        );
+        // Descending reverses it.
+        state.sort = ProviderSort {
+            column: ProviderSortColumn::Name,
+            ascending: false,
+        };
+        state.refilter();
+        let mut titles: Vec<&str> = state
+            .shown
+            .iter()
+            .map(|&at| state.list[at].title())
+            .collect();
+        titles.reverse();
+        assert_eq!(
+            titles,
+            [
+                "Amp",
+                "Claude Code",
+                "cline",
+                "Cursor",
+                "Eve",
+                "Goose",
+                "Kiro CLI",
+                "Zencoder"
+            ]
+        );
+
+        // Skills descending leads with the biggest counts; ascending leads
+        // with the empty not-installed rows.
+        state.sort = ProviderSort {
+            column: ProviderSortColumn::Skills,
+            ascending: false,
+        };
+        state.refilter();
+        assert_eq!(state.list[state.shown[0]].skills, 12);
+        assert_eq!(state.list[state.shown[3]].skills, 7);
+        state.sort = ProviderSort {
+            column: ProviderSortColumn::Skills,
+            ascending: true,
+        };
+        state.refilter();
+        assert_eq!(state.list[state.shown[0]].id, "amp");
+        assert_eq!(state.list[state.shown[0]].skills, 0);
+
+        // Status ascending is the load order: managed first, absent last.
+        state.sort = ProviderSort {
+            column: ProviderSortColumn::Status,
+            ascending: true,
+        };
+        state.refilter();
+        assert!(state.list[state.shown[0]].managed);
+        let last = &state.list[*state.shown.last().unwrap()];
+        assert!(!last.present && !last.managed);
+
+        // The sort survives a filter change.
+        state.sort = ProviderSort {
+            column: ProviderSortColumn::Name,
+            ascending: false,
+        };
+        state.query = "e".into();
+        state.refilter();
+        let filtered: Vec<&str> = state
+            .shown
+            .iter()
+            .map(|&at| state.list[at].title())
+            .collect();
+        assert_eq!(
+            filtered,
+            ["Zencoder", "Goose", "Eve", "cline", "Claude Code"]
+        );
+    }
+
+    #[test]
+    fn sort_clicks_cycle_like_the_sidebar() {
+        let mut sort = ProviderSort::default();
+        sort = sort.next(ProviderSortColumn::Name);
+        assert_eq!(
+            sort,
+            ProviderSort {
+                column: ProviderSortColumn::Name,
+                ascending: true
+            }
+        );
+        sort = sort.next(ProviderSortColumn::Name);
+        assert_eq!(
+            sort,
+            ProviderSort {
+                column: ProviderSortColumn::Name,
+                ascending: false
+            }
+        );
+        sort = sort.next(ProviderSortColumn::Name);
+        assert_eq!(sort, ProviderSort::default());
+        // A different key starts ascending again.
+        sort = sort.next(ProviderSortColumn::Skills);
+        assert_eq!(sort.column, ProviderSortColumn::Skills);
+        assert!(sort.ascending);
+    }
+
+    #[test]
+    fn the_dev_channel_parses_the_sort_value() {
+        assert_eq!(parse_sort("load").unwrap(), ProviderSort::default());
+        assert_eq!(
+            parse_sort("name").unwrap(),
+            ProviderSort {
+                column: ProviderSortColumn::Name,
+                ascending: true
+            }
+        );
+        assert_eq!(
+            parse_sort("skills-desc").unwrap(),
+            ProviderSort {
+                column: ProviderSortColumn::Skills,
+                ascending: false
+            }
+        );
+        assert!(parse_sort("nope").is_err());
     }
 }
