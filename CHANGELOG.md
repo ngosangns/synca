@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- **mcp export and import:** `synca mcp export [--out FILE]` writes the scope hub to a catalog (`mcp-catalog.json`, mode 0600). Each server uses the agent config shape plus its recorded registry origin. Without `--out` the catalog is printed on stdout. `synca mcp import <file|url>` installs every server into the hub and the selected agent configs. A missing key is an add, a different fingerprint is an update, and a match is skipped so this machine keeps its env and header values. Off a TTY an apply needs `--yes`. The catalog stores env and header values in plain text.
+- **MCP fingerprint:** an empty args list and a missing args list compare equal, so a catalog round-trip is not reported as a change.
+- **macOS window:** Sync all asks, then applies every skill and MCP server to the enabled agents and skips conflicts. Check MCP updates previews `mcp update` for servers that have a recorded registry source. The row menu Update works for one row or a bulk selection, and it includes only remote skills and MCP servers that have a recorded source.
+- **Providers:** Settings has sort buttons for Name, Status, and Skills. One click sorts ascending, a second click reverses the order, and a third click restores load order.
+
 ## 0.5.0
 
 - **mcp probe:** `synca mcp probe [names...] [--scope --cwd --timeout SECONDS --json]` connects to each server (initialize, then tools/list, resources/list, prompts/list — streamable HTTP, legacy SSE and stdio) and estimates its context cost: every definition serialized as JSON, bytes / 4. Results are cached in `.mcp-probe.json` (user: `$XDG_STATE_HOME/synca/`, else `~/.agents/`; project: beside `.mcp.json`) keyed by a config fingerprint, so `mcp list` serves them until the config changes; `mcp list --json` gains `tokens`, `probed_at`, `probe_ok` and `probe_error`. A failed server is a row in the output, not a command failure; disabled servers are skipped; four servers run at once; each gets `--timeout` seconds (default 15). The cache holds measurements only — no env, header or URL secret values.
