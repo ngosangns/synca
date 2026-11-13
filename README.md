@@ -427,7 +427,7 @@ What it does, all through the CLI:
 
 - User scope or a project (workspace) scope; a project folder list is remembered.
 - Library of skills and MCP servers with search, sync state per entry, and agent chips.
-- Skill detail with a file tree and Markdown preview; Sync this, Unlink, Purge.
+- Skill detail with a file tree and Markdown preview; Sync this, Remove. Remove deletes the canonical copy and every agent link. Unlink and purge stay on the CLI.
 - One **Install…** button opens one dialog with two tabs: **Skill** (local folder, remote Git source, skills.sh, JSON) and **MCP server** (local process, HTTP, SSE, JSON). Each tab keeps what you typed when you switch; ⌘1 and ⌘2 switch tabs, Left and Right move between them when the tab row has focus, and Escape closes the dialog.
 - Sync runs a `--dry-run` first and shows the plan; conflicts can be skipped or resolved per entry.
 - Activity panel (command log) and Settings panel: turn agents on or off, delete one agent's data (`provider clear`), check for updates.

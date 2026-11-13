@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use ely_gpui_component::buttons::{Button, ButtonVariant, IconButton};
 use ely_gpui_component::feedback::{EmptyState, InlineMessage, ToastViewport, Toaster};
-use ely_gpui_component::forms::{CheckState, Checkbox, Input, InputEvent, TextInput};
+use ely_gpui_component::forms::{Input, InputEvent, TextInput};
 use ely_gpui_component::lists::{Tree, TreeNode};
 use ely_gpui_component::menus::{ContextMenu, Menu as ElyMenu, MenuItem as ElyMenuItem};
 use ely_gpui_component::overlays::{Dialog, Popover};
@@ -33,11 +33,10 @@ use gpui::{
 };
 use ns_ui::{
     Ask, IconTone, SIDEBAR_INSET, SIDEBAR_ROW_H, SIDEBAR_SECTION_H, SidebarKey, SidebarResize,
-    Tone, ask_banner, button, chip, chrome_busy_resizable, field, icon, icon_button, loading_pane,
-    outline_button, quiet_button, quiet_button_md, section_label, segmented, side_column,
-    sidebar_button, sidebar_empty, sidebar_keys, sidebar_reveal, sidebar_row,
-    sidebar_scroll_tracked, sidebar_step, skeleton_list, tab_strip, tab_strip_equal, text_field,
-    theme, working_row,
+    Tone, button, chip, chrome_busy_resizable, field, icon, icon_button, loading_pane,
+    quiet_button, quiet_button_md, section_label, segmented, side_column, sidebar_button,
+    sidebar_empty, sidebar_keys, sidebar_reveal, sidebar_row, sidebar_scroll_tracked, sidebar_step,
+    skeleton_list, tab_strip, tab_strip_equal, text_field, theme, working_row,
 };
 use serde::Deserialize;
 
@@ -132,22 +131,11 @@ enum Panel {
 }
 
 enum Pending {
-    /// Unlink the named agent links; the canonical copy stays.
-    Unlink {
+    /// Delete the canonical copy and every agent link. The app has no partial
+    /// remove, so this variant carries no agent list.
+    Remove {
         keys: Vec<String>,
-        agents: Vec<String>,
-    },
-    /// Purge the canonical copy plus the named agent links; other links dangle.
-    Purge {
-        keys: Vec<String>,
-        agents: Vec<String>,
-    },
-    /// Remove MCP servers. `keep_hub` leaves the hub config, so the next sync
-    /// can restore the links.
-    RemoveMcp {
-        keys: Vec<String>,
-        agents: Vec<String>,
-        keep_hub: bool,
+        kind: Kind,
     },
     /// Apply one sync per key in a single background run.
     SyncMany {
@@ -159,36 +147,6 @@ enum Pending {
     ClearProvider(String),
     InstallUpdate,
     ClearActivity,
-}
-
-/// What the agent picker asks the CLI to do once the user confirms.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PickerAction {
-    Unlink,
-    Purge,
-    RemoveMcp,
-    /// Remove the MCP server from the checked agents but keep the hub config.
-    UnlinkMcp,
-}
-
-impl PickerAction {
-    fn noun(self) -> &'static str {
-        match self {
-            PickerAction::Unlink => "Unlink",
-            PickerAction::Purge => "Purge",
-            PickerAction::RemoveMcp => "Remove",
-            PickerAction::UnlinkMcp => "Unlink",
-        }
-    }
-}
-
-/// The agents an action should touch. The picker lists the agents the selected
-/// entries are installed for; unchecked ones keep their copy.
-struct AgentPicker {
-    action: PickerAction,
-    keys: Vec<String>,
-    agents: BTreeSet<String>,
-    checked: BTreeSet<String>,
 }
 
 /// Where a row menu was asked for. `number` is one `menu_seq` step, so the
@@ -778,8 +736,6 @@ struct SyncaWindow {
     _query_sub: Subscription,
     ask: Option<Ask>,
     pending: Option<Pending>,
-    /// The open agent picker, if a bulk action is waiting for its checkboxes.
-    picker: Option<AgentPicker>,
     /// The row menu a right click or a dev command asked for.
     row_menu: Option<RowMenu>,
     menu_seq: u64,
@@ -1035,7 +991,6 @@ impl SyncaWindow {
             _query_sub,
             ask: None,
             pending: None,
-            picker: None,
             row_menu: None,
             menu_seq: 0,
             agent_menu: None,
@@ -1873,40 +1828,16 @@ impl SyncaWindow {
         };
         self.ask = None;
         match pending {
-            Pending::Unlink { keys, agents } => {
+            Pending::Remove { keys, kind } => {
                 let mut commands = Vec::new();
                 for key in &keys {
-                    match engine::remove_skill(self.scope, self.dir(), key, false, Some(&agents)) {
-                        Ok(args) => commands.push(args),
-                        Err(error) => {
-                            self.toast(error, cx);
-                            return;
+                    let command = match kind {
+                        Kind::Skill => {
+                            engine::remove_skill(self.scope, self.dir(), key, true, None)
                         }
-                    }
-                }
-                self.run_batch(commands, "unlinked", cx);
-            }
-            Pending::Purge { keys, agents } => {
-                let mut commands = Vec::new();
-                for key in &keys {
-                    match engine::remove_skill(self.scope, self.dir(), key, true, Some(&agents)) {
-                        Ok(args) => commands.push(args),
-                        Err(error) => {
-                            self.toast(error, cx);
-                            return;
-                        }
-                    }
-                }
-                self.run_batch(commands, "purged", cx);
-            }
-            Pending::RemoveMcp {
-                keys,
-                agents,
-                keep_hub,
-            } => {
-                let mut commands = Vec::new();
-                for key in &keys {
-                    match engine::remove_mcp(self.scope, self.dir(), key, Some(&agents), keep_hub) {
+                        Kind::Mcp => engine::remove_mcp(self.scope, self.dir(), key, None, false),
+                    };
+                    match command {
                         Ok(args) => commands.push(args),
                         Err(error) => {
                             self.toast(error, cx);
@@ -2045,6 +1976,60 @@ impl SyncaWindow {
         });
         self.pending = Some(pending);
         cx.notify();
+    }
+
+    /// Escape, the scrim, and Cancel land here. Confirm takes `pending` first,
+    /// so a close that follows it finds nothing left to drop.
+    fn cancel_ask(&mut self, cx: &mut Context<Self>) {
+        if self.ask.is_none() && self.pending.is_none() {
+            return;
+        }
+        self.ask = None;
+        self.pending = None;
+        cx.notify();
+    }
+
+    /// The confirmation as a card over a scrim, centered on the window.
+    /// Ely's `ConfirmationCard` stays in the column it is placed in.
+    fn ask_layer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let ask = self.ask.clone()?;
+        let entity = cx.entity();
+        let dismiss = entity.clone();
+        let mut dialog = Dialog::new("synca-ask", ask.title.clone(), move |_, app| {
+            dismiss.update(app, |this, cx| this.cancel_ask(cx));
+        })
+        .detail(ask.message.clone());
+        dialog = dialog.action(|close| {
+            div()
+                .id("ask-cancel-tip")
+                .flex_none()
+                .tooltip(Tooltip::text("Close without changing anything"))
+                .child(
+                    Button::new("ask-cancel", "Cancel")
+                        .on_click(move |_, window, cx| close(window, cx)),
+                )
+        });
+        let label = ask.confirm.clone();
+        let tip = ask.message.clone();
+        let variant = if ask.destructive {
+            ButtonVariant::Danger
+        } else {
+            ButtonVariant::Primary
+        };
+        let run = entity;
+        dialog = dialog.action(move |close| {
+            div()
+                .id("ask-confirm-tip")
+                .flex_none()
+                .tooltip(Tooltip::text(tip))
+                .child(Button::new("ask-confirm", label).variant(variant).on_click(
+                    move |_, window, cx| {
+                        run.update(cx, |this, cx| this.confirm(cx));
+                        close(window, cx);
+                    },
+                ))
+        });
+        Some(dialog.into_any_element())
     }
 
     fn add_project(&mut self, path: String, cx: &mut Context<Self>) {
@@ -2263,175 +2248,24 @@ impl SyncaWindow {
         cx.notify();
     }
 
-    /// Removes one entry from one agent without the picker. Skills keep the
-    /// canonical copy; MCP keeps the hub config, so the next sync can restore
-    /// the link.
-    fn run_agent_action(&mut self, key: String, agent: String, kind: Kind, cx: &mut Context<Self>) {
-        let command = match kind {
+    /// Confirm a full delete. Skills lose the canonical tree and every agent
+    /// link. MCP servers lose the hub entry and every agent config. There is
+    /// no agent subset, so a leftover link cannot dangle.
+    fn ask_remove(&mut self, keys: Vec<String>, kind: Kind, cx: &mut Context<Self>) {
+        let count = keys.len();
+        let title = match (kind, keys.first()) {
+            (Kind::Skill, Some(key)) if count == 1 => format!("Remove skill “{key}”?"),
+            (Kind::Skill, _) => format!("Remove {count} skills?"),
+            (Kind::Mcp, Some(key)) if count == 1 => format!("Remove MCP server “{key}”?"),
+            (Kind::Mcp, _) => format!("Remove {count} MCP servers?"),
+        };
+        let message = match kind {
             Kind::Skill => {
-                engine::remove_skill(self.scope, self.dir(), &key, false, Some(&[agent]))
+                "Deletes the canonical copy and every agent link in this scope. This cannot be undone."
             }
-            Kind::Mcp => engine::remove_mcp(self.scope, self.dir(), &key, Some(&[agent]), true),
-        };
-        let done = if kind == Kind::Skill {
-            "unlinked"
-        } else {
-            "removed"
-        };
-        match command {
-            Ok(args) => self.run_batch(vec![args], done, cx),
-            Err(error) => self.toast(error, cx),
-        }
-    }
-
-    /// Union of the linked agents over the selected entries of one kind.
-    fn target_agents(&self, kind: Kind, keys: &[String]) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        for entry in &self.entries {
-            if entry.kind == kind && keys.iter().any(|key| key == &entry.key) {
-                for link in &entry.links {
-                    out.insert(link.agent.clone());
-                }
+            Kind::Mcp => {
+                "Deletes the hub entry and the server from every agent config in this scope. This cannot be undone."
             }
-        }
-        out
-    }
-
-    /// Opens the agent picker for the selected entries of one kind. With no
-    /// links to pick from, Unlink has nothing to do and the other two go
-    /// straight to their confirmation.
-    fn open_picker(&mut self, action: PickerAction, kind: Kind, cx: &mut Context<Self>) {
-        let keys = self.target_keys(kind);
-        if keys.is_empty() {
-            return;
-        }
-        let agents = self.target_agents(kind, &keys);
-        if agents.is_empty() {
-            match action {
-                PickerAction::Unlink | PickerAction::UnlinkMcp => {
-                    self.toast("Nothing to unlink.", cx);
-                    return;
-                }
-                PickerAction::Purge => self.ask_purge(keys, Vec::new(), cx),
-                PickerAction::RemoveMcp => self.ask_remove_mcp(keys, Vec::new(), false, cx),
-            }
-            return;
-        }
-        self.picker = Some(AgentPicker {
-            action,
-            keys,
-            checked: agents.clone(),
-            agents,
-        });
-        cx.notify();
-    }
-
-    fn toggle_picker_agent(&mut self, agent: &str, on: bool, cx: &mut Context<Self>) {
-        if let Some(picker) = self.picker.as_mut() {
-            if on {
-                picker.checked.insert(agent.to_string());
-            } else {
-                picker.checked.remove(agent);
-            }
-            cx.notify();
-        }
-    }
-
-    /// The picker's Apply: close the picker, then confirm with the checked
-    /// agents. The Ask is the one destructive gate; the picker only narrows it.
-    fn apply_picker(&mut self, cx: &mut Context<Self>) {
-        let Some(picker) = self.picker.take() else {
-            return;
-        };
-        let agents: Vec<String> = picker.checked.into_iter().collect();
-        match picker.action {
-            PickerAction::Unlink => self.ask_unlink(picker.keys, agents, cx),
-            PickerAction::Purge => self.ask_purge(picker.keys, agents, cx),
-            PickerAction::RemoveMcp => self.ask_remove_mcp(picker.keys, agents, false, cx),
-            PickerAction::UnlinkMcp => self.ask_remove_mcp(picker.keys, agents, true, cx),
-        }
-    }
-
-    fn ask_unlink(&mut self, keys: Vec<String>, agents: Vec<String>, cx: &mut Context<Self>) {
-        let count = keys.len();
-        let title = match keys.first() {
-            Some(key) if count == 1 => format!("Unlink skill “{key}”?"),
-            _ => format!("Unlink {count} skills?"),
-        };
-        let message = if agents.is_empty() {
-            "Removes the agent links but keeps the canonical copy.".to_string()
-        } else {
-            format!(
-                "Unlinks from {}. The canonical copy stays, so a sync can restore the links.",
-                agents.join(", ")
-            )
-        };
-        let confirm = if count == 1 {
-            "Unlink".to_string()
-        } else {
-            format!("Unlink {count}")
-        };
-        self.ask_for(
-            &title,
-            &message,
-            &confirm,
-            Pending::Unlink { keys, agents },
-            cx,
-        );
-    }
-
-    fn ask_purge(&mut self, keys: Vec<String>, agents: Vec<String>, cx: &mut Context<Self>) {
-        let count = keys.len();
-        let title = match keys.first() {
-            Some(key) if count == 1 => format!("Purge skill “{key}”?"),
-            _ => format!("Purge {count} skills?"),
-        };
-        let message = if agents.is_empty() {
-            "Removes the canonical copy and every agent link. This cannot be undone.".to_string()
-        } else {
-            format!(
-                "Purges from {} and deletes the canonical copy. Unchecked links are left dangling. This cannot be undone.",
-                agents.join(", ")
-            )
-        };
-        let confirm = if count == 1 {
-            "Purge".to_string()
-        } else {
-            format!("Purge {count}")
-        };
-        self.ask_for(
-            &title,
-            &message,
-            &confirm,
-            Pending::Purge { keys, agents },
-            cx,
-        );
-    }
-
-    fn ask_remove_mcp(
-        &mut self,
-        keys: Vec<String>,
-        agents: Vec<String>,
-        keep_hub: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let count = keys.len();
-        let title = match keys.first() {
-            Some(key) if count == 1 => format!("Remove MCP server “{key}”?"),
-            _ => format!("Remove {count} MCP servers?"),
-        };
-        let message = if keep_hub {
-            format!(
-                "Removes it from {}. The hub config keeps it, so the next sync can restore it.",
-                agents.join(", ")
-            )
-        } else if agents.is_empty() {
-            "Removes it from the hub and every agent config in this scope.".to_string()
-        } else {
-            format!(
-                "Removes it from the hub and from {}. Other configs keep their copy until the next sync.",
-                agents.join(", ")
-            )
         };
         let confirm = if count == 1 {
             "Remove".to_string()
@@ -2440,13 +2274,9 @@ impl SyncaWindow {
         };
         self.ask_for(
             &title,
-            &message,
+            message,
             &confirm,
-            Pending::RemoveMcp {
-                keys,
-                agents,
-                keep_hub,
-            },
+            Pending::Remove { keys, kind },
             cx,
         );
     }
@@ -2475,82 +2305,6 @@ impl SyncaWindow {
             Pending::SyncAll,
             cx,
         );
-    }
-
-    /// The agent picker as an Ely dialog, drawn while it is open.
-    fn picker_dialog(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let picker = self.picker.as_ref()?;
-        let entity = cx.entity();
-        let count = picker.keys.len();
-        let subject = match picker.keys.first() {
-            Some(key) if count == 1 => key.clone(),
-            _ => format!("{count} entries"),
-        };
-        let detail = match picker.action {
-            PickerAction::Unlink => {
-                "Only the checked agents lose their link; the canonical copy stays."
-            }
-            PickerAction::Purge => {
-                "Unchecked agents keep their link, which dangles once the canonical copy is gone."
-            }
-            PickerAction::RemoveMcp => {
-                "Unchecked agents keep their config until the next sync restores or removes it."
-            }
-            PickerAction::UnlinkMcp => {
-                "Only the checked agents lose the server; the hub config keeps it, so a sync can restore it."
-            }
-        };
-        let mut body = div().flex().flex_col().gap_1().w_full();
-        for agent in &picker.agents {
-            let agent = agent.clone();
-            let state = if picker.checked.contains(&agent) {
-                CheckState::On
-            } else {
-                CheckState::Off
-            };
-            body = body.child(
-                Checkbox::new(SharedString::from(format!("picker-agent-{agent}")), state)
-                    .label(agent.clone())
-                    .on_change({
-                        let (entity, agent) = (entity.clone(), agent.clone());
-                        move |on, _, app| {
-                            entity.update(app, |this, cx| this.toggle_picker_agent(&agent, on, cx))
-                        }
-                    }),
-            );
-        }
-        let apply_label = format!("{} {count}", picker.action.noun());
-        let picker_empty = picker.checked.is_empty();
-        let mut dialog = Dialog::new("agent-picker", picker.action.noun(), {
-            let entity = entity.clone();
-            move |_, app| {
-                entity.update(app, |this, cx| {
-                    this.picker = None;
-                    cx.notify();
-                });
-            }
-        })
-        .detail(format!("{subject} · {detail}"));
-        let cancel = entity.clone();
-        dialog = dialog.action(move |close| {
-            Button::new("picker-cancel", "Cancel").on_click(move |_, window, cx| {
-                close(window, cx);
-                cancel.update(cx, |this, cx| {
-                    this.picker = None;
-                    cx.notify();
-                });
-            })
-        });
-        dialog = dialog.action(move |close| {
-            Button::new("picker-apply", apply_label)
-                .primary()
-                .disabled(picker_empty)
-                .on_click(move |_, window, cx| {
-                    close(window, cx);
-                    entity.update(cx, |this, cx| this.apply_picker(cx));
-                })
-        });
-        Some(dialog.child(body).into_any_element())
     }
 }
 
@@ -2833,9 +2587,6 @@ impl Render for SyncaWindow {
         };
 
         let mut body = div().flex().flex_col().gap_2();
-        if self.ask.is_some() && !panel_owns_ask(self.panel, self.pending.as_ref()) {
-            body = with_ask(self, body, cx);
-        }
         body = match self.route {
             Route::List => list_body(self, body, cx),
             Route::Plan => plan_body(self, body, cx),
@@ -2919,7 +2670,7 @@ impl Render for SyncaWindow {
             }
             dialog.child(body).into_any_element()
         });
-        let picker = self.picker_dialog(cx);
+        let ask = self.ask_layer(cx);
         let toasts = ToastViewport::new("synca-toasts", &self.toaster);
         div()
             .size_full()
@@ -2958,7 +2709,7 @@ impl Render for SyncaWindow {
                 ),
             ))
             .children(onboarding)
-            .children(picker)
+            .children(ask)
             .child(toasts)
     }
 }
@@ -3845,7 +3596,7 @@ fn agents_card(
                 }),
             )
             .child(chip);
-        let chip_menu = agent_menu_for(entry.kind, &entry.key, link, cx);
+        let chip_menu = agent_menu_for(link);
         tags = tags.child(
             ContextMenu::new(
                 SharedString::from(format!("agent-menu-host-{index}")),
@@ -3870,54 +3621,26 @@ fn agents_card(
     .child(tags)
 }
 
-/// The per-agent chip menu: remove just this agent's copy, then copy or
-/// reveal the agent's own path.
-fn agent_menu_for(
-    kind: Kind,
-    key: &str,
-    link: &AgentLink,
-    cx: &mut Context<SyncaWindow>,
-) -> ElyMenu {
-    let entity = cx.entity();
-    let mut menu = ElyMenu::new().item(match kind {
-        Kind::Skill => {
-            let (entity, key, agent) = (entity, key.to_string(), link.agent.clone());
-            ElyMenuItem::new(format!("Unlink from {}", link.agent))
-                .icon(IconName::Link)
-                .on_click(move |_, app| {
-                    entity.update(app, |this, cx| {
-                        this.run_agent_action(key.clone(), agent.clone(), Kind::Skill, cx)
-                    })
-                })
-        }
-        Kind::Mcp => {
-            let (entity, key, agent) = (entity, key.to_string(), link.agent.clone());
-            ElyMenuItem::new(format!("Remove from {}", link.agent))
-                .icon(IconName::Link)
-                .on_click(move |_, app| {
-                    entity.update(app, |this, cx| {
-                        this.run_agent_action(key.clone(), agent.clone(), Kind::Mcp, cx)
-                    })
-                })
-        }
-    });
-    menu = menu.separator().item({
-        let copy = link.path.clone();
-        ElyMenuItem::new("Copy path")
-            .icon(IconName::Copy)
-            .on_click(move |_, _| {
-                ns_ui::copy_text(&copy);
-            })
-    });
-    menu = menu.item({
-        let reveal = link.path.clone();
-        ElyMenuItem::new("Reveal in Finder")
-            .icon(IconName::FolderOpen)
-            .on_click(move |_, _| {
-                ns_ui::reveal(&reveal);
-            })
-    });
-    menu
+/// The per-agent chip menu copies or reveals that agent's path. Removing one
+/// agent stays on the CLI. The app's Remove deletes the whole entry.
+fn agent_menu_for(link: &AgentLink) -> ElyMenu {
+    let copy = link.path.clone();
+    let reveal = link.path.clone();
+    ElyMenu::new()
+        .item(
+            ElyMenuItem::new("Copy path")
+                .icon(IconName::Copy)
+                .on_click(move |_, _| {
+                    ns_ui::copy_text(&copy);
+                }),
+        )
+        .item(
+            ElyMenuItem::new("Reveal in Finder")
+                .icon(IconName::FolderOpen)
+                .on_click(move |_, _| {
+                    ns_ui::reveal(&reveal);
+                }),
+        )
 }
 
 fn detail_card(
@@ -3963,9 +3686,9 @@ fn selectable(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Select
     SelectableText::new(id, text)
 }
 
-/// One primary action; the rest are quiet. A destructive action sits after a
-/// divider and is an outline, so it never reads as the main button. The
-/// destructive ones open the agent picker over the whole selection.
+/// One primary action; the rest are quiet. Remove sits after a divider and is
+/// an outline, so it never reads as the main button. It deletes the whole
+/// selection of this kind.
 fn entry_actions(body: gpui::Div, entry: &Entry, cx: &mut Context<SyncaWindow>) -> gpui::Div {
     let name = entry.key.clone();
     let kind = entry.kind;
@@ -3999,22 +3722,12 @@ fn entry_actions(body: gpui::Div, entry: &Entry, cx: &mut Context<SyncaWindow>) 
                 }),
             ))
             .children(update)
-            .child(quiet_button(
-                "unlink",
-                "unlink",
-                "Unlink…",
-                cx.listener(move |this, _, _, cx| {
-                    this.open_picker(PickerAction::Unlink, kind, cx);
-                }),
-            ))
             .child(divider())
-            .child(outline_button(
-                "purge",
-                "trash",
-                "Purge…",
-                cx.listener(move |this, _, _, cx| {
-                    this.open_picker(PickerAction::Purge, kind, cx);
-                }),
+            .child(remove_button(
+                "remove",
+                kind,
+                "Delete the canonical copy and every agent link. This cannot be undone.",
+                cx,
             )),
         )
     } else {
@@ -4047,22 +3760,12 @@ fn entry_actions(body: gpui::Div, entry: &Entry, cx: &mut Context<SyncaWindow>) 
                 }),
             ))
             .children(update)
-            .child(quiet_button(
-                "unlink-mcp",
-                "unlink",
-                "Unlink…",
-                cx.listener(move |this, _, _, cx| {
-                    this.open_picker(PickerAction::UnlinkMcp, kind, cx);
-                }),
-            ))
             .child(divider())
-            .child(outline_button(
+            .child(remove_button(
                 "remove-mcp",
-                "trash",
-                "Purge…",
-                cx.listener(move |this, _, _, cx| {
-                    this.open_picker(PickerAction::RemoveMcp, kind, cx);
-                }),
+                kind,
+                "Delete the hub entry and every agent config. This cannot be undone.",
+                cx,
             )),
         )
     }
@@ -4587,9 +4290,6 @@ fn activity_body(
     cx: &mut Context<SyncaWindow>,
 ) -> gpui::Div {
     body = body.w_full().min_w(px(0.));
-    if panel_owns_ask(Panel::Activity, window.pending.as_ref()) {
-        body = with_ask(window, body, cx);
-    }
     let open = window.activity_open;
     body = body.child(
         div()
@@ -4700,9 +4400,6 @@ fn settings_body(
     mut body: gpui::Div,
     cx: &mut Context<SyncaWindow>,
 ) -> gpui::Div {
-    if panel_owns_ask(Panel::Settings, window.pending.as_ref()) {
-        body = with_ask(window, body, cx);
-    }
     body = body.child(section_label("Updates"));
     if window.update_text.is_empty() && !window.busy {
         body = body.child(InlineMessage::new(
@@ -5777,29 +5474,6 @@ fn stored_panel() -> Panel {
     }
 }
 
-fn panel_owns_ask(panel: Panel, pending: Option<&Pending>) -> bool {
-    matches!(
-        (panel, pending),
-        (Panel::Activity, Some(Pending::ClearActivity))
-            | (Panel::Settings, Some(Pending::ClearProvider(_)))
-    )
-}
-
-fn with_ask(window: &SyncaWindow, body: gpui::Div, cx: &mut Context<SyncaWindow>) -> gpui::Div {
-    let Some(ask) = window.ask.clone() else {
-        return body;
-    };
-    body.child(ask_banner(
-        &ask,
-        cx.listener(|this, _, _, cx| this.confirm(cx)),
-        cx.listener(|this, _, _, cx| {
-            this.ask = None;
-            this.pending = None;
-            cx.notify();
-        }),
-    ))
-}
-
 /// Keys of the bulk selection of one kind, in sidebar order.
 fn keys_for_kind(entries: &[Entry], bulk: &BTreeSet<usize>, kind: Kind) -> Vec<String> {
     bulk.iter()
@@ -5825,17 +5499,43 @@ fn updatable_keys(entries: &[Entry], keys: &[String], kind: Kind) -> Vec<String>
         .collect()
 }
 
-/// One menu row that opens the agent picker over the selection.
-fn picker_menu_item(
-    entity: Entity<SyncaWindow>,
-    action: PickerAction,
+/// Outline Remove for the detail pane. Confirms, then deletes the canonical
+/// copy and every agent link for the current selection of this kind.
+fn remove_button(
+    id: &'static str,
     kind: Kind,
+    tip: &'static str,
+    cx: &mut Context<SyncaWindow>,
+) -> gpui::AnyElement {
+    tipped_button(
+        id,
+        Some("trash"),
+        "Remove…",
+        tip,
+        ButtonVariant::Outline,
+        false,
+        cx.listener(move |this, _, _, cx| {
+            let keys = this.target_keys(kind);
+            if !keys.is_empty() {
+                this.ask_remove(keys, kind, cx);
+            }
+        }),
+    )
+}
+
+/// One menu row that confirms a full delete of the selection.
+fn remove_menu_item(
+    entity: Entity<SyncaWindow>,
+    kind: Kind,
+    keys: Vec<String>,
     label: String,
-    icon: IconName,
 ) -> ElyMenuItem {
-    ElyMenuItem::new(label).icon(icon).on_click(move |_, app| {
-        entity.update(app, |this, cx| this.open_picker(action, kind, cx));
-    })
+    ElyMenuItem::new(label)
+        .icon(IconName::Trash2)
+        .on_click(move |_, app| {
+            let keys = keys.clone();
+            entity.update(app, |this, cx| this.ask_remove(keys, kind, cx));
+        })
 }
 
 /// The right-click menu for one row. When the row sits inside the bulk
@@ -5909,32 +5609,7 @@ fn row_menu_for(
         });
     }
     menu = menu.separator();
-    if kind == Kind::Skill {
-        let unlink_label = if one {
-            "Unlink…".to_string()
-        } else {
-            format!("Unlink {count} skills…")
-        };
-        menu = menu.item(picker_menu_item(
-            entity.clone(),
-            PickerAction::Unlink,
-            kind,
-            unlink_label,
-            IconName::Link,
-        ));
-        let purge_label = if one {
-            "Purge…".to_string()
-        } else {
-            format!("Purge {count} skills…")
-        };
-        menu = menu.item(picker_menu_item(
-            entity,
-            PickerAction::Purge,
-            kind,
-            purge_label,
-            IconName::Trash2,
-        ));
-    } else {
+    if kind != Kind::Skill {
         let probe_label = if one {
             "Probe tokens".to_string()
         } else {
@@ -5949,31 +5624,15 @@ fn row_menu_for(
                     probe.update(app, |this, cx| this.probe_mcp(probe_keys.clone(), cx));
                 })
         });
-        let unlink_label = if one {
-            "Unlink…".to_string()
-        } else {
-            format!("Unlink {count} MCPs…")
-        };
-        menu = menu.item(picker_menu_item(
-            entity.clone(),
-            PickerAction::UnlinkMcp,
-            kind,
-            unlink_label,
-            IconName::Link,
-        ));
-        let remove_label = if one {
-            "Purge…".to_string()
-        } else {
-            format!("Purge {count} MCPs…")
-        };
-        menu = menu.item(picker_menu_item(
-            entity,
-            PickerAction::RemoveMcp,
-            kind,
-            remove_label,
-            IconName::Trash2,
-        ));
     }
+    let remove_label = if one {
+        "Remove…".to_string()
+    } else if kind == Kind::Skill {
+        format!("Remove {count} skills…")
+    } else {
+        format!("Remove {count} MCPs…")
+    };
+    menu = menu.item(remove_menu_item(entity, kind, keys.clone(), remove_label));
     let copy_keys = keys.join("\n");
     menu = menu
         .item(

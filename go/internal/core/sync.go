@@ -175,20 +175,21 @@ func PlanSyncSkills(scope Scope, cwd string, agentsFilter []AgentKind, onlyKey s
 						}
 						// A dead link holds no content, so replacing it loses nothing. If it
 						// already points at the canonical path, that path is restored above.
-						if isDanglingLink(link) {
-							if filepath.Clean(resolved) == filepath.Clean(canonSkill) {
-								plan.Actions = append(plan.Actions, SyncAction{
-									Kind: "skip_same", Path: link, SkillKey: skill.Key,
-									Reason: fmt.Sprintf("already linked for %s", t.Agent),
-								})
-							} else {
-								plan.Actions = append(plan.Actions, SyncAction{
-									Kind: "symlink_skill", Link: link, Target: canonSkill,
-									SkillKey: skill.Key, Agent: t.Agent.String(),
-								})
-							}
+						if isDanglingLink(link) && filepath.Clean(resolved) == filepath.Clean(canonSkill) {
+							plan.Actions = append(plan.Actions, SyncAction{
+								Kind: "skip_same", Path: link, SkillKey: skill.Key,
+								Reason: fmt.Sprintf("already linked for %s", t.Agent),
+							})
 							continue
 						}
+						// A live link to the other home still names this skill. Point it
+						// at the home that owns the skill. Content already matched, or
+						// this would have been a conflict.
+						plan.Actions = append(plan.Actions, SyncAction{
+							Kind: "symlink_skill", Link: link, Target: canonSkill,
+							SkillKey: skill.Key, Agent: t.Agent.String(),
+						})
+						continue
 					}
 				}
 				if st, lerr := os.Lstat(link); lerr == nil && st.Mode()&os.ModeSymlink == 0 && st.IsDir() &&

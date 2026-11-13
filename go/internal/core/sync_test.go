@@ -89,6 +89,36 @@ func TestSkillSyncDryRunSymlinkPlan(t *testing.T) {
 	}
 }
 
+func TestSyncRetargetsAgentLinkWhenLocalSkillLeavesAgents(t *testing.T) {
+	home := realTempHome(t)
+	agents := filepath.Join(home, ".agents", "skills", "hand")
+	mustWrite(t, filepath.Join(agents, "SKILL.md"), "---\nname: hand\n---\n# hand\n")
+	grokRoot := filepath.Join(home, ".grok", "skills")
+	if err := os.MkdirAll(grokRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grok := filepath.Join(grokRoot, "hand")
+	if err := os.Symlink(agents, grok); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanSyncSkills(ScopeUser, home, nil, "hand")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyPlan(plan, home, ScopeUser, NewDecisions(ConflictSkip)); err != nil {
+		t.Fatal(err)
+	}
+	local := filepath.Join(home, ".synca", "local", "skills", "hand")
+	got, err := filepath.EvalSymlinks(grok)
+	want, werr := filepath.EvalSymlinks(local)
+	if err != nil || werr != nil || got != want {
+		t.Fatalf("grok -> %s (%v), want %s (%v)", got, err, want, werr)
+	}
+	if _, err := os.Lstat(agents); !os.IsNotExist(err) {
+		t.Fatalf("local skill still in .agents: %v", err)
+	}
+}
+
 func clashSetup(t *testing.T) (home, agents, grok string) {
 	home = realTempHome(t)
 	agents = filepath.Join(home, ".agents/skills")

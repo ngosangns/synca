@@ -1,8 +1,9 @@
 //! Settings → "Providers": one list of every agent a skills backend can
 //! install to, read from `synca providers list --json` on a background task.
 //! Every row carries an on/off toggle: the six agents the CLI syncs to save
-//! their choice in the disabled list, the rest in the enabled list (the CLI
-//! cannot sync or clear them yet). The six rows render even before the list
+//! their choice in the disabled list and show a Delete data label. The rest
+//! save theirs in the enabled list (the CLI cannot sync or clear them yet).
+//! The six rows render even before the list
 //! loads or when the CLI cannot answer. A sequence number per request keeps a
 //! slow answer from replacing a newer one. Sort buttons beside the filter
 //! reorder the rows: name, status, or skills, with the sidebar tables'
@@ -16,7 +17,8 @@ use gpui::{
     SharedString, Styled, div, prelude::*, px,
 };
 use ns_ui::{
-    IconTone, Tone, chip, icon_button, section_label, skeleton_list, text_field, theme, working_row,
+    IconTone, Tone, chip, icon_button, section_label, skeleton_list, text_field, theme,
+    warn_button, working_row,
 };
 
 use crate::Pending;
@@ -519,8 +521,8 @@ fn managed_keys(info: &ProviderInfo) -> Option<(usize, &'static str, &'static st
 
 /// One row with an on/off toggle. The six built-in agents save their choice
 /// in the disabled list and sync for real; the rest save theirs in the
-/// enabled list, and only the six get Delete data (the CLI cannot clear the
-/// others yet).
+/// enabled list. Only the six get a labelled Delete data button. The CLI
+/// cannot clear the others yet.
 fn provider_toggle_row(
     window: &SyncaWindow,
     index: usize,
@@ -610,29 +612,36 @@ fn provider_toggle_row(
                     }),
                 ))
                 .when(managed, |row| {
-                    row.child(icon_button(
-                        SharedString::from(format!("clear-{index}")),
-                        "trash",
-                        "Delete data",
-                        IconTone::Warn,
-                        cx.listener(move |this, _, _, cx| {
-                            if this.scope == Scope::Project && this.dir().is_none() {
-                                this.toast(
-                                    "Choose a workspace folder before deleting workspace data.",
-                                    cx,
-                                );
-                                return;
-                            }
-                            let id = clear.clone();
-                            this.ask_for(
-                                &format!("Delete {name} data?"),
-                                "Removes that provider’s skills and MCP entries in this scope. The canonical hub stays. This cannot be undone.",
+                    row.child(
+                        div()
+                            .id(SharedString::from(format!("clear-{index}-tip")))
+                            .flex_none()
+                            .tooltip(Tooltip::text(
+                                "Removes this provider’s skills and MCP entries in this scope. The hub stays.",
+                            ))
+                            .child(warn_button(
+                                SharedString::from(format!("clear-{index}")),
+                                "trash",
                                 "Delete data",
-                                Pending::ClearProvider(id),
-                                cx,
-                            );
-                        }),
-                    ))
+                                cx.listener(move |this, _, _, cx| {
+                                    if this.scope == Scope::Project && this.dir().is_none() {
+                                        this.toast(
+                                            "Choose a workspace folder before deleting workspace data.",
+                                            cx,
+                                        );
+                                        return;
+                                    }
+                                    let id = clear.clone();
+                                    this.ask_for(
+                                        &format!("Delete {name} data?"),
+                                        "Removes that provider’s skills and MCP entries in this scope. The canonical hub stays. This cannot be undone.",
+                                        "Delete data",
+                                        Pending::ClearProvider(id),
+                                        cx,
+                                    );
+                                }),
+                            )),
+                    )
                 }),
         )
         .children(info.map(|info| {
