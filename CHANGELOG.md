@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+- **macOS window:** Remove deletes the canonical skill copy or the MCP hub entry and every agent link in the scope. Unlink and purge stay on the CLI. A confirmation is a card over the window. Escape, the scrim, and Cancel close it.
+- **Providers:** Delete data is a labelled button on the six built-in agents. The tooltip says the hub stays.
+- **Sync:** A live agent symlink that still points at the other skill home is retargeted to the home that owns the skill.
+
 ## 0.6.1
 
 - **Two homes:** a registry or git install lives in `.agents` (`~/.agents` or `<git-root>/.agents`) and that copy is the original synced to the other agents. Project `.agents/` is gitignored through `.git/info/exclude`. A local skill or `mcp add` lives in `.synca/local` and that copy is the original for those items. The two homes are not mirrors of each other. Hooks stay in `~/.agents`. On sync, a managed agent's real skill directory whose full tree matches its home is replaced with a symlink.
