@@ -21,7 +21,7 @@ Each skill and MCP server has one home, chosen by origin. A remote skill (lock `
 - Local MCP: `~/.synca/local/mcp.json` and `<git-root>/.synca/local/mcp.json` (`{ "mcpServers": { ... } }`)
 - Installed MCP: `~/.agents/mcp.json` and `<git-root>/.agents/mcp.json`
 - Claude project writer: `<git-root>/.mcp.json` (translated copy, not a home)
-- Hooks user hub: `~/.agents/hooks.json` (`{ "version": 1, "hooks": { ... } }`), scripts in `~/.agents/hooks/<id>/`; user scope only; written to Claude, Grok and Devin (design for Kiro, OpenCode, Cursor and project scope: `docs/plans/hooks-sync.md`). Hooks are not stored under `.synca/local`.
+- Hooks user hub: `~/.agents/hooks.json` (`{ "version": 1, "hooks": { ... } }`), scripts in `~/.agents/hooks/<id>/`; user scope only; written to Claude, Grok, Devin, and OpenCode (`~/.config/opencode/plugins/synca-hooks.js`, OpenCode 1.x). Design for Kiro, Cursor and project scope: `docs/plans/hooks-sync.md`. Hooks are not stored under `.synca/local`.
 
 ### Per-agent skill roots (read; write via symlink to the owning home when syncing)
 **User:** `~/.grok/skills`, `~/.config/devin/skills`, `~/.kiro/skills`, `~/.config/opencode/skills`, `~/.claude/skills`, `~/.cursor/skills`

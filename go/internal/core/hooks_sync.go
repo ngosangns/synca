@@ -93,9 +93,12 @@ func PlanSyncHooks(filter []AgentKind, policy ConflictPolicy) (*HooksPlan, error
 		}
 		var edit *hookFileEdit
 		var err error
-		if ad.ownFile {
+		switch {
+		case ad.plugin:
+			edit, err = planPluginFile(plan, ad, hub, ids, trust, lock, policy, untrusted)
+		case ad.ownFile:
 			edit, err = planOwnFile(plan, ad, hub, ids, trust, lock, policy, untrusted)
-		} else {
+		default:
 			edit, err = planSharedFile(plan, ad, hub, ids, trust, lock, policy, untrusted)
 		}
 		if err != nil {

@@ -131,9 +131,9 @@ The scaffold writes only `~/.agents/hooks/my-check/check.sh`; it never adds or t
 - A command that embeds a token, key, password or `Authorization` header is rejected. Read secrets from the environment inside the script.
 - Events: `SessionStart` `UserPromptSubmit` `PreToolUse` `PostToolUse` `Stop` `SessionEnd` `PreCompact` `PostCompact` `Notification` `PermissionRequest` `SubagentStart` `SubagentStop` `PostToolUseFailure`.
 - Tool classes (only on `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`): `shell` `read` `write` `search` `web` `agent` `mcp`.
-- Written agents: Claude (all events), Grok (all except `PermissionRequest`, own file `~/.grok/hooks/synca.json`), Devin (a subset; `PostCompact` becomes `PostCompaction`). Kiro, OpenCode and Cursor are not implemented. An agent is written only when its config directory exists.
-- If no requested tool class maps for an agent, the hook is skipped (`tool_unmapped`) and never widened to every tool. Some classes map only for some agents (`web` Claude only; `mcp` Claude and Devin; `read`/`search` Claude and Grok; `agent` Claude and Grok).
-- `onFailure: block` is reported `failure_mode_weakened`: the agents have no verified way to make a failing hook block; a script that exits 2 still blocks where the agent supports it.
+- Written agents: Claude (all events), Grok (all except `PermissionRequest`, own file `~/.grok/hooks/synca.json`), Devin (a subset; `PostCompact` becomes `PostCompaction`), OpenCode user scope (generated plugin `~/.config/opencode/plugins/synca-hooks.js`, OpenCode 1.x plugin API; `opencode.json` is not edited). Kiro and Cursor are not implemented. An agent is written only when its config directory exists.
+- If no requested tool class maps for an agent, the hook is skipped (`tool_unmapped`) and never widened to every tool. Some classes map only for some agents (`web` Claude and OpenCode; `mcp` Claude and Devin, OpenCode has no stable MCP tool prefix; `read`/`search` Claude, Grok and OpenCode; `agent` Claude, Grok and OpenCode). OpenCode tool names are `bash`, `read`, `edit`/`write`/`apply_patch`, `grep`/`glob`, `webfetch`/`websearch`, `task`.
+- `onFailure: block` is reported `failure_mode_weakened` where the agent cannot make a failing hook block. OpenCode `PreToolUse` throws on exit 2, and also on any failure when `onFailure` is `block`. A script that exits 2 still blocks where the agent supports it. Approximate OpenCode events are reported `event_approx`.
 
 Trust and sync:
 
@@ -142,8 +142,8 @@ Trust and sync:
 - `hooks remove` deletes the hub entry and its approval. The next `hooks sync` removes synca's groups from the agents.
 - `sync hooks` and `sync all` write only approved hooks. Unapproved ones appear as `conflict_hook` with reason `untrusted`; exit stays 0, or 7 with `--strict`.
 - `sync all` includes hooks only when `~/.agents/hooks.json` exists and the scope is user; `--no-hooks` leaves them out. `sync hooks` rejects `--on-conflict keep-target`; `sync all` accepts it for skills/MCP but uses `skip` for the hooks phase.
-- Plan kinds: `write_hook`, `update_hook`, `remove_hook`, `adopt_hook`, `skip_hook_same`, `skip_hook_unsupported`, `conflict_hook`. Unsupported reasons include `agent_not_installed`, `event_unsupported`, `tool_unmapped`, `scope_unsupported`; conflict reasons include `untrusted`, `modified_externally`, `parse_error: ...`.
-- Claude and Devin settings files: only the top-level `hooks` member is rewritten, every other byte is kept, and an unparseable file is never touched. Grok's `synca.json` is owned by synca. Each write is atomic with a backup.
+- Plan kinds: `write_hook`, `update_hook`, `remove_hook`, `adopt_hook`, `skip_hook_same`, `skip_hook_unsupported`, `conflict_hook`. Unsupported reasons include `agent_not_installed`, `event_unsupported`, `tool_unmapped`, `scope_unsupported`; conflict reasons include `untrusted`, `modified_externally`, `not_owned`, `parse_error: ...`.
+- Claude and Devin settings files: only the top-level `hooks` member is rewritten, every other byte is kept, and an unparseable file is never touched. Grok's `synca.json` and OpenCode's `synca-hooks.js` are owned by synca. A file at the OpenCode path without the synca marker is `not_owned` and is never overwritten. Each write is atomic with a backup. OpenCode 1.x loads the plugin at startup.
 - `hooks list` states per agent: `synced`, `pending`, `pending_removal`, `disabled`, `excluded`, `not_synced`, `unsupported: <reason>`, `conflict: <reason>`.
 
 Hook JSON shapes:

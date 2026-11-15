@@ -27,7 +27,7 @@ scripts live in ~/.agents/hooks/<id>/ and {{hook_dir}} in a command expands to t
 Events: SessionStart UserPromptSubmit PreToolUse PostToolUse Stop SessionEnd PreCompact PostCompact
         Notification PermissionRequest SubagentStart SubagentStop PostToolUseFailure
 Tool classes (tool events only): shell read write search web agent mcp
-Agents written: claude, grok, devin. Kiro, OpenCode and Cursor are not implemented yet.
+Agents written: claude, grok, devin, opencode (user scope, ~/.config/opencode/plugins/synca-hooks.js; OpenCode 1.x). Kiro and Cursor are not implemented yet.
 
 A hook runs code, so a new or changed hook is never written until a person approves it with
 "synca hooks trust <id>" at a terminal. There is no --yes for that and agents cannot approve their own

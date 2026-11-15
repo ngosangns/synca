@@ -2,7 +2,7 @@
 
 Hooks are shell commands an agent runs on an event (before or after a tool, on prompt submit, when a session starts or stops). They execute code with your permissions, so synca treats them more strictly than skills or MCP: the flow is hub to agents only, every hook is hash-pinned, and a person must approve it at a terminal.
 
-Hooks are implemented for **user scope only**. Claude, Grok and Devin are written. Kiro, OpenCode and Cursor are designed in [`docs/plans/hooks-sync.md`](plans/hooks-sync.md) but not implemented yet.
+Hooks are implemented for **user scope only**. Claude, Grok, Devin and OpenCode are written. Kiro and Cursor are designed in [`docs/plans/hooks-sync.md`](plans/hooks-sync.md) but not implemented yet. OpenCode is a generated plugin at `~/.config/opencode/plugins/synca-hooks.js` (OpenCode 1.x); `opencode.json` is not edited. Restart OpenCode after a write.
 
 The short version lives in the [README](../README.md#hooks). This page is the reference.
 
@@ -61,21 +61,21 @@ The approval hash covers the canonical definition plus every file under `~/.agen
 
 Canonical names use Claude Code's PascalCase spelling.
 
-| Event | Claude | Grok | Devin |
-| --- | --- | --- | --- |
-| `SessionStart` | yes | yes | yes |
-| `UserPromptSubmit` | yes | yes | yes |
-| `PreToolUse` | yes | yes | yes |
-| `PostToolUse` | yes | yes | yes |
-| `Stop` | yes | yes | yes |
-| `SessionEnd` | yes | yes | yes |
-| `PreCompact` | yes | yes | no |
-| `PostCompact` | yes | yes | yes (`PostCompaction`) |
-| `Notification` | yes | yes | no |
-| `PermissionRequest` | yes | no | yes |
-| `SubagentStart` | yes | yes | no |
-| `SubagentStop` | yes | yes | no |
-| `PostToolUseFailure` | yes | yes | no |
+| Event | Claude | Grok | Devin | OpenCode 1.x |
+| --- | --- | --- | --- | --- |
+| `SessionStart` | yes | yes | yes | approx (`session.created`) |
+| `UserPromptSubmit` | yes | yes | yes | approx (`chat.message`) |
+| `PreToolUse` | yes | yes | yes | yes (`tool.execute.before`, can block) |
+| `PostToolUse` | yes | yes | yes | yes (`tool.execute.after`) |
+| `Stop` | yes | yes | yes | approx (`session.idle`) |
+| `SessionEnd` | yes | yes | yes | approx (`session.deleted`) |
+| `PreCompact` | yes | yes | no | approx (`experimental.session.compacting`) |
+| `PostCompact` | yes | yes | yes (`PostCompaction`) | approx (`session.compacted`) |
+| `Notification` | yes | yes | no | no |
+| `PermissionRequest` | yes | no | yes | approx (`permission.asked`, does not block) |
+| `SubagentStart` | yes | yes | no | no |
+| `SubagentStop` | yes | yes | no | no |
+| `PostToolUseFailure` | yes | yes | no | no |
 
 An event an agent does not support produces `skip_hook_unsupported` with reason `event_unsupported` (or `scope_unsupported`), never a silently altered hook.
 
@@ -83,15 +83,15 @@ An event an agent does not support produces `skip_hook_unsupported` with reason 
 
 Tool classes are translated to each agent's native tool names. They are valid only on `PreToolUse`, `PostToolUse`, `PostToolUseFailure` and `PermissionRequest`.
 
-| Class | Claude | Grok | Devin |
-| --- | --- | --- | --- |
-| `shell` | `Bash` | `run_terminal_command` | `exec` |
-| `read` | `Read` | `read_file` | — |
-| `write` | `Edit`, `Write`, `MultiEdit` | `search_replace`, `hashline_edit`, `write` | `edit` |
-| `search` | `Grep`, `Glob` | `grep`, `list_dir` | — |
-| `web` | `WebFetch`, `WebSearch` | — | — |
-| `agent` | `Task` | `spawn_subagent` | — |
-| `mcp` | `mcp__.*` | — | `mcp__.*` |
+| Class | Claude | Grok | Devin | OpenCode 1.x |
+| --- | --- | --- | --- | --- |
+| `shell` | `Bash` | `run_terminal_command` | `exec` | `bash` |
+| `read` | `Read` | `read_file` | — | `read` |
+| `write` | `Edit`, `Write`, `MultiEdit` | `search_replace`, `hashline_edit`, `write` | `edit` | `edit`, `write`, `apply_patch` |
+| `search` | `Grep`, `Glob` | `grep`, `list_dir` | — | `grep`, `glob` |
+| `web` | `WebFetch`, `WebSearch` | — | — | `webfetch`, `websearch` |
+| `agent` | `Task` | `spawn_subagent` | — | `task` |
+| `mcp` | `mcp__.*` | — | `mcp__.*` | — |
 
 A class an agent cannot map is reported as `tool_unmapped` (warning). If **none** of the requested classes map for an agent, the hook is skipped for that agent. synca never drops the matcher to widen a hook to every tool.
 
@@ -211,7 +211,7 @@ The plan has these action kinds:
 | `adopt_hook` | The exact render is already present; record it in the lock without editing |
 | `skip_hook_same` | Already correct |
 | `skip_hook_unsupported` | Event, tool class, or agent unsupported |
-| `conflict_hook` | `untrusted`, `modified_externally`, or `parse_error` |
+| `conflict_hook` | `untrusted`, `modified_externally`, `not_owned`, or `parse_error` |
 
 - Unapproved hooks are `conflict_hook` with reason `untrusted`; they are skipped. Exit stays 0, or 7 with `--strict`.
 - `--on-conflict skip` (default) reports conflicts and writes nothing for them.
@@ -223,6 +223,7 @@ Agent files:
 
 - Claude `~/.claude/settings.json` and Devin `~/.config/devin/config.json` are shared. synca rewrites only the top-level `hooks` member, preserves every other byte, and normalizes whitespace inside `hooks`. An unparseable file is reported as `parse_error` and left untouched.
 - Grok `~/.grok/hooks/synca.json` is owned by synca. A hand edit is `modified_externally`; `keep-source` restores it.
+- OpenCode `~/.config/opencode/plugins/synca-hooks.js` is owned by synca. A file at that path without the synca marker is `not_owned` and is never overwritten. A hand edit of an owned plugin is `modified_externally`; `keep-source` restores it. With no hooks left, the owned file is removed. OpenCode 1.x loads the plugin at startup.
 - An agent is written only when its config directory exists. Otherwise the hook is `skip_hook_unsupported` with reason `agent_not_installed`.
 - Each write is atomic, preceded by a backup under `~/.local/state/synca/hooks/backups/` (last 20 per file). Files are re-hashed before writing; a file that changed during planning is skipped with `file_changed_during_apply`.
 

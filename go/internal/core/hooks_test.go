@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -418,6 +419,167 @@ func TestToolMappingAndUnmapped(t *testing.T) {
 	}
 	if _, err := claude.render("x", Hook{Event: "Stop", Handler: HookHandler{Command: "{{project_dir}}/x"}}); err == nil {
 		t.Fatal("{{project_dir}} must be refused in user scope")
+	}
+}
+
+func TestOpenCodeUserPlugin(t *testing.T) {
+	home := hooksHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, ".config", "opencode", "plugins", "synca-hooks.js")
+	foreign := filepath.Join(home, ".config", "opencode", "plugins", "orca-opencode-status.js")
+	writeFile(t, foreign, "export const Other = async () => ({})\n")
+	saveHub(t, map[string]Hook{
+		"guard":   shellGuard(),
+		"done":    {Event: "Stop", Handler: HookHandler{Command: "echo done && ok"}},
+		"notify":  {Event: "Notification", Handler: HookHandler{Command: "echo n"}},
+		"mcp":     {Event: "PreToolUse", Tools: []string{"mcp"}, Handler: HookHandler{Command: "echo m"}},
+		"compact": {Event: "PostCompact", OnFailure: "block", Handler: HookHandler{Command: "echo c"}},
+	})
+	trustAll(t)
+	plan, log := syncHooks(t, []AgentKind{AgentOpenCode}, ConflictSkip)
+	k := kinds(plan, "opencode")
+	if k["write_hook"] != 3 || k["skip_hook_unsupported"] != 2 {
+		t.Fatalf("unexpected plan: %+v", plan.Actions)
+	}
+	if len(log) != 1 || !strings.Contains(log[0], "wrote ") {
+		t.Fatalf("log: %v", log)
+	}
+	got := readFile(t, target)
+	if !strings.Contains(got, "synca-managed-plugin: opencode-hooks") || !strings.Contains(got, `"toolNames":["bash"]`) {
+		t.Fatalf("bad plugin:\n%s", got)
+	}
+	if !strings.Contains(got, "echo done && ok") || strings.Contains(got, `\u0026`) {
+		t.Fatalf("command was escaped or dropped:\n%s", got)
+	}
+	if strings.Contains(got, "echo n") || strings.Contains(got, "echo m") {
+		t.Fatal("unsupported hook was embedded")
+	}
+	if strings.Index(got, `"PreToolUse"`) > strings.Index(got, `"Stop"`) {
+		t.Fatalf("hooks out of event order:\n%s", got)
+	}
+	var approx, weakened bool
+	for _, a := range plan.Actions {
+		if a.Hook == "done" {
+			if a.Reason != opencodeRestartReason {
+				t.Fatalf("write reason: %+v", a)
+			}
+			for _, l := range a.Lossy {
+				if l.Code == LossyEventApprox {
+					approx = true
+				}
+			}
+		}
+		if a.Hook == "guard" {
+			for _, l := range a.Lossy {
+				if l.Code == LossyFailureModeWeakened {
+					t.Fatal("PreToolUse can block; onFailure block must not be weakened")
+				}
+			}
+		}
+		if a.Hook == "compact" {
+			for _, l := range a.Lossy {
+				if l.Code == LossyFailureModeWeakened {
+					weakened = true
+				}
+			}
+		}
+	}
+	if !approx || !weakened {
+		t.Fatalf("missing lossy reports: %+v", plan.Actions)
+	}
+	if readFile(t, foreign) != "export const Other = async () => ({})\n" {
+		t.Fatal("foreign plugin touched")
+	}
+
+	plan, log = syncHooks(t, []AgentKind{AgentOpenCode}, ConflictSkip)
+	if k := kinds(plan, "opencode"); k["skip_hook_same"] != 3 || len(log) != 0 {
+		t.Fatalf("not idempotent: %+v %v", plan.Actions, log)
+	}
+
+	writeFile(t, target, "export const Foreign = async () => ({})\n")
+	plan, _ = syncHooks(t, []AgentKind{AgentOpenCode}, ConflictKeepSource)
+	if kinds(plan, "opencode")["conflict_hook"] != 3 || !strings.Contains(readFile(t, target), "Foreign") {
+		t.Fatalf("foreign file must not be overwritten: %+v", plan.Actions)
+	}
+
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(HooksStateDir()); err != nil {
+		t.Fatal(err)
+	}
+	trustAll(t)
+	syncHooks(t, []AgentKind{AgentOpenCode}, ConflictSkip)
+	writeFile(t, target, strings.Replace(readFile(t, target), "echo done", "echo evil", 1))
+	plan, _ = syncHooks(t, []AgentKind{AgentOpenCode}, ConflictSkip)
+	if kinds(plan, "opencode")["conflict_hook"] != 1 || !strings.Contains(readFile(t, target), "echo evil") {
+		t.Fatalf("hand edit must be a conflict: %+v", plan.Actions)
+	}
+	syncHooks(t, []AgentKind{AgentOpenCode}, ConflictKeepSource)
+	if strings.Contains(readFile(t, target), "echo evil") || !strings.Contains(readFile(t, target), "echo done") {
+		t.Fatal("keep-source did not restore the hub version")
+	}
+
+	saveHub(t, map[string]Hook{})
+	syncHooks(t, []AgentKind{AgentOpenCode}, ConflictSkip)
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatal("owned plugin not removed")
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatal("foreign plugin removed")
+	}
+}
+
+func TestOpenCodePluginRuntime(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	home := hooksHome(t)
+	if err := os.MkdirAll(filepath.Join(home, ".config", "opencode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	out := filepath.Join(dir, "stdin.json")
+	saveHub(t, map[string]Hook{
+		"block-bash": {Event: "PreToolUse", Tools: []string{"shell"}, Handler: HookHandler{Command: "exit 2"}},
+		"ok-read":    {Event: "PreToolUse", Tools: []string{"read"}, Handler: HookHandler{Command: `cat > "$SYNCA_TEST_OUT"`}},
+		"idle":       {Event: "Stop", Handler: HookHandler{Command: "exit 2"}},
+	})
+	trustAll(t)
+	syncHooks(t, []AgentKind{AgentOpenCode}, ConflictSkip)
+	plugin := filepath.Join(home, ".config", "opencode", "plugins", "synca-hooks.js")
+	for _, forbidden := range []string{"eval(", "new Function", "require(", "node:net", "node:http", "fetch(", "import("} {
+		if strings.Contains(string(opencodePluginTemplate), forbidden) {
+			t.Fatalf("template contains %s", forbidden)
+		}
+	}
+	writeFile(t, filepath.Join(dir, "package.json"), "{\"type\":\"module\"}\n")
+	writeFile(t, filepath.Join(dir, "plugin.js"), readFile(t, plugin))
+	script := `import { pathToFileURL } from "node:url";
+const mod = await import(pathToFileURL(process.argv[1]).href);
+const api = await mod.SyncaHooks({ directory: "/work", client: { app: { log() {} } } });
+let blocked = false;
+try {
+  await api["tool.execute.before"]({ tool: "bash", sessionID: "s", callID: "c" }, { args: { command: "ls" } });
+} catch (err) {
+  blocked = true;
+}
+if (!blocked) process.exit(2);
+await api["tool.execute.before"]({ tool: "read", sessionID: "s", callID: "c" }, { args: { filePath: "a.txt" } });
+await api.event({ event: { type: "session.idle", properties: { sessionID: "s" } } });
+await api["tool.execute.before"]({ tool: "edit", sessionID: "s", callID: "c" }, { args: {} });
+`
+	cmd := exec.Command("node", "--input-type=module", "-e", script, filepath.Join(dir, "plugin.js"))
+	cmd.Env = append(os.Environ(), "SYNCA_TEST_OUT="+out)
+	outBytes, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("plugin runtime: %v\n%s", err, outBytes)
+	}
+	body := readFile(t, out)
+	if !strings.Contains(body, `"hook_event_name":"PreToolUse"`) || !strings.Contains(body, `"tool_name":"read"`) || !strings.Contains(body, `"filePath":"a.txt"`) {
+		t.Fatalf("stdin payload: %s", body)
 	}
 }
 

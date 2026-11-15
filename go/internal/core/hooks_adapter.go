@@ -17,6 +17,7 @@ const (
 	LossyFailureModeWeakened = "failure_mode_weakened"
 	LossyToolUnmapped        = "tool_unmapped"
 	LossyOrderNotGuaranteed  = "order_not_guaranteed"
+	LossyEventApprox         = "event_approx"
 )
 
 // HookLossy reports something the target agent cannot express faithfully.
@@ -30,12 +31,14 @@ type HookLossy struct {
 // agent is data here; the sync engine has no `if agent ==` branches.
 type hookAdapter struct {
 	agent     AgentKind
-	ownFile   bool                // synca owns the whole file (Grok); otherwise a shared settings file
+	ownFile   bool                // synca owns the whole file (Grok JSON); otherwise a shared settings file
+	plugin    bool                // synca owns a generated plugin file (OpenCode)
 	path      func() string       // user-scope target
 	present   func() bool         // is the agent installed (its config dir exists)
 	eventName map[string]string   // canonical event -> native name; absent = unsupported
 	tools     map[string][]string // tool class -> native tool names
 	mcpRegex  string              // native regex matching MCP tools ("" = unmapped)
+	renderFn  func(id string, h Hook) (*renderedHook, error)
 }
 
 var plainMatcher = regexp.MustCompile(`^[A-Za-z0-9_\- ,|]+$`)
@@ -56,8 +59,9 @@ func identityEvents(except ...string) map[string]string {
 	return m
 }
 
-// hookAdapters returns the adapters synca implements. Kiro, OpenCode and Cursor
-// are designed (docs/plans/hooks-sync.md) but not implemented yet.
+// hookAdapters returns the adapters synca implements. Kiro and Cursor are
+// designed (docs/plans/hooks-sync.md) but not implemented yet. OpenCode is
+// user-scope only: a generated plugin, not a settings file.
 func hookAdapters() []hookAdapter {
 	h := HomeDir()
 	devinEvents := map[string]string{
@@ -97,6 +101,7 @@ func hookAdapters() []hookAdapter {
 			tools:     map[string][]string{"shell": {"exec"}, "write": {"edit"}},
 			mcpRegex:  "mcp__.*",
 		},
+		opencodeAdapter(h),
 	}
 }
 
@@ -178,6 +183,9 @@ func (a hookAdapter) matcherFor(classes []string) (matcher string, lossy []HookL
 
 // render translates a hook for this agent. It is pure.
 func (a hookAdapter) render(id string, h Hook) (*renderedHook, error) {
+	if a.renderFn != nil {
+		return a.renderFn(id, h)
+	}
 	native, ok := a.eventName[h.Event]
 	if !ok {
 		return nil, fmt.Errorf("event_unsupported")
