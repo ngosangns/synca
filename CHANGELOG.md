@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.3
+
+- **Hooks:** OpenCode user scope is written. Approved hooks become `~/.config/opencode/plugins/synca-hooks.js` (OpenCode 1.x). `opencode.json` is not edited. Restart OpenCode after a write. A file at that path without the synca marker is left alone. Kiro, Cursor, and project scope are still not written.
+
 ## 0.6.2
 
 - **macOS window:** Remove deletes the canonical skill copy or the MCP hub entry and every agent link in the scope. Unlink and purge stay on the CLI. A confirmation is a card over the window. Escape, the scrim, and Cancel close it.
