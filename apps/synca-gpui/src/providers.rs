@@ -17,8 +17,8 @@ use gpui::{
     SharedString, Styled, div, prelude::*, px,
 };
 use ns_ui::{
-    IconTone, Tone, chip, icon_button, section_label, skeleton_list, text_field, theme,
-    warn_button, working_row,
+    IconTone, Tone, chip, icon_button, icon_tinted, section_label, skeleton_list, text_field,
+    theme, warn_button, working_row,
 };
 
 use crate::Pending;
@@ -33,6 +33,53 @@ const LIST_H: f32 = 324.;
 /// Tooltip of a provider outside the six built-in sync targets.
 const READ_ONLY_TIP: &str =
     "Saved as a preference. The CLI currently syncs skills to the six built-in agents.";
+
+const SYNCS_TIP: &str = "Synca writes skills and MCP into this agent.";
+const SHARED_TIP: &str = "Reads the shared .agents/skills folder.";
+
+/// One status chip on a provider row. `icon` is an `icons/<name>.svg` glyph.
+struct ProviderChip {
+    label: &'static str,
+    tone: Tone,
+    icon: Option<&'static str>,
+    tip: Option<&'static str>,
+}
+
+/// The chips a row shows. Syncs and Shared carry an icon. The other two stay text.
+fn provider_chips(info: &ProviderInfo) -> Vec<ProviderChip> {
+    let mut chips = Vec::with_capacity(2);
+    if info.managed {
+        chips.push(ProviderChip {
+            label: "Syncs",
+            tone: Tone::Accent,
+            icon: Some("sync"),
+            tip: Some(SYNCS_TIP),
+        });
+    } else if info.present {
+        chips.push(ProviderChip {
+            label: "installed",
+            tone: Tone::Ok,
+            icon: None,
+            tip: None,
+        });
+    } else {
+        chips.push(ProviderChip {
+            label: "not installed",
+            tone: Tone::Neutral,
+            icon: None,
+            tip: None,
+        });
+    }
+    if info.universal {
+        chips.push(ProviderChip {
+            label: "Shared",
+            tone: Tone::Neutral,
+            icon: Some("folder"),
+            tip: Some(SHARED_TIP),
+        });
+    }
+    chips
+}
 
 /// Which key the rows are ordered by. `None` keeps load order: managed
 /// agents first, then the installed ones, then the rest, each by name.
@@ -182,14 +229,10 @@ impl ProvidersState {
     }
 }
 
+#[cfg(test)]
 fn status_label(info: &ProviderInfo) -> (&'static str, Tone) {
-    if info.managed {
-        ("managed", Tone::Accent)
-    } else if info.present {
-        ("installed", Tone::Ok)
-    } else {
-        ("not installed", Tone::Neutral)
-    }
+    let chip = &provider_chips(info)[0];
+    (chip.label, chip.tone)
 }
 
 /// The sort order of the status chip: managed, installed, not installed.
@@ -356,15 +399,38 @@ fn path_line(info: &ProviderInfo, project: bool, ident: &str, with_id: bool) -> 
     )
 }
 
-fn chips(info: &ProviderInfo) -> gpui::Div {
-    let (label, tone) = status_label(info);
-    div()
+fn icon_chip(id: SharedString, glyph: &str, mark: &ProviderChip) -> impl IntoElement {
+    let ink = match mark.tone {
+        Tone::Accent => theme().accent,
+        Tone::Ok => theme().ok,
+        Tone::Warn => theme().warn,
+        Tone::Err => theme().err,
+        Tone::Neutral => theme().muted,
+    };
+    let mut row = div()
+        .id(id)
         .flex_none()
         .flex()
         .items_center()
         .gap_1()
-        .child(chip(label, tone))
-        .children(info.universal.then(|| chip("universal", Tone::Neutral)))
+        .child(icon_tinted(glyph, ink))
+        .child(chip(mark.label, mark.tone));
+    if let Some(tip) = mark.tip {
+        row = row.tooltip(Tooltip::text(tip));
+    }
+    row
+}
+
+fn chips(info: &ProviderInfo) -> gpui::Div {
+    let mut row = div().flex_none().flex().items_center().gap_1();
+    for mark in provider_chips(info) {
+        let id = SharedString::from(format!("provider-chip-{}-{}", info.id, mark.label));
+        row = match mark.icon {
+            Some(glyph) => row.child(icon_chip(id, glyph, &mark).into_any_element()),
+            None => row.child(chip(mark.label, mark.tone).into_any_element()),
+        };
+    }
+    row
 }
 
 /// The "Providers" section of Settings: one list with the managed agents and
@@ -752,8 +818,15 @@ mod tests {
     fn status_prefers_managed_then_installed() {
         let state = loaded();
         let by = |id: &str| state.list.iter().find(|item| item.id == id).unwrap();
-        assert_eq!(status_label(by("claude-code")).0, "managed");
+        assert_eq!(status_label(by("claude-code")).0, "Syncs");
+        assert_eq!(provider_chips(by("claude-code"))[0].icon, Some("sync"));
+        assert_eq!(provider_chips(by("cursor")).len(), 2);
+        assert_eq!(provider_chips(by("cursor"))[1].label, "Shared");
+        assert_eq!(provider_chips(by("cursor"))[1].icon, Some("folder"));
+        assert_eq!(provider_chips(by("amp"))[0].label, "not installed");
+        assert_eq!(provider_chips(by("amp"))[1].label, "Shared");
         assert_eq!(status_label(by("goose")).0, "installed");
+        assert_eq!(provider_chips(by("goose")).len(), 1);
         assert_eq!(status_label(by("eve")).0, "not installed");
         assert_eq!(skills_text(by("goose")), "1 skill");
         assert_eq!(skills_text(by("claude-code")), "12 skills");

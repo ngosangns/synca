@@ -34,9 +34,9 @@ use gpui::{
 use ns_ui::{
     Ask, IconTone, SIDEBAR_INSET, SIDEBAR_ROW_H, SIDEBAR_SECTION_H, SidebarKey, SidebarResize,
     Tone, button, chip, chrome_busy_resizable, field, icon, icon_button, loading_pane,
-    quiet_button, quiet_button_md, section_label, segmented, side_column, sidebar_button,
-    sidebar_empty, sidebar_keys, sidebar_reveal, sidebar_row, sidebar_scroll_tracked, sidebar_step,
-    skeleton_list, tab_strip, tab_strip_equal, text_field, theme, working_row,
+    quiet_button, quiet_button_md, section_label, segmented, sidebar_button, sidebar_empty,
+    sidebar_keys, sidebar_reveal, sidebar_row, sidebar_scroll_tracked, sidebar_step, skeleton_list,
+    tab_strip, tab_strip_equal, text_field, theme, working_row,
 };
 use serde::Deserialize;
 
@@ -128,6 +128,26 @@ enum Panel {
     Closed,
     Activity,
     Settings,
+}
+
+/// What the editor column shows. A plan is a dialog over this page, never the page.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MainPage {
+    Detail,
+    Activity,
+    Settings,
+    Update,
+}
+
+fn main_page(panel: Panel, route: Route) -> MainPage {
+    match panel {
+        Panel::Activity => MainPage::Activity,
+        Panel::Settings => MainPage::Settings,
+        Panel::Closed => match route {
+            Route::Update => MainPage::Update,
+            Route::List | Route::Plan => MainPage::Detail,
+        },
+    }
 }
 
 enum Pending {
@@ -1307,6 +1327,7 @@ impl SyncaWindow {
         };
         if self.panel == Panel::Activity {
             self.load_activity();
+            ns_ui::show_detail();
         }
         self.persist_panel(cx);
         self.publish_menus(cx);
@@ -1319,6 +1340,9 @@ impl SyncaWindow {
         } else {
             Panel::Settings
         };
+        if self.panel == Panel::Settings {
+            ns_ui::show_detail();
+        }
         self.providers_activate(cx);
         self.persist_panel(cx);
         self.publish_menus(cx);
@@ -1472,7 +1496,6 @@ impl SyncaWindow {
                             this.update_clean = None;
                             this.update_ready = false;
                             this.update_url.clear();
-                            this.route = Route::Update;
                             cx.notify();
                             return;
                         }
@@ -1489,7 +1512,6 @@ impl SyncaWindow {
                         this.update_clean = None;
                         this.update_ready = report.available;
                         this.update_url = report.url;
-                        this.route = Route::Update;
                         cx.notify();
                     }
                 }
@@ -2032,6 +2054,24 @@ impl SyncaWindow {
         Some(dialog.into_any_element())
     }
 
+    /// The dry-run plan as a card over the page. Escape and the scrim return
+    /// to the page without applying. The card has no close button.
+    fn plan_layer(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.route != Route::Plan {
+            return None;
+        }
+        let entity = cx.entity();
+        let content = plan_body(self, div().flex().flex_col().gap_2(), cx);
+        let dialog = Dialog::new("synca-plan", "Plan", move |_, app| {
+            entity.update(app, |this, cx| {
+                this.route = Route::List;
+                cx.notify();
+            });
+        })
+        .child(content);
+        Some(dialog.into_any_element())
+    }
+
     fn add_project(&mut self, path: String, cx: &mut Context<Self>) {
         if !self.projects.iter().any(|item| item == &path) {
             self.projects.push(path.clone());
@@ -2464,10 +2504,18 @@ impl Render for SyncaWindow {
     fn render(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(feature = "devtools")]
         let _clock = perf::clock();
-        let selected = self.selected;
         let user_on = self.scope == Scope::User;
         let loading = self.busy && self.entries.is_empty();
-        let focused = self.list_focus.is_focused(window);
+        // The row fill tracks the open skill. Settings, Activity, and Update
+        // replace that page, so the rows stay plain. A plan dialog does not.
+        let paint_focus = sidebar_paints_entry_focus(
+            self.route,
+            self.panel != Panel::Closed,
+            ns_ui::is_compact(),
+            ns_ui::compact_pane() == ns_ui::CompactPane::Detail,
+        );
+        let selected = paint_focus.then_some(self.selected).flatten();
+        let focused = paint_focus && self.list_focus.is_focused(window);
         let mut list = div().flex().flex_col();
         if loading {
             list = list
@@ -2504,6 +2552,7 @@ impl Render for SyncaWindow {
                 rows_in_view(inventory.skills.len(), skills_top, view, seen),
                 selected,
                 &self.bulk,
+                paint_focus,
                 row_menu,
                 focused,
                 &self.list_focus,
@@ -2522,6 +2571,7 @@ impl Render for SyncaWindow {
                 rows_in_view(inventory.mcps.len(), mcps_top, view, seen),
                 selected,
                 &self.bulk,
+                paint_focus,
                 row_menu,
                 focused,
                 &self.list_focus,
@@ -2575,41 +2625,25 @@ impl Render for SyncaWindow {
         );
         sidebar = sidebar.child(sync_actions(cx));
 
-        let title = match self.route {
-            Route::List => self
+        let page = main_page(self.panel, self.route);
+        let title = match page {
+            MainPage::Detail => self
                 .selected
                 .and_then(|index| self.entries.get(index))
                 .map(|entry| entry.title.clone())
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| self.scope_title().to_string()),
-            Route::Plan => "Plan".into(),
-            Route::Update => "Update".into(),
+            MainPage::Activity => "Activity".into(),
+            MainPage::Settings => "Settings".into(),
+            MainPage::Update => "Update".into(),
         };
 
         let mut body = div().flex().flex_col().gap_2();
-        body = match self.route {
-            Route::List => list_body(self, body, cx),
-            Route::Plan => plan_body(self, body, cx),
-            Route::Update => update_body(self, body, cx),
-        };
-        let panel = match self.panel {
-            Panel::Closed => None,
-            Panel::Activity => {
-                let column = activity_body(self, div().flex().flex_col().gap_2(), cx);
-                Some(
-                    side_column("Activity", column)
-                        .w(px(SIDE_PANE_W))
-                        .into_any_element(),
-                )
-            }
-            Panel::Settings => {
-                let column = settings_body(self, div().flex().flex_col().gap_2(), cx);
-                Some(
-                    side_column("Settings", column)
-                        .w(px(SIDE_PANE_W))
-                        .into_any_element(),
-                )
-            }
+        body = match page {
+            MainPage::Detail => list_body(self, body, cx),
+            MainPage::Activity => activity_body(self, body, cx),
+            MainPage::Settings => settings_body(self, body, cx),
+            MainPage::Update => update_body(self, body, cx),
         };
         let rail = rail(self, cx).into_any_element();
         let meta = if self.version.is_empty() {
@@ -2671,6 +2705,7 @@ impl Render for SyncaWindow {
             dialog.child(body).into_any_element()
         });
         let ask = self.ask_layer(cx);
+        let plan_dialog = self.plan_layer(cx);
         let toasts = ToastViewport::new("synca-toasts", &self.toaster);
         div()
             .size_full()
@@ -2679,7 +2714,7 @@ impl Render for SyncaWindow {
                 title,
                 body,
                 None,
-                panel,
+                None,
                 Some(rail),
                 if self.busy {
                     "Working".into()
@@ -2709,6 +2744,7 @@ impl Render for SyncaWindow {
                 ),
             ))
             .children(onboarding)
+            .children(plan_dialog)
             .children(ask)
             .child(toasts)
     }
@@ -2725,10 +2761,6 @@ fn synca_wait(window: &SyncaWindow) -> &'static str {
         "Working…"
     }
 }
-
-/// Activity and Settings. The shared column is 320px; this is wider so a
-/// command has room, and the row still truncates inside the card.
-const SIDE_PANE_W: f32 = 400.;
 
 /// The footer actions share one three-column row: Install…, Reload and Sync
 /// all get equal widths and a label. The bar is pinned under the list so the
@@ -4436,6 +4468,17 @@ fn settings_body(
                     );
                 }),
             ))
+            .when(!window.update_url.is_empty(), |row| {
+                let url = window.update_url.clone();
+                row.child(quiet_button(
+                    "open-release-settings",
+                    "reveal",
+                    "Open release page",
+                    cx.listener(move |_, _, _, _| {
+                        ns_ui::open_url(&url);
+                    }),
+                ))
+            })
             .when(window.update_ready, |row| {
                 row.child(button(
                     "install-update",
@@ -6019,6 +6062,7 @@ fn inventory_group(
     build: std::ops::Range<usize>,
     selected: Option<usize>,
     bulk: &BTreeSet<usize>,
+    paint_focus: bool,
     row_menu: Option<(usize, u64, Point<gpui::Pixels>)>,
     focused: bool,
     focus: &FocusHandle,
@@ -6067,7 +6111,7 @@ fn inventory_group(
         let (sync, tokens) = cache.counts[index].clone();
         let row = sidebar_row(cache.ids[index].clone(), cache.titles[index].clone())
             .icon(glyph)
-            .selected(in_bulk)
+            .selected(paint_focus && in_bulk)
             .kbd(focused && on)
             .tooltip(cache.titles[index].clone(), Some(cache.meta[index].clone()))
             .trailing(metric_cells(
@@ -6111,6 +6155,18 @@ fn inventory_group(
         list = list.child(list_spacer(rows.len() - end));
     }
     list
+}
+
+/// True while the editor column is showing a skill or MCP. The sidebar paints
+/// its selection only then. Settings and Activity replace that page. A plan
+/// dialog leaves the skill in place. The stored selection is unchanged.
+fn sidebar_paints_entry_focus(
+    route: Route,
+    panel_open: bool,
+    compact: bool,
+    detail_pane: bool,
+) -> bool {
+    !panel_open && matches!(route, Route::List | Route::Plan) && (!compact || detail_pane)
 }
 
 /// The slice of a group's rows that intersects the scroll viewport, padded by
@@ -7401,6 +7457,36 @@ mod dev_contract_tests {
 #[cfg(test)]
 mod view_tests {
     use super::*;
+
+    #[test]
+    fn sidebar_focus_follows_the_open_detail() {
+        assert!(sidebar_paints_entry_focus(Route::List, false, false, false));
+        assert!(sidebar_paints_entry_focus(Route::List, false, true, true));
+        assert!(!sidebar_paints_entry_focus(Route::List, false, true, false));
+        assert!(!sidebar_paints_entry_focus(Route::List, true, false, false));
+        assert!(sidebar_paints_entry_focus(Route::Plan, false, false, true));
+        assert!(!sidebar_paints_entry_focus(Route::Plan, true, false, true));
+        assert!(!sidebar_paints_entry_focus(
+            Route::Update,
+            false,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn the_main_page_is_the_panel_and_a_plan_stays_off_it() {
+        assert_eq!(main_page(Panel::Closed, Route::List), MainPage::Detail);
+        assert_eq!(main_page(Panel::Closed, Route::Plan), MainPage::Detail);
+        assert_eq!(main_page(Panel::Closed, Route::Update), MainPage::Update);
+        assert_eq!(main_page(Panel::Activity, Route::List), MainPage::Activity);
+        assert_eq!(main_page(Panel::Activity, Route::Plan), MainPage::Activity);
+        assert_eq!(main_page(Panel::Settings, Route::Plan), MainPage::Settings);
+        assert_eq!(
+            main_page(Panel::Settings, Route::Update),
+            MainPage::Settings
+        );
+    }
 
     fn item(name: &str, path: &str, dir: bool, depth: u32) -> TreeItem {
         TreeItem {

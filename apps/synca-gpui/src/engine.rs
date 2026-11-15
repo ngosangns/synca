@@ -924,7 +924,7 @@ pub fn parse_providers(text: &str) -> Result<Vec<ProviderInfo>, String> {
     Ok(providers)
 }
 
-/// "79 providers, 12 installed, 6 managed by Synca".
+/// "79 providers, 12 installed, 6 synced by Synca".
 pub fn providers_summary(providers: &[ProviderInfo]) -> String {
     let installed = providers.iter().filter(|item| item.present).count();
     let managed = providers.iter().filter(|item| item.managed).count();
@@ -934,7 +934,7 @@ pub fn providers_summary(providers: &[ProviderInfo]) -> String {
         "providers"
     };
     format!(
-        "{} {noun}, {installed} installed, {managed} managed by Synca",
+        "{} {noun}, {installed} installed, {managed} synced by Synca",
         providers.len()
     )
 }
@@ -2752,15 +2752,15 @@ mod tests {
         let providers = parse_providers(include_str!("../fixtures/providers-list.json")).unwrap();
         assert_eq!(
             providers_summary(&providers),
-            "8 providers, 5 installed, 3 managed by Synca"
+            "8 providers, 5 installed, 3 synced by Synca"
         );
         assert_eq!(
             providers_summary(&providers[..1]),
-            "1 provider, 1 installed, 1 managed by Synca"
+            "1 provider, 1 installed, 1 synced by Synca"
         );
         assert_eq!(
             providers_summary(&[]),
-            "0 providers, 0 installed, 0 managed by Synca"
+            "0 providers, 0 installed, 0 synced by Synca"
         );
     }
 
